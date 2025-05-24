@@ -6,8 +6,6 @@
 	import {
 		user,
 		chats,
-		settings,
-		showSettings,
 		chatId,
 		tags,
 		showSidebar,
@@ -28,14 +26,10 @@
 	const i18n = getContext('i18n');
 
 	import {
-		deleteChatById,
 		getChatList,
 		getAllTags,
-		getChatListBySearchText,
-		createNewChat,
 		getPinnedChatList,
 		toggleChatPinnedStatusById,
-		getChatPinnedStatusById,
 		getChatById,
 		updateChatFolderIdById,
 		importChat
@@ -48,16 +42,12 @@
 	import ChatItem from './Sidebar/ChatItem.svelte';
 	import Spinner from '../common/Spinner.svelte';
 	import Loader from '../common/Loader.svelte';
-	import AddFilesPlaceholder from '../AddFilesPlaceholder.svelte';
 	import Folder from '../common/Folder.svelte';
-	import Plus from '../icons/Plus.svelte';
-	import Tooltip from '../common/Tooltip.svelte';
 	import Folders from './Sidebar/Folders.svelte';
 	import { getChannels, createNewChannel } from '$lib/apis/channels';
 	import ChannelModal from './Sidebar/ChannelModal.svelte';
 	import ChannelItem from './Sidebar/ChannelItem.svelte';
 	import PencilSquare from '../icons/PencilSquare.svelte';
-	import Home from '../icons/Home.svelte';
 	import MagnifyingGlass from '../icons/MagnifyingGlass.svelte';
 	import SearchModal from './SearchModal.svelte';
 

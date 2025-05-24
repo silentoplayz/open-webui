@@ -14,7 +14,6 @@
 	import { getFunctions } from '$lib/apis/functions';
 	import { getKnowledgeBases } from '$lib/apis/knowledge';
 	import AccessControl from '../common/AccessControl.svelte';
-	import { stringify } from 'postcss';
 	import { toast } from 'svelte-sonner';
 
 	const i18n = getContext('i18n');

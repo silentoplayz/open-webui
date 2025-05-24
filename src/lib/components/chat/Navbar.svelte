@@ -7,17 +7,12 @@
 		banners,
 		chatId,
 		config,
-		mobile,
-		settings,
 		showArchivedChats,
 		showControls,
 		showSidebar,
 		temporaryChatEnabled,
 		user
 	} from '$lib/stores';
-
-	import { slide } from 'svelte/transition';
-	import { page } from '$app/stores';
 
 	import ShareChatModal from '../chat/ShareChatModal.svelte';
 	import ModelSelector from '../chat/ModelSelector.svelte';

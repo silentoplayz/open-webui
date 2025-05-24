@@ -4,8 +4,7 @@
 	const { saveAs } = fileSaver;
 
 	import { onMount, getContext } from 'svelte';
-	import { WEBUI_NAME, config, prompts, tools as _tools, user } from '$lib/stores';
-	import { createNewPrompt, deletePromptByCommand, getPrompts } from '$lib/apis/prompts';
+	import { WEBUI_NAME, config, tools as _tools, user } from '$lib/stores';
 
 	import { goto } from '$app/navigation';
 	import {
@@ -16,7 +15,6 @@
 		getToolList,
 		getTools
 	} from '$lib/apis/tools';
-	import ArrowDownTray from '../icons/ArrowDownTray.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import ConfirmDialog from '../common/ConfirmDialog.svelte';
 	import ToolMenu from './Tools/ToolMenu.svelte';

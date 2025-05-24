@@ -6,13 +6,9 @@
 	const dispatch = createEventDispatcher();
 
 	import {
-		getQuerySettings,
-		updateQuerySettings,
 		resetVectorDB,
 		getEmbeddingConfig,
 		updateEmbeddingConfig,
-		getRerankingConfig,
-		updateRerankingConfig,
 		getRAGConfig,
 		updateRAGConfig
 	} from '$lib/apis/retrieval';

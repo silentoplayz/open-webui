@@ -3,13 +3,10 @@
 	import dayjs from 'dayjs';
 	import { getContext, createEventDispatcher } from 'svelte';
 
-	const dispatch = createEventDispatcher();
-
 	import Modal from '$lib/components/common/Modal.svelte';
 	import AddMemoryModal from './AddMemoryModal.svelte';
 	import { deleteMemoriesByUserId, deleteMemoryById, getMemories } from '$lib/apis/memories';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import { error } from '@sveltejs/kit';
 	import EditMemoryModal from './EditMemoryModal.svelte';
 	import localizedFormat from 'dayjs/plugin/localizedFormat';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';

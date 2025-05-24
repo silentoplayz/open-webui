@@ -1,5 +1,4 @@
 <script lang="ts">
-	import DOMPurify from 'dompurify';
 	import { toast } from 'svelte-sonner';
 
 	import type { Token } from 'marked';
@@ -12,7 +11,6 @@
 
 	import Image from '$lib/components/common/Image.svelte';
 	import KatexRenderer from './KatexRenderer.svelte';
-	import Source from './Source.svelte';
 	import HtmlToken from './HTMLToken.svelte';
 
 	export let id: string;

@@ -9,7 +9,6 @@
 	import jsPDF from 'jspdf';
 	import html2canvas from 'html2canvas-pro';
 
-	import { downloadChatAsPDF } from '$lib/apis/utils';
 	import { copyToClipboard, createMessagesList } from '$lib/utils';
 
 	import {
@@ -18,7 +17,6 @@
 		showArtifacts,
 		mobile,
 		temporaryChatEnabled,
-		theme,
 		user,
 		settings
 	} from '$lib/stores';
