@@ -6,8 +6,8 @@
 
 	const i18n = getContext('i18n');
 
-	import { config, mobile, settings, socket } from '$lib/stores';
-	import { blobToFile, compressImage } from '$lib/utils';
+	import { config, mobile, settings } from '$lib/stores';
+	import { compressImage } from '$lib/utils';
 
 	import Tooltip from '../common/Tooltip.svelte';
 	import RichTextInput from '../common/RichTextInput.svelte';

@@ -3,22 +3,17 @@
 	import { flyAndScale } from '$lib/utils/transitions';
 	import { getContext, createEventDispatcher } from 'svelte';
 
-	import fileSaver from 'file-saver';
-	const { saveAs } = fileSaver;
-
 	const dispatch = createEventDispatcher();
 	const i18n = getContext('i18n');
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
-	import Pencil from '$lib/components/icons/Pencil.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import Download from '$lib/components/icons/Download.svelte';
 
 	let show = false;
 </script>
 
-<Dropdown bind:show on:change={(e) => {}}>
+<Dropdown bind:show on:change={() => {}}>
 	<Tooltip content={$i18n.t('More')}>
 		<slot />
 	</Tooltip>
