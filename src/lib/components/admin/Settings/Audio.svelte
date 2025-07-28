@@ -429,7 +429,6 @@
 								await updateConfigHandler();
 								await getVoices();
 								await getModels();
-
 								if (e.target?.value === 'openai') {
 									TTS_VOICE = 'alloy';
 									TTS_MODEL = 'tts-1';
