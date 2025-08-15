@@ -115,6 +115,9 @@
 	let eventConfirmationInputValue = '';
 	let eventCallback = null;
 
+	let multiModelResponseCounter = 0;
+	let multiModelResponses = [];
+
 	let chatIdUnsubscriber: Unsubscriber | undefined;
 
 	let selectedModels = [''];
@@ -980,9 +983,16 @@
 			});
 		}
 	};
-	const chatCompletedHandler = async (chatId, modelId, responseMessageId, messages) => {
+	const consolidatedChatCompletedHandler = async (chatId, userMessage) => {
+		const messages = [userMessage, ...multiModelResponses];
+
+		// We use the model from the first response for the memory extraction call.
+		// The backend will use this model to call the LLM.
+		const representativeModel = multiModelResponses[0]?.model;
+		if (!representativeModel) return;
+
 		const res = await chatCompleted(localStorage.token, {
-			model: modelId,
+			model: representativeModel,
 			messages: messages.map((m) => ({
 				id: m.id,
 				role: m.role,
@@ -992,52 +1002,16 @@
 				...(m.usage ? { usage: m.usage } : {}),
 				...(m.sources ? { sources: m.sources } : {})
 			})),
-			filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
-			model_item: $models.find((m) => m.id === modelId),
 			chat_id: chatId,
 			session_id: $socket?.id,
-			id: responseMessageId
+			id: userMessage.id // Use the user message ID as the turn ID
 		}).catch((error) => {
 			toast.error(`${error}`);
-			messages.at(-1).error = { content: error };
-
 			return null;
 		});
 
-		if (res !== null && res.messages) {
-			// Update chat history with the new messages
-			for (const message of res.messages) {
-				if (message?.id) {
-					// Add null check for message and message.id
-					history.messages[message.id] = {
-						...history.messages[message.id],
-						...(history.messages[message.id].content !== message.content
-							? { originalContent: history.messages[message.id].content }
-							: {}),
-						...message
-					};
-				}
-			}
-		}
-
-		await tick();
-
-		if ($chatId == chatId) {
-			if (!$temporaryChatEnabled) {
-				chat = await updateChatById(localStorage.token, chatId, {
-					models: selectedModels,
-					messages: messages,
-					history: history,
-					params: params,
-					files: chatFiles
-				});
-
-				currentChatPage.set(1);
-				await chats.set(await getChatList(localStorage.token, $currentChatPage));
-			}
-		}
-
-		taskIds = null;
+		// Reset for the next turn
+		multiModelResponses = [];
 	};
 
 	const chatActionHandler = async (chatId, actionId, modelId, responseMessageId, event = null) => {
@@ -1363,12 +1337,12 @@
 				scrollToBottom();
 			}
 
-			await chatCompletedHandler(
-				chatId,
-				message.model,
-				message.id,
-				createMessagesList(history, message.id)
-			);
+			multiModelResponses.push(message);
+			multiModelResponseCounter--;
+
+			if (multiModelResponseCounter === 0) {
+				await consolidatedChatCompletedHandler(chatId, history.messages[message.parentId]);
+			}
 		}
 
 		console.log(data);
@@ -1563,6 +1537,9 @@
 		_history = JSON.parse(JSON.stringify(history));
 		// Save chat after all messages have been created
 		await saveChatHandler(_chatId, _history);
+
+		multiModelResponseCounter = selectedModelIds.length;
+		multiModelResponses = [];
 
 		await Promise.all(
 			selectedModelIds.map(async (modelId, _modelIdx) => {

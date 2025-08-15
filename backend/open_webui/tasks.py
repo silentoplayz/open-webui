@@ -153,9 +153,11 @@ async def stop_task(redis, task_id: str):
         # Optionally check if task_id still in Redis a few moments later for feedback?
         return {"status": True, "message": f"Stop signal sent for {task_id}"}
 
-    task = tasks.pop(task_id)
+    task = tasks.pop(task_id, None)
     if not task:
-        raise ValueError(f"Task with ID {task_id} not found.")
+        # Task not found, it might have already completed.
+        # Return a success message as the task is no longer running.
+        return {"status": True, "message": f"Task {task_id} not found or already completed."}
 
     task.cancel()  # Request task cancellation
     try:

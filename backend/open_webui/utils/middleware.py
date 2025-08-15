@@ -95,10 +95,14 @@ from open_webui.config import (
 from open_webui.env import (
     SRC_LOG_LEVELS,
     GLOBAL_LOG_LEVEL,
-    CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE,
     BYPASS_MODEL_ACCESS_CONTROL,
     ENABLE_REALTIME_CHAT_SAVE,
 )
+
+try:
+    from open_webui.env import CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE
+except ImportError:
+    CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE = 1
 from open_webui.constants import TASKS
 
 
@@ -989,24 +993,25 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         if prompt is None:
             raise Exception("No user message found")
 
-        if context_string != "":
+        if context_string == "":
+            if request.app.state.config.RELEVANCE_THRESHOLD == 0:
+                log.debug(
+                    f"With a 0 relevancy threshold for RAG, the context cannot be empty"
+                )
+        else:
             # Workaround for Ollama 2.0+ system prompt issue
             # TODO: replace with add_or_update_system_message
             if model.get("owned_by") == "ollama":
                 form_data["messages"] = prepend_to_first_user_message_content(
                     rag_template(
-                        request.app.state.config.RAG_TEMPLATE,
-                        context_string,
-                        prompt,
+                        request.app.state.config.RAG_TEMPLATE, context_string, prompt
                     ),
                     form_data["messages"],
                 )
             else:
                 form_data["messages"] = add_or_update_system_message(
                     rag_template(
-                        request.app.state.config.RAG_TEMPLATE,
-                        context_string,
-                        prompt,
+                        request.app.state.config.RAG_TEMPLATE, context_string, prompt
                     ),
                     form_data["messages"],
                 )
@@ -1323,7 +1328,7 @@ async def process_chat_response(
                         if not get_active_status_by_user_id(user.id):
                             webhook_url = Users.get_user_webhook_url_by_id(user.id)
                             if webhook_url:
-                                await post_webhook(
+                                post_webhook(
                                     request.app.state.WEBUI_NAME,
                                     webhook_url,
                                     f"{title} - {request.app.state.config.WEBUI_URL}/c/{metadata['chat_id']}\n\n{content}",
@@ -1619,13 +1624,9 @@ async def process_chat_response(
 
                         match = re.search(start_tag_pattern, content)
                         if match:
-                            try:
-                                attr_content = (
-                                    match.group(1) if match.group(1) else ""
-                                )  # Ensure it's not None
-                            except:
-                                attr_content = ""
-
+                            attr_content = (
+                                match.group(1) if match.group(1) else ""
+                            )  # Ensure it's not None
                             attributes = extract_attributes(
                                 attr_content
                             )  # Extract attributes safely
@@ -2523,7 +2524,7 @@ async def process_chat_response(
                 if not get_active_status_by_user_id(user.id):
                     webhook_url = Users.get_user_webhook_url_by_id(user.id)
                     if webhook_url:
-                        await post_webhook(
+                        post_webhook(
                             request.app.state.WEBUI_NAME,
                             webhook_url,
                             f"{title} - {request.app.state.config.WEBUI_URL}/c/{metadata['chat_id']}\n\n{content}",
