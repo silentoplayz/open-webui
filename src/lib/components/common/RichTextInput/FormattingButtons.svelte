@@ -15,6 +15,7 @@
 	import Strikethrough from '$lib/components/icons/Strikethrough.svelte';
 	import Underline from '$lib/components/icons/Underline.svelte';
 	import Superscript from '$lib/components/icons/Superscript.svelte';
+	import Table from '$lib/components/icons/Table.svelte';
 
 	import Tooltip from '../Tooltip.svelte';
 	import CheckBox from '$lib/components/icons/CheckBox.svelte';
@@ -203,39 +204,39 @@
 				</button>
 			</Tooltip>
 
-	<Tooltip placement="top" content={$i18n.t('Superscript')}>
-		<button
-			on:click={() => editor?.chain().focus().toggleSuperscript().run()}
-			class="{editor?.isActive('superscript')
-				? 'bg-gray-50 dark:bg-gray-700'
-				: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
-			type="button"
-		>
-			<Superscript />
-		</button>
-	</Tooltip>
+			<Tooltip placement="top" content={$i18n.t('Superscript')}>
+				<button
+					on:click={() => editor?.chain().focus().toggleSuperscript().run()}
+					class="{editor?.isActive('superscript')
+						? 'bg-gray-50 dark:bg-gray-700'
+						: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+					type="button"
+				>
+					<Superscript />
+				</button>
+			</Tooltip>
 
-	<Tooltip placement="top" content={$i18n.t('Spoiler')}>
-		<button
-			on:click={() => editor?.chain().focus().toggleSpoiler().run()}
-			class="{editor?.isActive('spoiler')
-				? 'bg-gray-50 dark:bg-gray-700'
-				: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
-			type="button"
-		>
-			<EyeSlash />
-		</button>
-	</Tooltip>
+			<Tooltip placement="top" content={$i18n.t('Spoiler')}>
+				<button
+					on:click={() => editor?.chain().focus().toggleSpoiler().run()}
+					class="{editor?.isActive('spoiler')
+						? 'bg-gray-50 dark:bg-gray-700'
+						: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+					type="button"
+				>
+					<EyeSlash />
+				</button>
+			</Tooltip>
 
-<Tooltip placement="top" content={$i18n.t('Table')}>
-    <button
-        on:click={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
-        class="hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
-        type="button"
-    >
-        [T]
-    </button>
-</Tooltip>
+			<Tooltip placement="top" content={$i18n.t('Table')}>
+				<button
+					on:click={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
+					class="hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+					type="button"
+				>
+					<Table />
+				</button>
+			</Tooltip>
 		</div>
 	{/if}
 

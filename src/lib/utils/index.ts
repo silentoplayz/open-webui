@@ -1589,3 +1589,5 @@ export const querystringValue = (key: string): string | null => {
 	const urlParams = new URLSearchParams(querystring);
 	return urlParams.get(key);
 };
+
+export { clickOutside } from './clickOutside';

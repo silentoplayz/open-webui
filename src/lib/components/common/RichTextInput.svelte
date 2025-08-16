@@ -141,11 +141,13 @@
 	import Mention from '@tiptap/extension-mention';
 
 	import { all, createLowlight } from 'lowlight';
+	import { clickOutside } from '$lib/utils';
 
 	import { PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
 
 	import FormattingButtons from './RichTextInput/FormattingButtons.svelte';
 	import TableMenu from './RichTextInput/TableMenu.svelte';
+	import EllipsisVertical from '$lib/components/icons/EllipsisVertical.svelte';
 	import { duration } from 'dayjs';
 
 	export let oncompositionstart = (e) => {};
@@ -244,6 +246,10 @@
 	let mdValue = '';
 
 	let lastSelectionBookmark = null;
+
+	let showTableMenu = false;
+	let showTableIconButton = false;
+	let tableIconButtonPosition = { x: 0, y: 0 };
 
 	// Yjs setup
 	let ydoc = null;
@@ -1029,26 +1035,6 @@
 									offset: [0, 2]
 								}
 							}),
-							BubbleMenu.configure({
-								element: tableMenuElement,
-								tippyOptions: {
-									duration: 100,
-									arrow: false,
-									placement: 'top',
-									theme: 'transparent',
-									offset: [0, 2]
-								},
-								shouldShow: ({ editor, state }) => {
-									const { selection } = state;
-									const { $head } = selection;
-									for (let i = 1; i <= $head.depth; i++) {
-										if ($head.node(i).type.name === 'table') {
-											return true;
-										}
-									}
-									return false;
-								}
-							}),
 							FloatingMenu.configure({
 								element: floatingMenuElement,
 								tippyOptions: {
@@ -1113,6 +1099,20 @@
 			editorProps: {
 				attributes: { id },
 				handleDOMEvents: {
+					click: (view, event) => {
+						const { target } = event;
+						if (target instanceof HTMLTableCellElement && target.tagName === 'TD') {
+							const rect = target.getBoundingClientRect();
+							showTableIconButton = true;
+							tableIconButtonPosition = { x: rect.left + 5, y: rect.top + 5 };
+							editor = editor;
+							return true;
+						}
+						showTableIconButton = false;
+						showTableMenu = false;
+						editor = editor;
+						return false;
+					},
 					compositionstart: (view, event) => {
 						oncompositionstart(event);
 						return false;
@@ -1365,12 +1365,33 @@
 		<FormattingButtons {editor} />
 	</div>
 
-	<div bind:this={tableMenuElement} id="table-menu" class="p-0">
-		<TableMenu {editor} />
-	</div>
-
 	<div bind:this={floatingMenuElement} id="floating-menu" class="p-0">
 		<FormattingButtons {editor} />
+	</div>
+{/if}
+
+{#if showTableIconButton}
+	<div
+		class="fixed"
+		style="top: {tableIconButtonPosition.y}px; left: {tableIconButtonPosition.x}px;"
+	>
+		<button
+			class="p-1 bg-white dark:bg-gray-800 rounded-full shadow-lg"
+			on:click={() => (showTableMenu = !showTableMenu)}
+		>
+			<EllipsisVertical />
+		</button>
+	</div>
+{/if}
+
+{#if showTableMenu}
+	<div
+		class="fixed"
+		style="top: {tableIconButtonPosition.y + 30}px; left: {tableIconButtonPosition.x}px;"
+		use:clickOutside
+		on:click_outside={() => (showTableMenu = false)}
+	>
+		<TableMenu {editor} closeMenu={() => (showTableMenu = false)} />
 	</div>
 {/if}
 
