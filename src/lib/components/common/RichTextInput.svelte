@@ -1,8 +1,32 @@
 <script lang="ts">
 	import { marked } from 'marked';
+
+	const boldItalic = {
+		name: 'boldItalic',
+		level: 'inline',
+		start(src) {
+			return src.match(/\*\*\*|___/)?.index;
+		},
+		tokenizer(src, tokens) {
+			const rule = /^(_{3}|\*{3})(.+?)\1/;
+			const match = rule.exec(src);
+			if (match) {
+				return {
+					type: 'boldItalic',
+					raw: match[0],
+					text: this.lexer.inlineTokens(match[2])
+				};
+			}
+		},
+		renderer(token) {
+			return `<strong><em>${this.parser.parseInline(token.text)}</em></strong>`;
+		}
+	};
+
 	marked.use({
 		breaks: true,
 		gfm: true,
+		extensions: [boldItalic],
 		renderer: {
 			list(body, ordered, start) {
 				const isTaskList = body.includes('data-checked=');
@@ -91,6 +115,31 @@
 		}
 	});
 
+	const BoldItalicInputRule = Extension.create({
+		name: 'boldItalicInputRule',
+
+		addInputRules() {
+			return [
+				new InputRule({
+					find: /(?:^|\s)(_{3}|\*{3})((?:.|\n)+?)\1$/,
+					handler: ({ state, range, match }) => {
+						const { tr } = state;
+						let { from, to } = range;
+						const content = match[2];
+
+						if (match[0].startsWith(' ')) {
+							from += 1;
+						}
+
+						tr.replaceWith(from, to, state.schema.text(content));
+						tr.addMark(from, from + content.length, state.schema.marks.bold.create());
+						tr.addMark(from, from + content.length, state.schema.marks.italic.create());
+					}
+				})
+			];
+		}
+	});
+
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { createEventDispatcher } from 'svelte';
 
@@ -100,7 +149,7 @@
 	import { Fragment, DOMParser } from 'prosemirror-model';
 	import { EditorState, Plugin, PluginKey, TextSelection, Selection } from 'prosemirror-state';
 	import { Decoration, DecorationSet } from 'prosemirror-view';
-	import { Editor, Extension } from '@tiptap/core';
+	import { Editor, Extension, InputRule } from '@tiptap/core';
 
 	// Yjs imports
 	import * as Y from 'yjs';
@@ -147,7 +196,7 @@
 
 	import FormattingButtons from './RichTextInput/FormattingButtons.svelte';
 	import TableMenu from './RichTextInput/TableMenu.svelte';
-	import EllipsisVertical from '$lib/components/icons/EllipsisVertical.svelte';
+import EllipsisHorizontal from '$lib/components/icons/EllipsisHorizontal.svelte';
 	import { duration } from 'dayjs';
 
 	export let oncompositionstart = (e) => {};
@@ -968,6 +1017,7 @@
 				StarterKit.configure({
 					link: link
 				}),
+				BoldItalicInputRule,
 				Placeholder.configure({ placeholder }),
 				SelectionDecoration,
 
@@ -1098,13 +1148,30 @@
 			},
 			editorProps: {
 				attributes: { id },
+				handlePaste: (view, event, slice) => {
+					const text = event.clipboardData.getData('text/plain');
+					if (text) {
+						const html = marked.parse(text);
+						const tempDiv = document.createElement('div');
+						tempDiv.innerHTML = html;
+						const newSlice = DOMParser.fromSchema(view.state.schema).parseSlice(tempDiv);
+						view.dispatch(view.state.tr.replaceSelection(newSlice));
+						return true;
+					}
+					return false;
+				},
 				handleDOMEvents: {
 					click: (view, event) => {
 						const { target } = event;
-						if (target instanceof HTMLTableCellElement && target.tagName === 'TD') {
-							const rect = target.getBoundingClientRect();
+						const cell = target.closest('td');
+
+						if (cell) {
+							const rect = cell.getBoundingClientRect();
 							showTableIconButton = true;
-							tableIconButtonPosition = { x: rect.left + 5, y: rect.top + 5 };
+							tableIconButtonPosition = {
+								x: rect.right - 32,
+								y: rect.top + 4
+							};
 							editor = editor;
 							return true;
 						}
@@ -1372,21 +1439,21 @@
 
 {#if showTableIconButton}
 	<div
-		class="fixed"
+		class="fixed z-50"
 		style="top: {tableIconButtonPosition.y}px; left: {tableIconButtonPosition.x}px;"
 	>
 		<button
-			class="p-1 bg-white dark:bg-gray-800 rounded-full shadow-lg"
+			class="p-1 bg-white dark:bg-gray-800 rounded-full shadow-lg flex items-center justify-center"
 			on:click={() => (showTableMenu = !showTableMenu)}
 		>
-			<EllipsisVertical />
+			<EllipsisHorizontal />
 		</button>
 	</div>
 {/if}
 
 {#if showTableMenu}
 	<div
-		class="fixed"
+		class="fixed z-50"
 		style="top: {tableIconButtonPosition.y + 30}px; left: {tableIconButtonPosition.x}px;"
 		use:clickOutside
 		on:click_outside={() => (showTableMenu = false)}
