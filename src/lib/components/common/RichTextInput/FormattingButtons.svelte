@@ -19,6 +19,14 @@
 	import CheckBox from '$lib/components/icons/CheckBox.svelte';
 	import ArrowLeftTag from '$lib/components/icons/ArrowLeftTag.svelte';
 	import ArrowRightTag from '$lib/components/icons/ArrowRightTag.svelte';
+	import FaceSmile from '$lib/components/icons/FaceSmile.svelte';
+	import ReactionPicker from '$lib/components/channel/Messages/Message/ReactionPicker.svelte';
+	import ChevronRight from '$lib/components/icons/ChevronRight.svelte';
+	import ChatBubble from '$lib/components/icons/ChatBubble.svelte';
+	import EyeSlash from '$lib/components/icons/EyeSlash.svelte';
+	import { fly } from 'svelte/transition';
+
+	let showMore = false;
 </script>
 
 <div
@@ -120,6 +128,18 @@
 		</button>
 	</Tooltip>
 
+	<Tooltip placement="top" content={$i18n.t('Quote Block')}>
+		<button
+			on:click={() => editor?.chain().focus().toggleBlockquote().run()}
+			class="{editor?.isActive('blockquote')
+				? 'bg-gray-50 dark:bg-gray-700'
+				: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+			type="button"
+		>
+			<ChatBubble />
+		</button>
+	</Tooltip>
+
 	<Tooltip placement="top" content={$i18n.t('Bold')}>
 		<button
 			on:click={() => editor?.chain().focus().toggleBold().run()}
@@ -156,27 +176,92 @@
 		</button>
 	</Tooltip>
 
-	<Tooltip placement="top" content={$i18n.t('Strikethrough')}>
+	{#if showMore}
+		<div class="flex gap-0.5" transition:fly={{ x: -10, duration: 200 }}>
+			<Tooltip placement="top" content={$i18n.t('Strikethrough')}>
+				<button
+					on:click={() => editor?.chain().focus().toggleStrike().run()}
+					class="{editor?.isActive('strike')
+						? 'bg-gray-50 dark:bg-gray-700'
+						: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+					type="button"
+				>
+					<Strikethrough />
+				</button>
+			</Tooltip>
+
+			<Tooltip placement="top" content={$i18n.t('Code Block')}>
+				<button
+					on:click={() => editor?.chain().focus().toggleCodeBlock().run()}
+					class="{editor?.isActive('codeBlock')
+						? 'bg-gray-50 dark:bg-gray-700'
+						: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+					type="button"
+				>
+					<CodeBracket />
+				</button>
+			</Tooltip>
+
+	<Tooltip placement="top" content={$i18n.t('Superscript')}>
 		<button
-			on:click={() => editor?.chain().focus().toggleStrike().run()}
-			class="{editor?.isActive('strike')
+			on:click={() => editor?.chain().focus().toggleSuperscript().run()}
+			class="{editor?.isActive('superscript')
 				? 'bg-gray-50 dark:bg-gray-700'
 				: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
 			type="button"
 		>
-			<Strikethrough />
+			S<sup>^</sup>
 		</button>
 	</Tooltip>
 
-	<Tooltip placement="top" content={$i18n.t('Code Block')}>
+	<Tooltip placement="top" content={$i18n.t('Spoiler')}>
 		<button
-			on:click={() => editor?.chain().focus().toggleCodeBlock().run()}
-			class="{editor?.isActive('codeBlock')
+			on:click={() => editor?.chain().focus().toggleSpoiler().run()}
+			class="{editor?.isActive('spoiler')
 				? 'bg-gray-50 dark:bg-gray-700'
 				: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
 			type="button"
 		>
-			<CodeBracket />
+			<EyeSlash />
 		</button>
 	</Tooltip>
+
+<Tooltip placement="top" content={$i18n.t('Table')}>
+    <button
+        on:click={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
+        class="hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+        type="button"
+    >
+        [T]
+    </button>
+</Tooltip>
+		</div>
+	{/if}
+
+	<ReactionPicker
+		side="top"
+		align="start"
+		outputType="char"
+		onSubmit={(emoji) => {
+			editor.chain().focus().insertContent(emoji).run();
+		}}
+	>
+		<Tooltip placement="top" content={$i18n.t('Emoji')}>
+			<button
+				class="hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+				type="button"
+			>
+				<FaceSmile />
+			</button>
+		</Tooltip>
+	</ReactionPicker>
+
+	<button
+		class="hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+		on:click={() => (showMore = !showMore)}
+	>
+		<ChevronRight
+			class="transform transition-transform duration-200 {showMore ? 'rotate-180' : ''}"
+		/>
+	</button>
 </div>

@@ -1,16 +1,12 @@
 <script lang="ts">
 	import { DropdownMenu } from 'bits-ui';
-	import VirtualList from '@sveltejs/svelte-virtual-list';
-
-	import { getContext } from 'svelte';
-
 	import { flyAndScale } from '$lib/utils/transitions';
-	import { WEBUI_BASE_URL } from '$lib/constants';
-
-	import Tooltip from '$lib/components/common/Tooltip.svelte';
-
 	import emojiGroups from '$lib/emoji-groups.json';
 	import emojiShortCodes from '$lib/emoji-shortcodes.json';
+	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import VirtualList from '@sveltejs/svelte-virtual-list';
+	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { getContext } from 'svelte';
 
 	const i18n = getContext('i18n');
 
@@ -19,6 +15,7 @@
 	export let side = 'top';
 	export let align = 'start';
 	export let user = null;
+	export let outputType = 'shortcode';
 
 	let show = false;
 	let emojis = emojiShortCodes;
@@ -61,6 +58,10 @@
 					...groupEmojis.map((emoji) => ({
 						type: 'emoji',
 						name: emoji,
+						char: emoji
+							.split('-')
+							.map((code) => String.fromCodePoint(parseInt(code, 16)))
+							.join(''),
 						shortCodes:
 							typeof emojiShortCodes[emoji] === 'string'
 								? [emojiShortCodes[emoji]]
@@ -94,8 +95,11 @@
 	const ROW_HEIGHT = 48; // Approximate height for a row with multiple emojis
 	// Handle emoji selection
 	function selectEmoji(emoji) {
-		const selectedCode = emoji.shortCodes[0];
-		onSubmit(selectedCode);
+		if (outputType === 'char') {
+			onSubmit(emoji.char);
+		} else {
+			onSubmit(emoji.shortCodes[0]);
+		}
 		show = false;
 	}
 </script>

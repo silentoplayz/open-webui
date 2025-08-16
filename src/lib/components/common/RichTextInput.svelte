@@ -127,6 +127,8 @@
 	import { TableKit } from '@tiptap/extension-table';
 	import { ListKit } from '@tiptap/extension-list';
 	import { Placeholder, CharacterCount } from '@tiptap/extensions';
+	import Superscript from '@tiptap/extension-superscript';
+	import { Spoiler } from '$lib/components/common/RichTextInput/Spoiler.js';
 
 	import Image from './RichTextInput/Image/index.js';
 	// import TiptapImage from '@tiptap/extension-image';
@@ -143,6 +145,7 @@
 	import { PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
 
 	import FormattingButtons from './RichTextInput/FormattingButtons.svelte';
+	import TableMenu from './RichTextInput/TableMenu.svelte';
 	import { duration } from 'dayjs';
 
 	export let oncompositionstart = (e) => {};
@@ -558,6 +561,7 @@
 
 	let floatingMenuElement = null;
 	let bubbleMenuElement = null;
+	let tableMenuElement = null;
 	let element;
 
 	const options = {
@@ -976,6 +980,8 @@
 				TableKit.configure({
 					table: { resizable: true }
 				}),
+				Superscript,
+				Spoiler,
 				ListKit.configure({
 					taskItem: {
 						nested: true
@@ -1021,6 +1027,26 @@
 									placement: 'top',
 									theme: 'transparent',
 									offset: [0, 2]
+								}
+							}),
+							BubbleMenu.configure({
+								element: tableMenuElement,
+								tippyOptions: {
+									duration: 100,
+									arrow: false,
+									placement: 'top',
+									theme: 'transparent',
+									offset: [0, 2]
+								},
+								shouldShow: ({ editor, state }) => {
+									const { selection } = state;
+									const { $head } = selection;
+									for (let i = 1; i <= $head.depth; i++) {
+										if ($head.node(i).type.name === 'table') {
+											return true;
+										}
+									}
+									return false;
 								}
 							}),
 							FloatingMenu.configure({
@@ -1337,6 +1363,10 @@
 {#if showFormattingToolbar}
 	<div bind:this={bubbleMenuElement} id="bubble-menu" class="p-0">
 		<FormattingButtons {editor} />
+	</div>
+
+	<div bind:this={tableMenuElement} id="table-menu" class="p-0">
+		<TableMenu {editor} />
 	</div>
 
 	<div bind:this={floatingMenuElement} id="floating-menu" class="p-0">
