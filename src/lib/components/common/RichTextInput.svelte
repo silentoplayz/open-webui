@@ -23,10 +23,32 @@
 		}
 	};
 
+	const spoiler = {
+		name: 'spoiler',
+		level: 'inline',
+		start(src) {
+			return src.match(/\|\|/)?.index;
+		},
+		tokenizer(src, tokens) {
+			const rule = /^\|\|(.+?)\|\|/;
+			const match = rule.exec(src);
+			if (match) {
+				return {
+					type: 'spoiler',
+					raw: match[0],
+					text: this.lexer.inlineTokens(match[1])
+				};
+			}
+		},
+		renderer(token) {
+			return `<span data-spoiler="true">${this.parser.parseInline(token.text)}</span>`;
+		}
+	};
+
 	marked.use({
 		breaks: true,
 		gfm: true,
-		extensions: [boldItalic],
+		extensions: [boldItalic, spoiler],
 		renderer: {
 			list(body, ordered, start) {
 				const isTaskList = body.includes('data-checked=');
