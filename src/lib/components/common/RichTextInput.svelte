@@ -45,10 +45,32 @@
 		}
 	};
 
+	const superscript = {
+		name: 'superscript',
+		level: 'inline',
+		start(src) {
+			return src.match(/\^/)?.index;
+		},
+		tokenizer(src, tokens) {
+			const rule = /^\^([^\^]+)\^/;
+			const match = rule.exec(src);
+			if (match) {
+				return {
+					type: 'superscript',
+					raw: match[0],
+					text: this.lexer.inlineTokens(match[1])
+				};
+			}
+		},
+		renderer(token) {
+			return `<sup>${this.parser.parseInline(token.text)}</sup>`;
+		}
+	};
+
 	marked.use({
 		breaks: true,
 		gfm: true,
-		extensions: [boldItalic, spoiler],
+		extensions: [boldItalic, spoiler, superscript],
 		renderer: {
 			list(body, ordered, start) {
 				const isTaskList = body.includes('data-checked=');
@@ -198,7 +220,7 @@
 	import { TableKit } from '@tiptap/extension-table';
 	import { ListKit } from '@tiptap/extension-list';
 	import { Placeholder, CharacterCount } from '@tiptap/extensions';
-	import Superscript from '@tiptap/extension-superscript';
+	import { CustomSuperscript } from './RichTextInput/Superscript.js';
 	import { Spoiler } from '$lib/components/common/RichTextInput/Spoiler.js';
 
 	import Image from './RichTextInput/Image/index.js';
@@ -1058,7 +1080,7 @@ import EllipsisHorizontal from '$lib/components/icons/EllipsisHorizontal.svelte'
 				TableKit.configure({
 					table: { resizable: true }
 				}),
-				Superscript,
+				CustomSuperscript,
 				Spoiler,
 				ListKit.configure({
 					taskItem: {
