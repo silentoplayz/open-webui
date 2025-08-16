@@ -65,34 +65,6 @@
 	<button
 		class="p-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer rounded-lg"
 		on:click={() => {
-			editor.chain().focus().setCellAttribute('textAlign', 'left').run();
-			closeMenu();
-		}}
-	>
-		Align Left
-	</button>
-	<button
-		class="p-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer rounded-lg"
-		on:click={() => {
-			editor.chain().focus().setCellAttribute('textAlign', 'center').run();
-			closeMenu();
-		}}
-	>
-		Align Center
-	</button>
-	<button
-		class="p-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer rounded-lg"
-		on:click={() => {
-			editor.chain().focus().setCellAttribute('textAlign', 'right').run();
-			closeMenu();
-		}}
-	>
-		Align Right
-	</button>
-	<hr class="my-1 border-gray-100 dark:border-gray-700" />
-	<button
-		class="p-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer rounded-lg"
-		on:click={() => {
 			editor.chain().focus().deleteTable().run();
 			closeMenu();
 		}}

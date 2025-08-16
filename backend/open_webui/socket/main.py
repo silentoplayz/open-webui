@@ -460,6 +460,10 @@ async def ydoc_document_join(sid, data):
 
 
 async def document_save_handler(document_id, data, user):
+    if user is None:
+        log.warning("User not found in session, skipping document save.")
+        return
+
     if document_id.startswith("note:"):
         note_id = document_id.split(":")[1]
         note = Notes.get_note_by_id(note_id)

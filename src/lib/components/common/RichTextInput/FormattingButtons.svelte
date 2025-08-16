@@ -15,6 +15,7 @@
 	import Strikethrough from '$lib/components/icons/Strikethrough.svelte';
 	import Underline from '$lib/components/icons/Underline.svelte';
 	import Superscript from '$lib/components/icons/Superscript.svelte';
+	import Subscript from '$lib/components/icons/Subscript.svelte';
 	import Table from '$lib/components/icons/Table.svelte';
 
 	import Tooltip from '../Tooltip.svelte';
@@ -213,6 +214,18 @@
 					type="button"
 				>
 					<Superscript />
+				</button>
+			</Tooltip>
+
+			<Tooltip placement="top" content={$i18n.t('Subscript')}>
+				<button
+					on:click={() => editor?.chain().focus().toggleSubscript().run()}
+					class="{editor?.isActive('subscript')
+						? 'bg-gray-50 dark:bg-gray-700'
+						: ''} hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-1.5 transition-all"
+					type="button"
+				>
+					<Subscript />
 				</button>
 			</Tooltip>
 
