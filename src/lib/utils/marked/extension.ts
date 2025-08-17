@@ -87,8 +87,134 @@ function detailsExtension() {
 	};
 }
 
+function definitionListTokenizer(src: string) {
+    const rule = /^(?:[^\n]+\n)(?::[^\n]*(?:\n|$))+/;
+    const match = rule.exec(src);
+    if (match) {
+        const token = {
+            type: 'definitionList',
+            raw: match[0],
+            text: match[0].trim(),
+            tokens: []
+        };
+        this.lexer.inline(token.text, token.tokens);
+        return token;
+    }
+}
+
+function definitionListRenderer(token: any) {
+    let html = '<dl>';
+    const lines = token.raw.split('\n');
+    let inDd = false;
+    for (const line of lines) {
+        if (line.startsWith(':')) {
+            if (!inDd) {
+                html += '<dd>';
+                inDd = true;
+            }
+            html += this.parser.parseInline(line.substring(1).trim());
+        } else {
+            if (inDd) {
+                html += '</dd>';
+                inDd = false;
+            }
+            html += `<dt>${this.parser.parseInline(line.trim())}</dt>`;
+        }
+    }
+    if (inDd) {
+        html += '</dd>';
+    }
+    html += '</dl>';
+    return html;
+}
+
+function definitionListExtension() {
+    return {
+        name: 'definitionList',
+        level: 'block',
+        start(src) { return src.indexOf('\n:'); },
+        tokenizer: definitionListTokenizer,
+        renderer: definitionListRenderer
+    };
+}
+
+function abbreviationsTokenizer(src: string) {
+    const rule = /^\*\[(.+?)\]:\s*(.+)$/;
+    const match = rule.exec(src);
+    if (match) {
+        return {
+            type: 'abbreviations',
+            raw: match[0],
+            abbr: match[1],
+            definition: match[2]
+        };
+    }
+}
+
+function abbreviationsRenderer(token: any) {
+    if (!this.parser.options.abbreviations) {
+        this.parser.options.abbreviations = {};
+    }
+    this.parser.options.abbreviations[token.abbr] = token.definition;
+    return '';
+}
+
+function inlineAbbreviationsTokenizer(src: string) {
+    if (!this.parser.options.abbreviations) {
+        return;
+    }
+    const rule = new RegExp('^(' + Object.keys(this.parser.options.abbreviations).join('|') + ')');
+    const match = rule.exec(src);
+    if (match) {
+        return {
+            type: 'inlineAbbreviations',
+            raw: match[0],
+            text: match[1]
+        };
+    }
+}
+
+function inlineAbbreviationsRenderer(token: any) {
+    if (!this.parser.options.abbreviations) {
+        return token.text;
+    }
+    const definition = this.parser.options.abbreviations[token.text];
+    return `<abbr title="${definition}">${token.text}</abbr>`;
+}
+
+function abbreviationsExtension() {
+    return {
+        name: 'abbreviations',
+        level: 'block',
+        start(src) { return src.indexOf('*['); },
+        tokenizer: abbreviationsTokenizer,
+        renderer: abbreviationsRenderer
+    };
+}
+
+function inlineAbbreviationsExtension() {
+    return {
+        name: 'inlineAbbreviations',
+        level: 'inline',
+        start(src) {
+            if (!this.parser.options.abbreviations) {
+                return -1;
+            }
+            const keys = Object.keys(this.parser.options.abbreviations);
+            if (keys.length === 0) {
+                return -1;
+            }
+            const rule = new RegExp('^(' + keys.join('|') + ')');
+            const match = rule.exec(src);
+            return match ? match.index : -1;
+        },
+        tokenizer: inlineAbbreviationsTokenizer,
+        renderer: inlineAbbreviationsRenderer
+    };
+}
+
 export default function (options = {}) {
 	return {
-		extensions: [detailsExtension(options)]
+		extensions: [detailsExtension(options), definitionListExtension(), abbreviationsExtension(), inlineAbbreviationsExtension()]
 	};
 }
