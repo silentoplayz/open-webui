@@ -13,7 +13,6 @@
 	import Image from '$lib/components/common/Image.svelte';
 	import KatexRenderer from './KatexRenderer.svelte';
 	import Source from './Source.svelte';
-	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import HtmlToken from './HTMLToken.svelte';
 	import TextToken from './MarkdownInlineTokens/TextToken.svelte';
 	import CodespanToken from './MarkdownInlineTokens/CodespanToken.svelte';
@@ -30,19 +29,15 @@
 	{:else if token.type === 'html'}
 		<HtmlToken {id} {token} {onSourceClick} />
 	{:else if token.type === 'link'}
-		<Tooltip content={token.title} placement="top">
-			{#if token.tokens}
-				<a href={token.href} target="_blank" rel="nofollow" title={token.title}>
-					<svelte:self id={`${id}-a`} tokens={token.tokens} {onSourceClick} {done} />
-				</a>
-			{:else}
-				<a href={token.href} target="_blank" rel="nofollow" title={token.title}>{token.text}</a>
-			{/if}
-		</Tooltip>
+		{#if token.tokens}
+			<a href={token.href} target="_blank" rel="nofollow" title={token.title}>
+				<svelte:self id={`${id}-a`} tokens={token.tokens} {onSourceClick} {done} />
+			</a>
+		{:else}
+			<a href={token.href} target="_blank" rel="nofollow" title={token.title}>{token.text}</a>
+		{/if}
 	{:else if token.type === 'image'}
-		<Tooltip content={token.title} placement="top">
-			<Image src={token.href} alt={token.text} title={token.title} />
-		</Tooltip>
+		<Image src={token.href} alt={token.text} />
 	{:else if token.type === 'strong'}
 		<strong><svelte:self id={`${id}-strong`} tokens={token.tokens} {onSourceClick} /></strong>
 	{:else if token.type === 'em'}
