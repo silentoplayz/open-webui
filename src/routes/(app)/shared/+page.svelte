@@ -36,6 +36,7 @@
 	import MenuLines from '$lib/components/icons/MenuLines.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
+	import SortIcon from '$lib/components/icons/SortIcon.svelte';
 
 	let showShareChatModal = false;
 	let selectedChatId = '';
@@ -658,41 +659,7 @@
 						>
 							<div class="flex items-center">
 								<span>Title</span>
-								{#if orderBy === 'title'}
-									<span class="ml-1">
-										{#if direction === 'asc'}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-										{/if}
-									</span>
-								{/if}
+								<SortIcon direction={direction} active={orderBy === 'title'} />
 							</div>
 						</th>
 						<th
@@ -701,41 +668,7 @@
 						>
 							<div class="flex items-center">
 								<span>Created On</span>
-								{#if orderBy === 'created_at'}
-									<span class="ml-1">
-										{#if direction === 'asc'}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-										{/if}
-									</span>
-								{/if}
+								<SortIcon direction={direction} active={orderBy === 'created_at'} />
 							</div>
 						</th>
 						<th
@@ -744,41 +677,7 @@
 						>
 							<div class="flex items-center">
 								<span>Last Updated</span>
-								{#if orderBy === 'updated_at'}
-									<span class="ml-1">
-										{#if direction === 'asc'}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-										{/if}
-									</span>
-								{/if}
+								<SortIcon direction={direction} active={orderBy === 'updated_at'} />
 							</div>
 						</th>
 						<th
@@ -787,41 +686,7 @@
 						>
 							<div class="flex items-center">
 								<span>Link</span>
-								{#if orderBy === 'share_id'}
-									<span class="ml-1">
-										{#if direction === 'asc'}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-										{/if}
-									</span>
-								{/if}
+								<SortIcon direction={direction} active={orderBy === 'share_id'} />
 							</div>
 						</th>
 						<th
@@ -830,41 +695,16 @@
 						>
 							<div class="flex items-center">
 								<span>Public</span>
-								{#if orderBy === 'is_public'}
-									<span class="ml-1">
-										{#if direction === 'asc'}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-										{/if}
-									</span>
-								{/if}
+								<SortIcon direction={direction} active={orderBy === 'is_public'} />
+							</div>
+						</th>
+						<th
+							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer whitespace-nowrap"
+							on:click={() => setSortKey('password')}
+						>
+							<div class="flex items-center">
+								<span>Password</span>
+								<SortIcon direction={direction} active={orderBy === 'password'} />
 							</div>
 						</th>
 						<th
@@ -873,41 +713,7 @@
 						>
 							<div class="flex items-center">
 								<span>Views</span>
-								{#if orderBy === 'views'}
-									<span class="ml-1">
-										{#if direction === 'asc'}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-										{/if}
-									</span>
-								{/if}
+								<SortIcon direction={direction} active={orderBy === 'views'} />
 							</div>
 						</th>
 						<th
@@ -916,41 +722,7 @@
 						>
 							<div class="flex items-center">
 								<span>Clones</span>
-								{#if orderBy === 'clones'}
-									<span class="ml-1">
-										{#if direction === 'asc'}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-										{/if}
-									</span>
-								{/if}
+								<SortIcon direction={direction} active={orderBy === 'clones'} />
 							</div>
 						</th>
 						<th
@@ -959,41 +731,7 @@
 						>
 							<div class="flex items-center">
 								<span>Status</span>
-								{#if orderBy === 'revoked_at'}
-									<span class="ml-1">
-										{#if direction === 'asc'}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="h-4 w-4"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-										{/if}
-									</span>
-								{/if}
+								<SortIcon direction={direction} active={orderBy === 'revoked_at'} />
 							</div>
 						</th>
 						<th
@@ -1067,6 +805,9 @@
 									>{chat.is_public ? 'Yes' : 'No'}</td
 								>
 								<td class="px-6 py-3 whitespace-nowrap text-gray-500 dark:text-gray-400 whitespace-nowrap"
+									>{chat.has_password ? 'Yes' : 'No'}</td
+								>
+								<td class="px-6 py-3 whitespace-nowrap text-gray-500 dark:text-gray-400 whitespace-nowrap"
 									>{chat.views}</td
 								>
 								<td class="px-6 py-3 whitespace-nowrap text-gray-500 dark:text-gray-400 whitespace-nowrap"
@@ -1138,7 +879,7 @@
 						{/each}
 					{:else}
 						<tr>
-							<td colspan="6" class="text-center py-4 text-gray-500 dark:text-gray-400"
+							<td colspan="12" class="text-center py-4 text-gray-500 dark:text-gray-400"
 								>No results found</td
 							>
 						</tr>

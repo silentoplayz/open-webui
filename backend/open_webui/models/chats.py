@@ -179,6 +179,7 @@ class ChatTitleIdResponse(BaseModel):
     keep_link_active_after_max_clones: Optional[bool] = False
     share_show_qr_code: Optional[bool] = None
     share_use_gradient: Optional[bool] = None
+    has_password: bool = False
 
 
 class ChatTable:
@@ -256,6 +257,20 @@ class ChatTable:
 
                 return ChatModel.model_validate(chat_item)
         except Exception:
+            return None
+
+    def update_chat_password_updated_at(self, id: str) -> Optional[ChatModel]:
+        try:
+            with get_db() as db:
+                chat = db.get(Chat, id)
+                if chat:
+                    chat.password_updated_at = int(time.time())
+                    db.commit()
+                    db.refresh(chat)
+                    return ChatModel.model_validate(chat)
+                return None
+        except Exception as e:
+            log.error(f"Error updating password_updated_at for chat {id}: {e}")
             return None
 
     def update_chat_title_by_id(self, id: str, title: str) -> Optional[ChatModel]:
@@ -704,6 +719,7 @@ class ChatTable:
                 Chat.expires_at,
                 Chat.expire_on_views,
                 Chat.is_public,
+                Chat.password,
                 Chat.views,
                 Chat.clones,
                 Chat.revoked_at,
@@ -734,12 +750,13 @@ class ChatTable:
                             "expires_at": chat[5],
                             "expire_on_views": chat[6],
                             "is_public": chat[7],
-                            "views": chat[8],
-                            "clones": chat[9],
-                            "revoked_at": chat[10],
-                            "allow_cloning": chat[11],
-                            "share_show_qr_code": chat[12],
-                            "share_use_gradient": chat[13],
+                            "has_password": chat[8] is not None,
+                            "views": chat[9],
+                            "clones": chat[10],
+                            "revoked_at": chat[11],
+                            "allow_cloning": chat[12],
+                            "share_show_qr_code": chat[13],
+                            "share_use_gradient": chat[14],
                         }
                     )
                     for chat in all_chats

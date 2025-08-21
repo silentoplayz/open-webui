@@ -483,6 +483,10 @@ async def verify_shared_chat_password(
             },
         )
 
+    if chat.password and not chat.password_updated_at:
+        log.warning(f"Fixing missing password_updated_at for chat {chat.id}")
+        chat = Chats.update_chat_password_updated_at(chat.id)
+
     # Password is correct, create a short-lived token
     token = create_token(
         data={
@@ -564,8 +568,14 @@ async def get_shared_chat_by_id(
         if not is_owner:
             token_name = f"shared-chat-{chat_unrestricted.id}-token"
             token = request.cookies.get(token_name)
+            data = decode_token(token) if token else None
 
-            if not token:
+            # If token is invalid or missing, or subject doesn't match, request password
+            if not data or data.get("sub") != f"shared-chat-{chat_unrestricted.id}":
+                if token:
+                    # If there was a token but it's invalid, delete it
+                    response.delete_cookie(key=token_name)
+
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail={
@@ -574,14 +584,7 @@ async def get_shared_chat_by_id(
                     },
                 )
 
-            data = decode_token(token)
-            if not data or data.get("sub") != f"shared-chat-{chat_unrestricted.id}":
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"code": "INVALID_TOKEN", "message": "Invalid token."},
-                )
-
-            # Check if the password has been updated since the token was issued
+            # Token is valid, now check if password has been updated
             if (
                 chat_unrestricted.password_updated_at
                 and data.get("password_updated_at")
