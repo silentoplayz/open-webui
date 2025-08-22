@@ -37,6 +37,11 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import SortIcon from '$lib/components/icons/SortIcon.svelte';
+	import Eye from '$lib/components/icons/Eye.svelte';
+	import EyeSlash from '$lib/components/icons/EyeSlash.svelte';
+	import Pencil from '$lib/components/icons/Pencil.svelte';
+	import DocumentDuplicate from '$lib/components/icons/DocumentDuplicate.svelte';
+	import ArrowPath from '$lib/components/icons/ArrowPath.svelte';
 
 	let showShareChatModal = false;
 	let selectedChatId = '';
@@ -489,39 +494,40 @@
 
 		const data = e.dataTransfer.getData('text/plain');
 		try {
-			const { type, id, item } = JSON.parse(data);
-			if (type === 'chat') {
-				const ownChat = await getChatById(localStorage.token, id).catch(() => null);
+			if (data) {
+				const { type, id, item } = JSON.parse(data);
+				if (type === 'chat') {
+					const ownChat = await getChatById(localStorage.token, id).catch(() => null);
 
-				if (ownChat) {
-					selectedChatId = id;
-					showShareChatModal = true;
-				} else {
-					const canClone = ($user?.role === 'admin' || $user?.permissions?.chat?.clone) ?? true;
-					if (!canClone) {
-						toast.error($i18n.t("You don't have permission to clone chats."));
-						return;
-					}
-
-					const res = await importChat(
-						localStorage.token,
-						item.chat,
-						item.meta,
-						item.pinned,
-						item.folder_id
-					);
-
-					if (res) {
-						toast.success('Chat imported successfully');
-						chatsUpdated.set(true);
-						selectedChatId = res.id;
+					if (ownChat) {
+						selectedChatId = id;
 						showShareChatModal = true;
+					} else {
+						const canClone = ($user?.role === 'admin' || $user?.permissions?.chat?.clone) ?? true;
+						if (!canClone) {
+							toast.error($i18n.t("You don't have permission to clone chats."));
+							return;
+						}
+
+						const res = await importChat(
+							localStorage.token,
+							item.chat,
+							item.meta,
+							item.pinned,
+							item.folder_id
+						);
+
+						if (res) {
+							toast.success('Chat imported successfully');
+							chatsUpdated.set(true);
+							selectedChatId = res.id;
+							showShareChatModal = true;
+						}
 					}
 				}
 			}
 		} catch (e) {
-			toast.error('Failed to share chat.');
-			console.error(e);
+			// This is a drag and drop of a non-chat item, so we don't need to show an error
 		}
 	}}
 >
@@ -884,53 +890,55 @@
 									{/if}
 								</td>
 								<td class="px-6 py-3 whitespace-nowrap text-sm font-medium">
-									{#if chat.status === 'active'}
-										<Tooltip content="Revoke Link" className="inline-block">
+									<div class="flex items-center">
+										{#if chat.status === 'active'}
+											<Tooltip content="Revoke Link" className="inline-block">
+												<button
+													class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+													on:click={() => {
+														revokeLink(chat.id);
+													}}><EyeSlash class="size-4" /></button
+												>
+											</Tooltip>
+										{:else}
+											<Tooltip content="Restore Link" className="inline-block">
+												<button
+													class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+													on:click={() => {
+														restoreLink(chat.id);
+													}}><Eye class="size-4" /></button
+												>
+											</Tooltip>
+										{/if}
+										<Tooltip content="Modify Share Link" className="inline-block">
 											<button
-												class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:underline"
+												class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 ml-2"
 												on:click={() => {
-													revokeLink(chat.id);
-												}}>Revoke</button
+													selectedChatId = chat.id;
+													showShareChatModal = true;
+												}}><Pencil class="size-4" /></button
 											>
 										</Tooltip>
-									{:else}
-										<Tooltip content="Restore Link" className="inline-block">
+										{#if $user?.role === 'admin' || $user?.permissions?.chat?.clone}
+											<Tooltip content="Clone Chat" className="inline-block">
+												<button
+													class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 ml-2"
+													on:click={() => {
+														cloneChat(chat.share_id);
+													}}><DocumentDuplicate class="size-4" /></button
+												>
+											</Tooltip>
+										{/if}
+										<Tooltip content="Reset Statistics" className="inline-block">
 											<button
-												class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:underline"
+												class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 ml-2"
 												on:click={() => {
-													restoreLink(chat.id);
-												}}>Restore</button
+													chatToResetStats = chat;
+													showConfirmResetStats = true;
+												}}><ArrowPath class="size-4" /></button
 											>
 										</Tooltip>
-									{/if}
-									<Tooltip content="Modify Share Link" className="inline-block">
-										<button
-											class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:underline ml-4"
-											on:click={() => {
-												selectedChatId = chat.id;
-												showShareChatModal = true;
-											}}>Modify</button
-										>
-									</Tooltip>
-									{#if $user?.role === 'admin' || $user?.permissions?.chat?.clone}
-										<Tooltip content="Clone Chat" className="inline-block">
-											<button
-												class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:underline ml-4"
-												on:click={() => {
-													cloneChat(chat.share_id);
-												}}>Clone</button
-											>
-										</Tooltip>
-									{/if}
-									<Tooltip content="Reset Statistics" className="inline-block">
-										<button
-											class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:underline ml-4"
-											on:click={() => {
-												chatToResetStats = chat;
-												showConfirmResetStats = true;
-											}}>Reset Stats</button
-										>
-									</Tooltip>
+									</div>
 								</td>
 							</tr>
 						{/each}
