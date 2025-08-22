@@ -108,6 +108,31 @@
 		statusFilter = statusFilterOptions[newIndex].value;
 		page = 1;
 	};
+
+	const handleDateScroll = (event, type) => {
+		event.preventDefault();
+		const direction = event.deltaY < 0 ? 1 : -1;
+
+		if (type === 'start') {
+			if (startDate) {
+				const newStartDate = dayjs(startDate).add(direction, 'day');
+				startDate = newStartDate.format('YYYY-MM-DD');
+
+				if (endDate && newStartDate.isAfter(dayjs(endDate))) {
+					endDate = startDate;
+				}
+			}
+		} else if (type === 'end') {
+			if (endDate) {
+				const newEndDate = dayjs(endDate).add(direction, 'day');
+				endDate = newEndDate.format('YYYY-MM-DD');
+
+				if (startDate && newEndDate.isBefore(dayjs(startDate))) {
+					startDate = endDate;
+				}
+			}
+		}
+	};
 	let dateFilterApplied = false;
 
 	const handleDateFilter = () => {
@@ -542,6 +567,7 @@
 							endDate = startDate;
 						}
 					}}
+					on:wheel|preventDefault={(e) => handleDateScroll(e, 'start')}
 				/>
 				<input
 					type="date"
@@ -553,6 +579,7 @@
 							startDate = endDate;
 						}
 					}}
+					on:wheel|preventDefault={(e) => handleDateScroll(e, 'end')}
 				/>
 				<button
 					class="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
