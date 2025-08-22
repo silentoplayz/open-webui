@@ -192,8 +192,12 @@
 						const isExpiredByTime = chat.expires_at && chat.expires_at <= chat.revoked_at;
 						const isExpiredByViews =
 							chat.expire_on_views && chat.views >= chat.expire_on_views;
+						const isExpiredByClones =
+							chat.max_clones &&
+							!chat.keep_link_active_after_max_clones &&
+							chat.clones >= chat.max_clones;
 
-						if (isExpiredByTime || isExpiredByViews) {
+						if (isExpiredByTime || isExpiredByViews || isExpiredByClones) {
 							status = 'expired';
 						} else {
 							status = 'revoked';
@@ -226,7 +230,11 @@
 				const isExpiredByTime = chat.expires_at && chat.expires_at <= now;
 				const isExpiredByViews =
 					chat.expire_on_views && chat.views >= chat.expire_on_views;
-				return (isExpiredByTime || isExpiredByViews) && chat.status === 'active';
+				const isExpiredByClones =
+					chat.max_clones &&
+					!chat.keep_link_active_after_max_clones &&
+					chat.clones >= chat.max_clones;
+				return (isExpiredByTime || isExpiredByViews || isExpiredByClones) && chat.status === 'active';
 			});
 
 			if (chatsToExpire.length > 0) {
