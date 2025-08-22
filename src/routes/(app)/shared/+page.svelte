@@ -75,7 +75,8 @@
 	const statusFilterOptions = [
 		{ value: 'all', label: 'Status: All' },
 		{ value: 'active', label: 'Status: Active' },
-		{ value: 'revoked', label: 'Status: Revoked' }
+		{ value: 'revoked', label: 'Status: Revoked' },
+		{ value: 'expired', label: 'Status: Expired' }
 	];
 
 	$: selectedPublicFilterIndex = publicFilterOptions.findIndex((o) => o.value === publicFilter);
@@ -183,12 +184,28 @@
 			total = res.total;
 			grandTotal = res.grand_total;
 
+			const now = Math.floor(Date.now() / 1000);
 			sharedChatsStore.set(
-				res.chats.map((chat) => ({
-					...chat,
-					status: chat.revoked_at ? 'revoked' : 'active',
-					selected: $selectedSharedChatIds.includes(chat.id)
-				}))
+				res.chats.map((chat) => {
+					let status = 'active';
+					if (chat.revoked_at) {
+						const isExpiredByTime = chat.expires_at && chat.expires_at <= chat.revoked_at;
+						const isExpiredByViews =
+							chat.expire_on_views && chat.views >= chat.expire_on_views;
+
+						if (isExpiredByTime || isExpiredByViews) {
+							status = 'expired';
+						} else {
+							status = 'revoked';
+						}
+					}
+
+					return {
+						...chat,
+						status: status,
+						selected: $selectedSharedChatIds.includes(chat.id)
+					};
+				})
 			);
 
 			if (res.chats.length === 0 && _page > 1) {
@@ -220,7 +237,7 @@
 							sharedChatsStore.update((chats) => {
 								return chats.map((c) => {
 									if (c.id === chat.id) {
-										return { ...c, status: 'revoked', revoked_at: now };
+										return { ...c, status: 'expired', revoked_at: now };
 									}
 									return c;
 								});
@@ -845,6 +862,11 @@
 										<span
 											class="px-2 py-1 text-xs font-semibold leading-5 text-green-800 bg-green-100 rounded-full"
 											>Active</span
+										>
+									{:else if chat.status === 'expired'}
+										<span
+											class="px-2 py-1 text-xs font-semibold leading-5 text-yellow-800 bg-yellow-100 rounded-full"
+											>Expired</span
 										>
 									{:else}
 										<span
