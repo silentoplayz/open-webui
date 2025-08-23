@@ -34,6 +34,7 @@
 
 	let loading = false;
 	let showResetModal = false;
+	let showSortConfirm = false;
 
 	$: if (show) {
 		init();
@@ -118,6 +119,27 @@
 	}}
 />
 
+<ConfirmDialog
+	title={$i18n.t('Sort Models by Name')}
+	message={$i18n.t('This will sort the model list alphabetically. Are you sure?')}
+	bind:show={showSortConfirm}
+	on:confirm={() => {
+		sortKey = 'model';
+		if (sortOrder === 'asc') {
+			sortOrder = 'desc';
+		} else {
+			sortOrder = 'asc';
+		}
+		modelIds = modelIds
+			.filter((id) => id !== '')
+			.sort((a, b) => {
+				const nameA = $models.find((model) => model.id === a)?.name || a;
+				const nameB = $models.find((model) => model.id === b)?.name || b;
+				return sortOrder === 'desc' ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+			});
+	}}
+/>
+
 <Modal size="sm" bind:show>
 	<div>
 		<div class=" flex justify-between dark:text-gray-100 px-5 pt-4 pb-2">
@@ -146,29 +168,13 @@
 						<div>
 							<div class="flex flex-col w-full">
 								<button
-									class="mb-1 flex gap-2"
+									class="mb-1 flex gap-2 p-1.5 -mx-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
 									type="button"
 									on:click={() => {
-										sortKey = 'model';
-
-										if (sortOrder === 'asc') {
-											sortOrder = 'desc';
-										} else {
-											sortOrder = 'asc';
-										}
-
-										modelIds = modelIds
-											.filter((id) => id !== '')
-											.sort((a, b) => {
-												const nameA = $models.find((model) => model.id === a)?.name || a;
-												const nameB = $models.find((model) => model.id === b)?.name || b;
-												return sortOrder === 'desc'
-													? nameA.localeCompare(nameB)
-													: nameB.localeCompare(nameA);
-											});
+										showSortConfirm = true;
 									}}
 								>
-									<div class="text-xs text-gray-500">{$i18n.t('Reorder Models')}</div>
+									<div class="text-xs text-gray-500">{$i18n.t('Sort by Name')}</div>
 
 									{#if sortKey === 'model'}
 										<span class="font-normal self-center">
