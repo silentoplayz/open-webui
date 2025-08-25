@@ -87,6 +87,38 @@ def get_session_user_chat_list(
         )
 
 
+@router.get("/shared/ids", response_model=list[str])
+async def get_all_shared_chat_ids(
+    user=Depends(get_verified_user),
+    query: Optional[str] = None,
+    start_date: Optional[int] = None,
+    end_date: Optional[int] = None,
+    is_public: Optional[bool] = None,
+    status: Optional[str] = None,
+):
+    try:
+        filter = {}
+        if query:
+            filter["query"] = query
+        if start_date:
+            filter["start_date"] = start_date
+        if end_date:
+            filter["end_date"] = end_date
+        if is_public is not None:
+            filter["is_public"] = is_public
+        if status:
+            filter["status"] = status
+
+        return Chats.get_all_shared_chat_ids_by_user_id(
+            user.id, filter=filter
+        )
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
+        )
+
+
 ############################
 # DeleteAllChats
 ############################

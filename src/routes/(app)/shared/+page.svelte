@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
+	import { tick } from 'svelte';
 	import { get } from 'svelte/store';
 	import {
 		getSharedChats,
+		getAllSharedChatIds,
 		deleteSharedChatById,
 		revokeAllSharedChats,
 		resetChatStatsById,
@@ -455,21 +457,66 @@
 		showConfirmClearRevoked = false;
 	};
 
-	const selectAll = (event) => {
-		const checked = event.target.checked;
-		sharedChatsStore.update((chats) =>
-			chats.map((chat) => ({ ...chat, selected: checked }))
-		);
+	let selectionLevel = 'none'; // none, page, some, all
+	let masterCheckbox;
 
-		if (checked) {
-			selectedSharedChatIds.update((ids) => [
-				...new Set([...ids, ...$sharedChatsStore.map((chat) => chat.id)])
-			]);
+	const handleMasterCheckboxClick = async () => {
+		const currentLevel = selectionLevel;
+
+		if (currentLevel === 'all') {
+			selectedSharedChatIds.set([]);
+		} else if (currentLevel === 'page') {
+			const allIds = await getAllSharedChatIds(
+				localStorage.token,
+				searchTerm,
+				startDate ? dayjs(startDate).startOf('day').unix() : undefined,
+				endDate ? dayjs(endDate).endOf('day').unix() : undefined,
+				publicFilter,
+				statusFilter
+			);
+			selectedSharedChatIds.set(allIds);
 		} else {
-			const chatIdsToUnselect = $sharedChatsStore.map((chat) => chat.id);
-			selectedSharedChatIds.update((ids) => ids.filter((id) => !chatIdsToUnselect.includes(id)));
+			const currentPageIds = $sharedChatsStore.map((chat) => chat.id);
+			selectedSharedChatIds.update((ids) => [...new Set([...ids, ...currentPageIds])]);
 		}
+
+		await tick();
+
+		setTimeout(() => {
+			if (masterCheckbox) {
+				masterCheckbox.checked = selectionLevel === 'page' || selectionLevel === 'all';
+				masterCheckbox.indeterminate = selectionLevel === 'some';
+			}
+		}, 0);
 	};
+
+	$: {
+		if (grandTotal > 0) {
+			const allSelected = $selectedSharedChatIds.length === total;
+			const allOnPage =
+				$sharedChatsStore.length > 0 &&
+				$sharedChatsStore.every((c) => $selectedSharedChatIds.includes(c.id));
+			const someOnPage = $sharedChatsStore.some((c) => $selectedSharedChatIds.includes(c.id));
+
+			if (allSelected && total > 0) {
+				selectionLevel = 'all';
+			} else if (allOnPage) {
+				selectionLevel = 'page';
+			} else if (someOnPage) {
+				selectionLevel = 'some';
+			} else {
+				selectionLevel = 'none';
+			}
+		} else {
+			selectionLevel = 'none';
+		}
+	}
+
+	$: {
+		sharedChatsStore.update((chats) =>
+			chats.map((c) => ({ ...c, selected: $selectedSharedChatIds.includes(c.id) }))
+		);
+	}
 </script>
 
 <style>
@@ -703,11 +750,8 @@
 								<input
 									type="checkbox"
 									class="form-checkbox"
-									on:change={selectAll}
-									checked={$selectedSharedChatIds.length > 0 &&
-										$selectedSharedChatIds.length === $sharedChatsStore.length}
-									indeterminate={$selectedSharedChatIds.length > 0 &&
-										$selectedSharedChatIds.length < $sharedChatsStore.length}
+									on:click|preventDefault={handleMasterCheckboxClick}
+									bind:this={masterCheckbox}
 								/>
 							</th>
 						{/if}

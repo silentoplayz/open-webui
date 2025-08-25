@@ -1527,5 +1527,75 @@ class ChatTable:
             db.rollback()
             return False
 
+    def get_all_shared_chat_ids_by_user_id(
+        self,
+        user_id: str,
+        filter: Optional[dict] = None,
+    ) -> list[str]:
+        with get_db() as db:
+            query = (
+                db.query(Chat.id)
+                .filter_by(user_id=user_id)
+                .filter(Chat.share_id.isnot(None))
+            )
+
+            if filter:
+                query_key = filter.get("query")
+                if query_key:
+                    query = query.filter(Chat.title.ilike(f"%{query_key}%"))
+
+                start_date = filter.get("start_date")
+                end_date = filter.get("end_date")
+                is_public = filter.get("is_public")
+                status = filter.get("status")
+
+                if status == "active":
+                    query = query.filter(Chat.revoked_at.is_(None))
+                elif status == "expired":
+                    now = int(time.time())
+                    is_expired = or_(
+                        and_(Chat.expires_at.isnot(None), Chat.expires_at <= now),
+                        and_(
+                            Chat.expire_on_views.isnot(None),
+                            Chat.views >= Chat.expire_on_views,
+                        ),
+                        and_(
+                            Chat.max_clones.isnot(None),
+                            not_(Chat.keep_link_active_after_max_clones),
+                            Chat.clones >= Chat.max_clones,
+                        ),
+                    )
+                    query = query.filter(and_(Chat.revoked_at.isnot(None), is_expired))
+                elif status == "revoked":
+                    now = int(time.time())
+                    is_expired = or_(
+                        and_(Chat.expires_at.isnot(None), Chat.expires_at <= now),
+                        and_(
+                            Chat.expire_on_views.isnot(None),
+                            Chat.views >= Chat.expire_on_views,
+                        ),
+                        and_(
+                            Chat.max_clones.isnot(None),
+                            not_(Chat.keep_link_active_after_max_clones),
+                            Chat.clones >= Chat.max_clones,
+                        ),
+                    )
+                    query = query.filter(
+                        and_(Chat.revoked_at.isnot(None), not_(is_expired))
+                    )
+
+                if start_date and end_date:
+                    query = query.filter(
+                        and_(
+                            Chat.created_at >= start_date,
+                            Chat.created_at <= end_date,
+                        )
+                    )
+
+                if is_public is not None:
+                    query = query.filter(Chat.is_public == is_public)
+
+            return [id for (id,) in query.all()]
+
 
 Chats = ChatTable()
