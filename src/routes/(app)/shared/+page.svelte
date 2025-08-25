@@ -758,6 +758,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
 							on:click={() => setSortKey('title')}
+							on:wheel|preventDefault={() => setSortKey('title')}
 						>
 							<div class="flex items-center">
 								<span>Title</span>
@@ -767,6 +768,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
 							on:click={() => setSortKey('created_at')}
+							on:wheel|preventDefault={() => setSortKey('created_at')}
 						>
 							<div class="flex items-center">
 								<span>Created On</span>
@@ -776,6 +778,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
 							on:click={() => setSortKey('updated_at')}
+							on:wheel|preventDefault={() => setSortKey('updated_at')}
 						>
 							<div class="flex items-center">
 								<span>Last Updated</span>
@@ -785,6 +788,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
 							on:click={() => setSortKey('share_id')}
+							on:wheel|preventDefault={() => setSortKey('share_id')}
 						>
 							<div class="flex items-center">
 								<span>Link</span>
@@ -794,6 +798,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer whitespace-nowrap"
 							on:click={() => setSortKey('is_public')}
+							on:wheel|preventDefault={() => setSortKey('is_public')}
 						>
 							<div class="flex items-center">
 								<span>Public</span>
@@ -803,6 +808,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer whitespace-nowrap"
 							on:click={() => setSortKey('password')}
+							on:wheel|preventDefault={() => setSortKey('password')}
 						>
 							<div class="flex items-center">
 								<span>Password</span>
@@ -812,6 +818,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer whitespace-nowrap"
 							on:click={() => setSortKey('views')}
+							on:wheel|preventDefault={() => setSortKey('views')}
 						>
 							<div class="flex items-center">
 								<span>Views</span>
@@ -821,6 +828,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer whitespace-nowrap"
 							on:click={() => setSortKey('clones')}
+							on:wheel|preventDefault={() => setSortKey('clones')}
 						>
 							<div class="flex items-center">
 								<span>Clones</span>
@@ -830,6 +838,7 @@
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer whitespace-nowrap"
 							on:click={() => setSortKey('revoked_at')}
+							on:wheel|preventDefault={() => setSortKey('revoked_at')}
 						>
 							<div class="flex items-center">
 								<span>Status</span>
