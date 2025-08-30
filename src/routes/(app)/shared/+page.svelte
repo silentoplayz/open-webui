@@ -28,7 +28,10 @@
 		selectedSharedChatIds,
 		showSidebar,
 		chatsUpdated,
-		settings
+		settings,
+
+		WEBUI_NAME
+
 	} from '$lib/stores';
 	import { getModels } from '$lib/apis';
 	import { clearRevokedSharedChats } from '$lib/apis/chats';
@@ -535,7 +538,9 @@
 </style>
 
 <svelte:head>
-	<title>Shared Chats</title>
+	<title>
+		{$i18n.t('Shared Chats')} • {$WEBUI_NAME}
+	</title>
 </svelte:head>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
