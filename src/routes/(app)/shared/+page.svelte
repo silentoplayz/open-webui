@@ -534,6 +534,10 @@
 	}
 </style>
 
+<svelte:head>
+	<title>Shared Chats</title>
+</svelte:head>
+
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
 	class="transition-width duration-200 ease-in-out {$showSidebar
