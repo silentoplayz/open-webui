@@ -27,7 +27,8 @@
 		sharedChatsUpdated,
 		selectedSharedChatIds,
 		showSidebar,
-		chatsUpdated
+		chatsUpdated,
+		settings
 	} from '$lib/stores';
 	import { getModels } from '$lib/apis';
 	import { clearRevokedSharedChats } from '$lib/apis/chats';
@@ -567,15 +568,29 @@
 		}
 	}}
 >
+	{#if $settings?.backgroundImageUrl ?? $config?.license_metadata?.background_image_url ?? null}
+		<div
+			class="absolute {$showSidebar
+				? 'md:max-w-[calc(100%-260px)] md:translate-x-[260px]'
+				: ''} top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
+			style="background-image: url({$settings?.backgroundImageUrl ??
+				$config?.license_metadata?.background_image_url})  "
+		/>
+
+		<div
+			class="absolute top-0 left-0 w-full h-full bg-linear-to-t from-white to-white/85 dark:from-gray-900 dark:to-gray-900/90 z-0"
+		/>
+	{/if}
+
 	<div
-		class="flex w-full justify-between items-center p-4 border-b border-gray-100 dark:border-gray-800"
+		class="flex w-full justify-between items-center p-4 border-b border-gray-100 dark:border-gray-800 z-10"
 	>
 		<div class="flex-1 flex items-center">
 			<div class="text-lg font-semibold">{headerText}</div>
 		</div>
 	</div>
 
-	<div class="p-4 space-y-4 flex-grow flex flex-col">
+	<div class="p-4 space-y-4 flex-grow flex flex-col z-10">
 		<div class="flex justify-between items-center">
 			<div class="relative w-full max-w-xs">
 				<input
@@ -736,7 +751,9 @@
 			</div>
 		</div>
 		<div class="overflow-x-auto flex-grow">
-			<table class="min-w-full bg-white dark:bg-gray-900 rounded-lg shadow-md">
+			<table
+				class="min-w-full bg-white/80 dark:bg-gray-900/80 rounded-lg shadow-md backdrop-blur-sm"
+			>
 				<thead>
 					<tr class="w-full h-10 border-b border-gray-200 dark:border-gray-800">
 						{#if displayedChats.length > 0}
@@ -852,7 +869,7 @@
 				<tbody class="divide-y divide-gray-200 dark:divide-gray-800">
 					{#if displayedChats.length > 0}
 						{#each displayedChats as chat}
-							<tr class="hover:bg-gray-50 dark:hover:bg-gray-850">
+							<tr class="hover:bg-gray-50/80 dark:hover:bg-gray-850/80">
 								{#if displayedChats.length > 0}
 									<td class="px-6 py-3 whitespace-nowrap">
 										<input
