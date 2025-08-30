@@ -718,6 +718,7 @@ class ChatTable:
                 start_date = filter.get("start_date")
                 end_date = filter.get("end_date")
                 is_public = filter.get("is_public")
+                password = filter.get("password")
                 status = filter.get("status")
 
                 if status == "active":
@@ -743,6 +744,12 @@ class ChatTable:
 
                 if is_public is not None:
                     query = query.filter(Chat.is_public == is_public)
+
+                if password is not None:
+                    if password:
+                        query = query.filter(Chat.password.isnot(None))
+                    else:
+                        query = query.filter(Chat.password.is_(None))
 
                 order_by = filter.get("order_by")
                 direction = filter.get("direction")
@@ -1579,6 +1586,7 @@ class ChatTable:
                 start_date = filter.get("start_date")
                 end_date = filter.get("end_date")
                 is_public = filter.get("is_public")
+                password = filter.get("password")
                 status = filter.get("status")
 
                 if status == "active":
@@ -1626,6 +1634,12 @@ class ChatTable:
 
                 if is_public is not None:
                     query = query.filter(Chat.is_public == is_public)
+
+                if password is not None:
+                    if password:
+                        query = query.filter(Chat.password.isnot(None))
+                    else:
+                        query = query.filter(Chat.password.is_(None))
 
             return [id for (id,) in query.all()]
 

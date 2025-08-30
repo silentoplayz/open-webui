@@ -70,6 +70,7 @@
 	let startDate = '';
 	let endDate = '';
 	let publicFilter = null;
+	let passwordFilter = null;
 	let statusFilter = 'all';
 	let totalSelectedCount = 0;
 
@@ -77,6 +78,12 @@
 		{ value: null, label: 'Public: All' },
 		{ value: true, label: 'Public: Yes' },
 		{ value: false, label: 'Public: No' }
+	];
+
+	const passwordFilterOptions = [
+		{ value: null, label: 'Password: All' },
+		{ value: true, label: 'Password: Yes' },
+		{ value: false, label: 'Password: No' }
 	];
 
 	const statusFilterOptions = [
@@ -87,6 +94,9 @@
 	];
 
 	$: selectedPublicFilterIndex = publicFilterOptions.findIndex((o) => o.value === publicFilter);
+	$: selectedPasswordFilterIndex = passwordFilterOptions.findIndex(
+		(o) => o.value === passwordFilter
+	);
 	$: selectedStatusFilterIndex = statusFilterOptions.findIndex((o) => o.value === statusFilter);
 
 	const handlePublicFilterScroll = (event) => {
@@ -100,6 +110,20 @@
 			newIndex = 0;
 		}
 		publicFilter = publicFilterOptions[newIndex].value;
+		page = 1;
+	};
+
+	const handlePasswordFilterScroll = (event) => {
+		event.preventDefault();
+		const direction = event.deltaY < 0 ? -1 : 1;
+		let newIndex = selectedPasswordFilterIndex + direction;
+
+		if (newIndex < 0) {
+			newIndex = passwordFilterOptions.length - 1;
+		} else if (newIndex >= passwordFilterOptions.length) {
+			newIndex = 0;
+		}
+		passwordFilter = passwordFilterOptions[newIndex].value;
 		page = 1;
 	};
 
@@ -166,6 +190,7 @@
 		_startDate,
 		_endDate,
 		_publicFilter,
+		_passwordFilter,
 		_statusFilter
 	) => {
 		if ($user) {
@@ -178,6 +203,7 @@
 				_startDate ? dayjs(_startDate).startOf('day').unix() : undefined,
 				_endDate ? dayjs(_endDate).endOf('day').unix() : undefined,
 				_publicFilter,
+				_passwordFilter,
 				_statusFilter
 			);
 			total = res.total;
@@ -203,23 +229,24 @@
 	}
 
 	$: if ($sharedChatsUpdated) {
-		getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+		getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 		sharedChatsUpdated.set(false);
 	}
 
 	$: if (previousShowShareChatModal && !showShareChatModal) {
-		getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+		getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 	}
 
 	$: previousShowShareChatModal = showShareChatModal;
 
-	$: getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+	$: getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 
 	$: (async () => {
 		if (
 			searchTerm ||
 			(startDate && endDate) ||
 			publicFilter !== null ||
+			passwordFilter !== null ||
 			statusFilter !== 'all'
 		) {
 			const filteredIds = await getAllSharedChatIds(
@@ -228,6 +255,7 @@
 				startDate ? dayjs(startDate).startOf('day').unix() : undefined,
 				endDate ? dayjs(endDate).endOf('day').unix() : undefined,
 				publicFilter,
+				passwordFilter,
 				statusFilter
 			);
 			const filteredIdSet = new Set(filteredIds);
@@ -299,7 +327,7 @@
 		const res = await deleteSharedChatById(localStorage.token, chatId);
 		if (res) {
 			toast.success('Link revoked');
-			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 			selectedSharedChatIds.update((ids) => ids.filter((id) => id !== chatId));
 		} else {
 			toast.error('Failed to revoke link');
@@ -310,7 +338,7 @@
 		const res = await restoreSharedChat(localStorage.token, chatId);
 		if (res) {
 			toast.success('Link restored');
-			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 		} else {
 			toast.error('Failed to restore link');
 		}
@@ -334,7 +362,7 @@
 			}
 		}
 		toast.success(`${revokedCount} links revoked`);
-		getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+		getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 		selectedSharedChatIds.set([]);
 		showConfirmRevokeSelected = false;
 	};
@@ -343,7 +371,7 @@
 		const res = await revokeAllSharedChats(localStorage.token);
 		if (res) {
 			toast.success(`${res.revoked} links revoked`);
-			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 		} else {
 			toast.error('Failed to revoke all links');
 		}
@@ -356,7 +384,7 @@
 		const res = await resetChatStatsById(localStorage.token, chatToResetStats.id);
 		if (res) {
 			toast.success('Statistics have been reset.');
-			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter); // This will refresh the list with the updated data
+			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter); // This will refresh the list with the updated data
 		} else {
 			toast.error('Failed to reset statistics.');
 		}
@@ -377,7 +405,7 @@
 
 		if (resetCount > 0) {
 			toast.success(`${resetCount} chat(s) have had their statistics reset.`);
-			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 			selectedSharedChatIds.set([]);
 		} else {
 			toast.error('Failed to reset statistics for any selected chats.');
@@ -390,7 +418,7 @@
 		const res = await resetAllChatStats(localStorage.token);
 		if (res) {
 			toast.success(`${res.reset} chat(s) have had their statistics reset.`);
-			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 		} else {
 			toast.error('Failed to reset all chat statistics.');
 		}
@@ -401,7 +429,7 @@
 		const res = await clearRevokedSharedChats(localStorage.token);
 		if (res) {
 			toast.success(`${res.cleared} revoked link(s) cleared.`);
-			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, statusFilter);
+			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
 		} else {
 			toast.error('Failed to clear revoked links.');
 		}
@@ -423,6 +451,7 @@
 				startDate ? dayjs(startDate).startOf('day').unix() : undefined,
 				endDate ? dayjs(endDate).endOf('day').unix() : undefined,
 				publicFilter,
+				passwordFilter,
 				statusFilter
 			);
 			selectedSharedChatIds.set(allIds);
@@ -627,6 +656,20 @@
 						Reset
 					</button>
 				{/if}
+			<div class="relative">
+				<select
+					class="pl-4 pr-10 py-2 border border-gray-300 rounded-lg dark:bg-gray-800 dark:border-gray-700"
+					bind:value={passwordFilter}
+					on:change={() => {
+						page = 1;
+					}}
+					on:wheel|preventDefault={handlePasswordFilterScroll}
+				>
+					{#each passwordFilterOptions as option}
+						<option value={option.value}>{option.label}</option>
+					{/each}
+				</select>
+			</div>
 			<div class="relative">
 				<select
 					class="pl-4 pr-10 py-2 border border-gray-300 rounded-lg dark:bg-gray-800 dark:border-gray-700"
