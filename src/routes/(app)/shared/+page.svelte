@@ -156,7 +156,6 @@
 			orderBy = key;
 			direction = 'asc';
 		}
-		page = 1;
 	};
 
 	const getSharedChatList = async (
