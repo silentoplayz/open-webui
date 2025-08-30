@@ -722,7 +722,10 @@ class ChatTable:
                 status = filter.get("status")
 
                 if status == "active":
-                    query = query.filter(Chat.revoked_at.is_(None))
+                    is_expired = self._get_is_expired_clause()
+                    query = query.filter(
+                        and_(Chat.revoked_at.is_(None), not_(is_expired))
+                    )
                 elif status == "expired":
                     # A chat is expired if any of its expiration conditions are met.
                     is_expired = self._get_is_expired_clause()
@@ -1590,36 +1593,15 @@ class ChatTable:
                 status = filter.get("status")
 
                 if status == "active":
-                    query = query.filter(Chat.revoked_at.is_(None))
+                    is_expired = self._get_is_expired_clause()
+                    query = query.filter(
+                        and_(Chat.revoked_at.is_(None), not_(is_expired))
+                    )
                 elif status == "expired":
-                    now = int(time.time())
-                    is_expired = or_(
-                        and_(Chat.expires_at.isnot(None), Chat.expires_at <= now),
-                        and_(
-                            Chat.expire_on_views.isnot(None),
-                            Chat.views >= Chat.expire_on_views,
-                        ),
-                        and_(
-                            Chat.max_clones.isnot(None),
-                            not_(Chat.keep_link_active_after_max_clones),
-                            Chat.clones >= Chat.max_clones,
-                        ),
-                    )
-                    query = query.filter(and_(Chat.revoked_at.isnot(None), is_expired))
+                    is_expired = self._get_is_expired_clause()
+                    query = query.filter(is_expired)
                 elif status == "revoked":
-                    now = int(time.time())
-                    is_expired = or_(
-                        and_(Chat.expires_at.isnot(None), Chat.expires_at <= now),
-                        and_(
-                            Chat.expire_on_views.isnot(None),
-                            Chat.views >= Chat.expire_on_views,
-                        ),
-                        and_(
-                            Chat.max_clones.isnot(None),
-                            not_(Chat.keep_link_active_after_max_clones),
-                            Chat.clones >= Chat.max_clones,
-                        ),
-                    )
+                    is_expired = self._get_is_expired_clause()
                     query = query.filter(
                         and_(Chat.revoked_at.isnot(None), not_(is_expired))
                     )
