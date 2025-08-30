@@ -176,11 +176,26 @@
 	};
 
 	const setSortKey = (key) => {
-		if (orderBy === key) {
-			direction = direction === 'asc' ? 'desc' : 'asc';
+		if (key === 'status') {
+			if (orderBy !== 'status') {
+				orderBy = 'status';
+				direction = 'active';
+			} else {
+				if (direction === 'active') {
+					direction = 'expired';
+				} else if (direction === 'expired') {
+					direction = 'revoked';
+				} else {
+					direction = 'active';
+				}
+			}
 		} else {
-			orderBy = key;
-			direction = 'asc';
+			if (orderBy === key) {
+				direction = direction === 'asc' ? 'desc' : 'asc';
+			} else {
+				orderBy = key;
+				direction = 'asc';
+			}
 		}
 	};
 
@@ -853,12 +868,12 @@
 						</th>
 						<th
 							class="px-6 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer whitespace-nowrap"
-							on:click={() => setSortKey('revoked_at')}
-							on:wheel|preventDefault={() => setSortKey('revoked_at')}
+							on:click={() => setSortKey('status')}
+							on:wheel|preventDefault={() => setSortKey('status')}
 						>
 							<div class="flex items-center">
 								<span>Status</span>
-								<SortIcon direction={direction} active={orderBy === 'revoked_at'} />
+								<SortIcon direction={direction} active={orderBy === 'status'} />
 							</div>
 						</th>
 						<th

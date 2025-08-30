@@ -12,7 +12,7 @@ from open_webui.env import SRC_LOG_LEVELS
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import BigInteger, Boolean, Column, String, Text, JSON, Index, Integer
-from sqlalchemy import or_, func, select, and_, text, not_
+from sqlalchemy import or_, func, select, and_, text, not_, case
 from sqlalchemy.sql import exists
 from sqlalchemy.sql.expression import bindparam
 
@@ -757,13 +757,40 @@ class ChatTable:
                 order_by = filter.get("order_by")
                 direction = filter.get("direction")
 
-                if order_by and direction and getattr(Chat, order_by):
-                    if direction.lower() == "asc":
-                        query = query.order_by(getattr(Chat, order_by).asc())
-                    elif direction.lower() == "desc":
-                        query = query.order_by(getattr(Chat, order_by).desc())
-                    else:
-                        raise ValueError("Invalid direction for ordering")
+                if order_by and direction:
+                    if order_by == "status":
+                        is_expired = self._get_is_expired_clause()
+                        if direction == "active":
+                            status_order = case(
+                                (and_(Chat.revoked_at.is_(None), not_(is_expired)), 1),
+                                (is_expired, 2),
+                                (and_(Chat.revoked_at.isnot(None), not_(is_expired)), 3),
+                                else_=4,
+                            ).asc()
+                        elif direction == "expired":
+                            status_order = case(
+                                (is_expired, 1),
+                                (and_(Chat.revoked_at.is_(None), not_(is_expired)), 2),
+                                (and_(Chat.revoked_at.isnot(None), not_(is_expired)), 3),
+                                else_=4,
+                            ).asc()
+                        elif direction == "revoked":
+                            status_order = case(
+                                (and_(Chat.revoked_at.isnot(None), not_(is_expired)), 1),
+                                (is_expired, 2),
+                                (and_(Chat.revoked_at.is_(None), not_(is_expired)), 3),
+                                else_=4,
+                            ).asc()
+                        else:
+                            raise ValueError("Invalid direction for status ordering")
+                        query = query.order_by(status_order)
+                    elif getattr(Chat, order_by):
+                        if direction.lower() == "asc":
+                            query = query.order_by(getattr(Chat, order_by).asc())
+                        elif direction.lower() == "desc":
+                            query = query.order_by(getattr(Chat, order_by).desc())
+                        else:
+                            raise ValueError("Invalid direction for ordering")
                 else:
                     query = query.order_by(Chat.updated_at.desc())
             else:
