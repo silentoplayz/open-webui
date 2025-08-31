@@ -4,7 +4,7 @@
 	import { get } from 'svelte/store';
 	import {
 		getSharedChats,
-		getAllSharedChatIds,
+		getAllSharedChatsMeta,
 		deleteSharedChatById,
 		revokeAllSharedChats,
 		resetChatStatsById,
@@ -78,6 +78,8 @@
 	let passwordFilter = null;
 	let statusFilter = 'all';
 	let totalSelectedCount = 0;
+	let allSharedChatsMeta = [];
+	let hasRevokedChats = false;
 
 	const publicFilterOptions = [
 		{ value: null, label: 'Public: All' },
@@ -241,6 +243,11 @@
 	onMount(async () => {
 		models.set(await getModels(localStorage.token));
 		previousShowShareChatModal = showShareChatModal;
+
+		const res = await getSharedChats(localStorage.token, 1, '', undefined, undefined, undefined, undefined, undefined, 'revoked');
+		if (res && res.total > 0) {
+			hasRevokedChats = true;
+		}
 	});
 
 	$: if ($user && !($user.role === 'admin' || $user.permissions?.sharing?.shared_chats)) {
@@ -269,7 +276,7 @@
 			passwordFilter !== null ||
 			statusFilter !== 'all'
 		) {
-			const filteredIds = await getAllSharedChatIds(
+			const filteredChats = await getAllSharedChatsMeta(
 				localStorage.token,
 				searchTerm,
 				startDate ? dayjs(startDate).startOf('day').unix() : undefined,
@@ -278,10 +285,22 @@
 				passwordFilter,
 				statusFilter
 			);
-			const filteredIdSet = new Set(filteredIds);
+			const filteredIdSet = new Set(filteredChats.map((c) => c.id));
 			totalSelectedCount = $selectedSharedChatIds.filter((id) => filteredIdSet.has(id)).length;
+			allSharedChatsMeta = filteredChats;
 		} else {
 			totalSelectedCount = $selectedSharedChatIds.length;
+			if (selectionLevel === 'all') {
+				allSharedChatsMeta = await getAllSharedChatsMeta(localStorage.token);
+			} else {
+				allSharedChatsMeta = [];
+			}
+		}
+
+		if (selectionLevel === 'all') {
+			hasRevokedChats = allSharedChatsMeta.some((chat) => chat.status === 'revoked');
+		} else {
+			hasRevokedChats = $sharedChatsStore.some((chat) => chat.status === 'revoked');
 		}
 	})();
 
@@ -450,6 +469,7 @@
 		if (res) {
 			toast.success(`${res.cleared} revoked link(s) cleared.`);
 			getSharedChatList(page, searchTerm, orderBy, direction, startDate, endDate, publicFilter, passwordFilter, statusFilter);
+			selectedSharedChatIds.set([]);
 		} else {
 			toast.error('Failed to clear revoked links.');
 		}
@@ -465,7 +485,7 @@
 		if (currentLevel === 'all') {
 			selectedSharedChatIds.set([]);
 		} else if (currentLevel === 'page') {
-			const allIds = await getAllSharedChatIds(
+			const allChats = await getAllSharedChatsMeta(
 				localStorage.token,
 				searchTerm,
 				startDate ? dayjs(startDate).startOf('day').unix() : undefined,
@@ -474,7 +494,7 @@
 				passwordFilter,
 				statusFilter
 			);
-			selectedSharedChatIds.set(allIds);
+			selectedSharedChatIds.set(allChats.map((c) => c.id));
 		} else {
 			const currentPageIds = $sharedChatsStore.map((chat) => chat.id);
 			selectedSharedChatIds.update((ids) => [...new Set([...ids, ...currentPageIds])]);
@@ -769,7 +789,7 @@
 				<button
 					class="px-4 py-2 text-red-600 border border-red-600 rounded-lg whitespace-nowrap hover:bg-red-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
 					on:click={() => (showPrimaryClearRevokedConfirm = true)}
-					disabled={grandTotal === 0 || displayedChats.filter(c => c.status === 'revoked').length === 0}
+					disabled={!hasRevokedChats}
 				>
 					Clear Revoked
 				</button>

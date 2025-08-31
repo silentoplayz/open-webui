@@ -33,7 +33,7 @@ export const createNewChat = async (token: string, chat: object, folderId: strin
 	return res;
 };
 
-export const getAllSharedChatIds = async (
+export const getAllSharedChatsMeta = async (
 	token: string = '',
 	query: string = '',
 	startDate?: number,
@@ -41,7 +41,7 @@ export const getAllSharedChatIds = async (
 	is_public?: boolean | null,
 	password?: boolean | null,
 	status?: string
-) => {
+): Promise<Array<{ id: string; status: string }>> => {
 	let error = null;
 
 	const params = new URLSearchParams();
@@ -54,7 +54,7 @@ export const getAllSharedChatIds = async (
 		params.append('password', password.toString());
 	if (status) params.append('status', status);
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/shared/ids?${params.toString()}`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/shared/meta?${params.toString()}`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',

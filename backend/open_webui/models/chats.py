@@ -1596,14 +1596,27 @@ class ChatTable:
             db.rollback()
             return False
 
-    def get_all_shared_chat_ids_by_user_id(
+    def get_all_shared_chats_meta_by_user_id(
         self,
         user_id: str,
         filter: Optional[dict] = None,
-    ) -> list[str]:
+    ) -> list[dict]:
         with get_db() as db:
             query = (
-                db.query(Chat.id)
+                db.query(
+                    Chat.id,
+                    Chat.revoked_at,
+                    Chat.expires_at,
+                    Chat.expire_on_views,
+                    Chat.views,
+                    Chat.max_clones,
+                    Chat.clones,
+                    Chat.keep_link_active_after_max_clones,
+                    Chat.title,
+                    Chat.created_at,
+                    Chat.is_public,
+                    Chat.password,
+                )
                 .filter_by(user_id=user_id)
                 .filter(Chat.share_id.isnot(None))
             )
@@ -1649,8 +1662,25 @@ class ChatTable:
                         query = query.filter(Chat.password.isnot(None))
                     else:
                         query = query.filter(Chat.password.is_(None))
+            
+            all_chats = query.all()
 
-            return [id for (id,) in query.all()]
+            chats_meta = []
+            for chat in all_chats:
+                chat_data = {
+                    "id": chat.id,
+                    "revoked_at": chat.revoked_at,
+                    "expires_at": chat.expires_at,
+                    "expire_on_views": chat.expire_on_views,
+                    "views": chat.views,
+                    "max_clones": chat.max_clones,
+                    "clones": chat.clones,
+                    "keep_link_active_after_max_clones": chat.keep_link_active_after_max_clones,
+                }
+                status = self._get_chat_status(chat_data)
+                chats_meta.append({"id": chat_data["id"], "status": status})
+
+            return chats_meta
 
 
 Chats = ChatTable()
