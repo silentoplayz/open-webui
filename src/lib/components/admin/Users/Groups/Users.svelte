@@ -76,11 +76,21 @@
 						</div>
 
 						<div class="flex w-full items-center justify-between overflow-hidden">
-							<Tooltip content={user.email} placement="top-start">
-								<div class="flex">
-									<div class=" font-medium self-center truncate">{user.name}</div>
-								</div>
-							</Tooltip>
+							<div class="flex items-center gap-1.5">
+								<Badge
+									type={user.role === 'user'
+										? 'success'
+										: user.role === 'pending'
+										? 'muted'
+										: 'info'}
+									content={user.role}
+								/>
+								<Tooltip content={user.email} placement="top-start">
+									<div class="flex">
+										<div class=" font-medium self-center truncate">{user.name}</div>
+									</div>
+								</Tooltip>
+							</div>
 
 							{#if userIds.includes(user.id)}
 								<Badge type="success" content="member" />
