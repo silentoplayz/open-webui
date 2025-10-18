@@ -11,12 +11,13 @@
 	function formatKey(key: string): string {
 		const lowerKey = key.toLowerCase();
 
-		if (lowerKey === 'mod') return isMac ? '⌘' : 'Ctrl/⌘';
+		if (lowerKey === 'mod') return isMac ? '⌘' : 'CTRL';
 		if (lowerKey === 'shift') return isMac ? '⇧' : 'Shift';
-		if (lowerKey === 'backspace') return '⌫/Delete';
+		if (lowerKey === 'alt') return isMac ? '⌥' : 'Alt';
+		if (lowerKey === 'backspace' || lowerKey === 'delete') return isMac ? '⌫' : 'Delete';
 		if (lowerKey === 'escape') return 'Esc';
-		if (lowerKey === 'enter') return 'Enter';
-		if (lowerKey === 'tab') return 'Tab';
+		if (lowerKey === 'enter') return isMac ? '↩' : 'Enter';
+		if (lowerKey === 'tab') return isMac ? '⇥' : 'Tab';
 		if (lowerKey === 'arrowup') return '↑';
 		if (lowerKey === 'arrowdown') return '↓';
 
@@ -46,8 +47,8 @@
 			{$i18n.t(shortcut.name)}
 		{/if}
 	</div>
-	<div class="flex-shrink-0 flex items-center self-center space-x-1 text-xs">
-		{#each shortcut.keys as key}
+	<div class="flex-shrink-0 flex flex-wrap justify-end items-center self-center space-x-1 text-xs">
+		{#each shortcut.keys.filter(key => !(key.toLowerCase() === 'delete' && shortcut.keys.includes('Backspace'))) as key}
 			<div
 				class="h-fit py-1 px-2 flex items-center justify-center rounded-sm border border-black/10 capitalize text-gray-600 dark:border-white/10 dark:text-gray-300"
 			>
