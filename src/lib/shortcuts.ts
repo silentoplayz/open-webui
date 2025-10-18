@@ -90,7 +90,7 @@ export const shortcuts: ShortcutRegistry = {
 
 	//Input
 	[Shortcut.FOCUS_INPUT]: {
-		name: 'Focus Text Area',
+		name: 'Focus Chat Input',
 		keys: ['shift', 'Escape'],
 		category: 'Input'
 	},

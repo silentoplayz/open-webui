@@ -13,7 +13,7 @@
 
 		switch (lowerKey) {
 			case 'mod':
-				return isMac ? '⌘' : 'CTRL';
+				return isMac ? '⌘' : 'Ctrl';
 			case 'shift':
 				return isMac ? '⇧' : 'Shift';
 			case 'alt':
