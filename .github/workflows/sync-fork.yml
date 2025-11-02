@@ -18,4 +18,4 @@ jobs:
           target_sync_branch: main
           target_repo_token: ${{ secrets.GITHUB_TOKEN }}
           upstream_sync_branch: main
-          upstream_sync_repo: silentoplayz/open-webui
+          upstream_sync_repo: open-webui/open-webui
