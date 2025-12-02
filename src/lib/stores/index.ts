@@ -197,6 +197,7 @@ type Settings = {
 	scrollOnBranchChange?: boolean;
 	directConnections?: null;
 	chatBubble?: boolean;
+	llmChatBubble?: boolean;
 	copyFormatted?: boolean;
 	models?: string[];
 	conversationMode?: boolean;

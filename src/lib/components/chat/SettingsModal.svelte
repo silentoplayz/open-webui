@@ -679,7 +679,7 @@
 								role="tab"
 								aria-controls="tab-themes"
 								aria-selected={selectedTab === 'themes'}
-								class={`px-0.5 py-1 min-w-fit rounded-lg flex-1 md:flex-none flex text-left transition
+								class={`px-0.5 md:px-2.5 py-1 min-w-fit rounded-xl flex-1 md:flex-none flex text-left transition
 								${
 									selectedTab === 'themes'
 										? ($settings?.highContrastMode ?? false)
