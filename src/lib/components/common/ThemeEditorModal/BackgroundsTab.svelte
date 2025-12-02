@@ -108,7 +108,12 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.systemBackgroundImage}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there's a background image URL
+					if (themeCopy.systemBackgroundImageUrl?.trim()) {
+						dispatch('update', { ...themeCopy });
+					}
+				}}
 			/>
 			<Tooltip content="Adds a background image to the app.">
 				<label
@@ -138,7 +143,7 @@
 					/>
 					<button
 						type="button"
-						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
+						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full whitespace-nowrap"
 						on:click={() => {
 							systemBgInput.click();
 						}}
@@ -147,7 +152,7 @@
 					</button>
 					<button
 						type="button"
-						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
+						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full whitespace-nowrap"
 						on:click={() => {
 							themeCopy.systemBackgroundImageUrl = '';
 							themeCopy.systemBackgroundImageDarken = 0;
@@ -179,7 +184,12 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.chatBackgroundImage}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there's a chat background image URL
+					if (themeCopy.chatBackgroundImageUrl?.trim()) {
+						dispatch('update', { ...themeCopy });
+					}
+				}}
 			/>
 			<Tooltip content="Adds a background image to the chat.">
 				<label
@@ -209,7 +219,7 @@
 					/>
 					<button
 						type="button"
-						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
+						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full whitespace-nowrap"
 						on:click={() => {
 							chatBgInput.click();
 						}}
@@ -218,7 +228,7 @@
 					</button>
 					<button
 						type="button"
-						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
+						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full whitespace-nowrap"
 						on:click={() => {
 							themeCopy.chatBackgroundImageUrl = '';
 							themeCopy.chatBackgroundImageDarken = 0;

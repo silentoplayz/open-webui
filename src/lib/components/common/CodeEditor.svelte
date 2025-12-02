@@ -10,8 +10,11 @@
 	extend([namesPlugin]);
 
 	class ColorSwatchWidget extends WidgetType {
-		constructor(readonly color: string) {
+		color: string;
+
+		constructor(color: string) {
 			super();
+			this.color = color;
 		}
 
 		eq(other: ColorSwatchWidget) {
@@ -111,8 +114,22 @@
 
 							activeColorRange = { from, to };
 
+							const pickerWidth = 250;
+							const pickerHeight = 300;
+
+							let left = e.clientX;
+							let top = e.clientY;
+
+							if (left + pickerWidth > window.innerWidth) {
+								left = window.innerWidth - pickerWidth - 10;
+							}
+
+							if (top + pickerHeight > window.innerHeight) {
+								top = window.innerHeight - pickerHeight - 10;
+							}
+
 							pickerColor = colord(color).toHex();
-							pickerStyle = `position: fixed; left: ${e.clientX}px; top: ${e.clientY}px; z-index: 9999;`;
+							pickerStyle = `position: fixed; left: ${left}px; top: ${top}px; z-index: 10000;`;
 							pickerUpdateCallback = (newColor) => {
 								if (activeColorRange) {
 									let newColorStr = newColor;
@@ -479,12 +496,22 @@ print("${endTag}")
 		}
 		unsubscribe();
 	});
+	const portal = (node) => {
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				if (node.parentNode) {
+					node.parentNode.removeChild(node);
+				}
+			}
+		};
+	};
 </script>
 
 <div id="code-textarea-{id}" class="h-full w-full text-sm" />
 
 {#if showPicker}
-	<div class="color-picker-wrapper" style={pickerStyle}>
+	<div use:portal class="color-picker-wrapper" style={pickerStyle}>
 		<ColorPicker bind:hex={pickerColor} isDialog={false} />
 	</div>
 {/if}

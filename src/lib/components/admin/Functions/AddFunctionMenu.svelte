@@ -44,7 +44,7 @@
 			class="w-full max-w-[190px] rounded-2xl px-1 py-1 border border-gray-100  dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg"
 			sideOffset={6}
 			side="bottom"
-			align="start"
+			align="end"
 			transition={flyAndScale}
 		>
 			<button

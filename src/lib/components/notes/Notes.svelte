@@ -31,7 +31,14 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onMount, getContext, onDestroy } from 'svelte';
-	import { WEBUI_NAME, config, prompts as _prompts, user } from '$lib/stores';
+	import {
+		WEBUI_NAME,
+		config,
+		prompts as _prompts,
+		user,
+		showThemeEditor,
+		themeEditorCollapsed
+	} from '$lib/stores';
 
 	import { createNewNote, deleteNoteById, getNotes } from '$lib/apis/notes';
 	import { capitalizeFirstLetter, copyToClipboard, getTimeRange } from '$lib/utils';
@@ -386,7 +393,13 @@
 			{/if}
 		</div>
 
-		<div class="absolute bottom-0 left-0 right-0 p-5 max-w-full flex justify-end">
+		<div
+			class="absolute bottom-0 left-0 p-5 max-w-full flex justify-end transition-all duration-300 ease-in-out {$showThemeEditor
+				? $themeEditorCollapsed
+					? 'right-5'
+					: 'right-[600px]'
+				: 'right-0'}"
+		>
 			<div class="flex gap-0.5 justify-end w-full">
 				<Tooltip content={$i18n.t('Create Note')}>
 					<button

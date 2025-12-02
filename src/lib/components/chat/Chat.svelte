@@ -43,9 +43,10 @@
 		selectedFolder,
 		pinnedChats,
 		isChatPage,
-		showEmbeds
+		showEmbeds,
+		showThemeEditor,
+		themeEditorCollapsed
 	} from '$lib/stores';
-	import { currentThemeStore } from '$lib/theme';
 	import {
 		convertMessagesToHistory,
 		copyToClipboard,
@@ -2378,9 +2379,13 @@
 />
 
 <div
-	class="h-screen max-h-[100dvh] transition-width duration-200 ease-in-out {$showSidebar
+	class="h-screen max-h-[100dvh] transition-all duration-300 ease-in-out {$showSidebar
 		? '  md:max-w-[calc(100%-260px)]'
-		: ' '} w-full max-w-full flex flex-col"
+		: ' '} w-full max-w-full flex flex-col {$showThemeEditor
+		? $themeEditorCollapsed
+			? 'pr-5'
+			: 'pr-[600px]'
+		: ''}"
 	id="chat-container"
 >
 	{#if !loading}

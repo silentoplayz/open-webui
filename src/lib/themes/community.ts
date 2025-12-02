@@ -10,7 +10,7 @@ import { toast } from 'svelte-sonner';
 import { WEBUI_VERSION } from '$lib/constants';
 
 import { communityThemes, themeUpdates, themeUpdateErrors, themes } from '$lib/stores/theme';
-import { theme as themeStore } from '$lib/stores';
+import { theme as themeStore, editingThemeId } from '$lib/stores';
 import { applyTheme } from '$lib/themes/apply';
 
 export const loadCommunityThemes = () => {
@@ -108,6 +108,12 @@ const _fetchTheme = async (url: string): Promise<[Theme | null, string | null]> 
 export const updateCommunityThemeFromUrl = async (theme: Theme) => {
 	if (!theme.sourceUrl) {
 		toast.error(`Theme "${theme.name}" does not have a source URL.`);
+		return;
+	}
+
+	// Prevent updating theme while it's being edited
+	if (get(editingThemeId) === theme.id) {
+		toast.error(`Cannot update theme "${theme.name}" while editing it.`);
 		return;
 	}
 

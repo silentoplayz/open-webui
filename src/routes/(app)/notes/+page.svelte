@@ -4,7 +4,14 @@
 	const i18n = getContext('i18n');
 
 	import dayjs from '$lib/dayjs';
-	import { mobile, showArchivedChats, showSidebar, user } from '$lib/stores';
+	import {
+		mobile,
+		showArchivedChats,
+		showSidebar,
+		showThemeEditor,
+		themeEditorCollapsed,
+		user
+	} from '$lib/stores';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
@@ -40,9 +47,9 @@
 
 {#if loaded}
 	<div
-		class=" flex flex-col w-full h-screen max-h-[100dvh] transition-width duration-200 ease-in-out {$showSidebar
+		class=" flex flex-col w-full h-screen max-h-[100dvh] transition-all duration-300 ease-in-out {$showSidebar
 			? 'md:max-w-[calc(100%-260px)]'
-			: ''} max-w-full"
+			: ''} max-w-full {$showThemeEditor ? ($themeEditorCollapsed ? 'pr-5' : 'pr-[600px]') : ''}"
 	>
 		<nav class="   px-2 pt-1.5 backdrop-blur-xl w-full drag-region">
 			<div class=" flex items-center">

@@ -92,6 +92,10 @@ export const showShortcuts = writable(false);
 export const showArchivedChats = writable(false);
 export const showChangelog = writable(false);
 
+export const showThemeEditor = writable(false);
+export const themeEditorCollapsed = writable(false);
+export const editingThemeId = writable<string | null>(null);
+
 export const showControls = writable(false);
 export const showEmbeds = writable(false);
 export const showOverview = writable(false);
@@ -197,6 +201,7 @@ type Settings = {
 	scrollOnBranchChange?: boolean;
 	directConnections?: null;
 	chatBubble?: boolean;
+	llmChatBubble?: boolean;
 	copyFormatted?: boolean;
 	models?: string[];
 	conversationMode?: boolean;

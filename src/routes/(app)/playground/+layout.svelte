@@ -1,6 +1,13 @@
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
-	import { WEBUI_NAME, showSidebar, functions, mobile } from '$lib/stores';
+	import {
+		WEBUI_NAME,
+		showSidebar,
+		showThemeEditor,
+		themeEditorCollapsed,
+		functions,
+		mobile
+	} from '$lib/stores';
 	import { page } from '$app/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Sidebar from '$lib/components/icons/Sidebar.svelte';
@@ -17,9 +24,9 @@
 </svelte:head>
 
 <div
-	class=" flex flex-col w-full h-screen max-h-[100dvh] transition-width duration-200 ease-in-out {$showSidebar
+	class=" flex flex-col w-full h-screen max-h-[100dvh] transition-all duration-300 ease-in-out {$showSidebar
 		? 'md:max-w-[calc(100%-260px)]'
-		: ''} max-w-full"
+		: ''} max-w-full {$showThemeEditor ? ($themeEditorCollapsed ? 'pr-5' : 'pr-[600px]') : ''}"
 >
 	<nav class="   px-2.5 pt-1.5 w-full drag-region">
 		<div class=" flex items-center">

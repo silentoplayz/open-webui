@@ -7,6 +7,8 @@
 	import { objectToCss, cssToObject } from '$lib/utils/theme';
 	import { toast } from 'svelte-sonner';
 	import { Vibrant } from 'node-vibrant/browser';
+	import exifr from 'exifr';
+	import heic2any from 'heic2any';
 
 	export let themeCopy: Theme;
 	export let variablesText: string;
@@ -59,13 +61,44 @@
 		toast.success(`Theme variables updated with random colors.`);
 	};
 
+	const processImageFile = async (file: File): Promise<string | null> => {
+		try {
+			if (
+				file.type === 'image/heic' ||
+				file.type === 'image/heif' ||
+				file.name.toLowerCase().endsWith('.heic')
+			) {
+				const blob = await heic2any({ blob: file, toType: 'image/jpeg' });
+				return URL.createObjectURL(Array.isArray(blob) ? blob[0] : blob);
+			} else if (
+				file.name.toLowerCase().match(/\.(cr2|nef|arw|dng|orf|rw2|raf|cr3)$/) ||
+				file.type.startsWith('image/x-')
+			) {
+				const thumbnail = await exifr.thumbnail(file, { thumbnail: true, preview: true });
+				if (thumbnail) {
+					return URL.createObjectURL(new Blob([thumbnail], { type: 'image/jpeg' }));
+				} else {
+					toast.error('No embedded preview found in RAW file.');
+					return null;
+				}
+			} else {
+				return URL.createObjectURL(file);
+			}
+		} catch (error) {
+			console.error('Error processing image:', error);
+			toast.error(`Failed to process image: ${error.message}`);
+			return null;
+		}
+	};
+
 	const generateThemeFromImage = async (event) => {
 		const file = event.target.files[0];
 		if (!file) {
 			return;
 		}
 
-		const imageUrl = URL.createObjectURL(file);
+		const imageUrl = await processImageFile(file);
+		if (!imageUrl) return;
 
 		Vibrant.from(imageUrl)
 			.getPalette()
@@ -83,16 +116,18 @@
 
 				variablesText = objectToCss(newVariables);
 				themeCopy.variables = newVariables;
-				themeCopy.imageFingerprint = {
-					name: file.name,
-					size: file.size,
-					lastModified: file.lastModified
-				};
+				// Note: We don't store imageFingerprint to avoid false duplicate detection
+				// when different themes use the same image file for color generation
 
 				const updatedTheme = { ...themeCopy };
 				dispatch('update', updatedTheme);
 
 				toast.success(`Theme variables updated from ${file.name}`);
+				URL.revokeObjectURL(imageUrl);
+			})
+			.catch((err) => {
+				console.error('Vibrant error:', err);
+				toast.error('Failed to extract colors from image.');
 				URL.revokeObjectURL(imageUrl);
 			});
 	};
@@ -101,7 +136,7 @@
 <input
 	bind:this={imageImportInput}
 	type="file"
-	accept="image/*"
+	accept="image/*,.heic,.heif,.dng,.cr2,.nef,.arw,.orf,.rw2,.raf,.cr3"
 	class="hidden"
 	on:change={generateThemeFromImage}
 />
@@ -111,7 +146,12 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.cssVariables}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there are actual variables to apply
+					if (variablesText?.trim()) {
+						dispatch('update', { ...themeCopy });
+					}
+				}}
 			/>
 			<Tooltip
 				content="Define custom CSS variables to be used in your theme. These are the core of the theming system."
@@ -157,7 +197,12 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.customCss}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there's actual CSS to apply
+					if (cssText?.trim()) {
+						dispatch('update', { ...themeCopy });
+					}
+				}}
 			/>
 			<Tooltip
 				content="Add custom CSS rules to style the UI. This is for more advanced styling that can't be achieved with variables alone."

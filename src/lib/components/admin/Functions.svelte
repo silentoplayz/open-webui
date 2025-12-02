@@ -342,9 +342,7 @@
 			</div>
 		</div>
 
-		<div
-			class="py-2 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100/30 dark:border-gray-850/30"
-		>
+		<div class="py-2 bg-transparent rounded-3xl border border-gray-100/30 dark:border-gray-850/30">
 			<div class="px-3.5 flex flex-1 items-center w-full space-x-2 py-0.5 pb-2">
 				<div class="flex flex-1">
 					<div class=" self-center ml-1 mr-3">

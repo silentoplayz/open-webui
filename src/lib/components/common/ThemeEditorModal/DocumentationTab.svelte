@@ -28,7 +28,18 @@
 			intensity: 100,
 			colors: ['#ff0000', '#0000ff']
 		},
-		tsparticlesConfig: {},
+		tsparticlesConfig: {
+			fpsLimit: 120,
+			pauseOnBlur: true,
+			pauseOnOutsideViewport: true,
+			interactivity: {
+				events: {
+					onClick: {
+						enable: false
+					}
+				}
+			}
+		},
 		animationScript: '',
 		css: '/* Custom CSS rules go here */',
 		sourceUrl:
@@ -37,11 +48,11 @@
 		toggles: {
 			cssVariables: true,
 			customCss: true,
-			animationScript: true,
+			animationScript: false,
 			tsParticles: true,
 			gradient: true,
-			systemBackgroundImage: true,
-			chatBackgroundImage: true
+			systemBackgroundImage: false,
+			chatBackgroundImage: false
 		}
 	};
 </script>
@@ -115,6 +126,66 @@
 		</div>
 	</Collapsible>
 
+	<Collapsible title="Using Custom Fonts" open={false}>
+		<div slot="content" class="pt-2">
+			<p>
+				The current theme system allows you to embed custom fonts in your theme using the <code
+					>css</code
+				> property to override the default font family in two ways:
+			</p>
+			<ol class="mt-2 list-decimal list-inside space-y-1">
+				<li>A fast, self-hosted <code>@font-face</code> declaration</li>
+				<li>A convenient Google Fonts <code>@import</code> statement</li>
+			</ol>
+			<p class="mt-2">Both snippets go into the <strong>Custom CSS</strong> field of your theme.</p>
+
+			<hr class="my-4 border-gray-200 dark:border-gray-700" />
+
+			<h4 class="font-semibold mb-2">Option 1 – self-hosted</h4>
+			<p class="mb-2">
+				If you want the smallest possible file and full control over privacy, reference the raw font
+				file directly (<code>.woff2</code> recommended):
+			</p>
+			<CodeBlock
+				code={`@font-face {
+  font-family: 'Roboto';
+  src: url('https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxK.woff2') format('woff2');
+}
+
+body, button, input, textarea {
+  font-family: 'Roboto', sans-serif;
+}`}
+				language="css"
+				header={false}
+				canCopy={true}
+				edit={false}
+			/>
+
+			<hr class="my-4 border-gray-200 dark:border-gray-700" />
+
+			<h4 class="font-semibold mb-2">Option 2 – Google Fonts import</h4>
+			<p class="mb-2">
+				The quickest way to add a Google font is the standard <code>@import</code> statement:
+			</p>
+			<CodeBlock
+				code={`@import url('https://fonts.googleapis.com/css2?family=Orbitron&display=swap');
+
+body {
+  font-family: 'Orbitron', sans-serif;
+}`}
+				language="css"
+				header={false}
+				canCopy={true}
+				edit={false}
+			/>
+
+			<p class="mt-4">
+				Either block can be used independently; both override the default font for every visible
+				part of Open WebUI.
+			</p>
+		</div>
+	</Collapsible>
+
 	<Collapsible title="Animation Resources" open={false}>
 		<div slot="content" class="pt-2">
 			<p>
@@ -138,23 +209,23 @@
 				Here is a list of all the available CSS variables that you can use to customize your theme.
 			</p>
 
-			<div class="mt-4 overflow-y-auto max-h-96">
+			<div class="mt-4 overflow-y-auto overflow-x-auto max-h-96">
 				<table class="w-full text-sm text-left">
 					<thead
 						class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400"
 					>
 						<tr>
-							<th scope="col" class="px-6 py-3"> Variable </th>
-							<th scope="col" class="px-6 py-3"> Default Value </th>
-							<th scope="col" class="px-6 py-3"> Description </th>
+							<th scope="col" class="px-6 py-3 whitespace-nowrap"> Variable </th>
+							<th scope="col" class="px-6 py-3 whitespace-nowrap"> Default Value </th>
+							<th scope="col" class="px-6 py-3 min-w-[200px]"> Description </th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each variables as variable}
 							<tr class="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-								<td class="px-6 py-4 font-mono"> {variable.name} </td>
-								<td class="px-6 py-4 font-mono"> {variable.defaultValue} </td>
-								<td class="px-6 py-4"> {variable.description} </td>
+								<td class="px-6 py-4 font-mono whitespace-nowrap"> {variable.name} </td>
+								<td class="px-6 py-4 font-mono whitespace-nowrap"> {variable.defaultValue} </td>
+								<td class="px-6 py-4 min-w-[200px]"> {variable.description} </td>
 							</tr>
 						{/each}
 					</tbody>

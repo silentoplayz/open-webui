@@ -37,7 +37,12 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.animationScript}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there's actual content to apply
+					if (animationScriptText?.trim()) {
+						dispatch('update', { ...themeCopy });
+					}
+				}}
 			/>
 			<Tooltip
 				content="Add custom Javascript to create animations. This is for advanced themes that use canvas or other dynamic elements."
@@ -67,7 +72,17 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.tsParticles}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there's valid config to apply
+					if (tsParticleConfigText?.trim()) {
+						try {
+							JSON.parse(tsParticleConfigText);
+							dispatch('update', { ...themeCopy });
+						} catch {
+							// Don't dispatch if JSON is invalid
+						}
+					}
+				}}
 			/>
 			<Tooltip content="Configuration object for tsParticles animations.">
 				<label

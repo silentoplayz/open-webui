@@ -1,7 +1,7 @@
 <script lang="ts">
 	import hljs from 'highlight.js';
 	import { toast } from 'svelte-sonner';
-	import { getContext, onMount, tick, onDestroy } from 'svelte';
+	import { getContext, onMount, tick, onDestroy, createEventDispatcher } from 'svelte';
 	import { config } from '$lib/stores';
 
 	import PyodideWorker from '$lib/workers/pyodide.worker?worker';
@@ -534,6 +534,7 @@
 							}}
 							onChange={(value) => {
 								_code = value;
+								dispatch('change', value);
 							}}
 						/>
 					{:else}

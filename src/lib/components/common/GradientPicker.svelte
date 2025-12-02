@@ -4,6 +4,8 @@
 	import ColorPicker from 'svelte-awesome-color-picker';
 	import { Vibrant } from 'node-vibrant/browser';
 	import { toast } from 'svelte-sonner';
+	import exifr from 'exifr';
+	import heic2any from 'heic2any';
 
 	export let gradient: Theme['gradient'] | undefined = {
 		colors: ['#ff0000', '#0000ff'],
@@ -49,13 +51,44 @@
 		toast.success(`Generated a random ${numColors}-color gradient.`);
 	};
 
+	const processImageFile = async (file: File): Promise<string | null> => {
+		try {
+			if (
+				file.type === 'image/heic' ||
+				file.type === 'image/heif' ||
+				file.name.toLowerCase().endsWith('.heic')
+			) {
+				const blob = await heic2any({ blob: file, toType: 'image/jpeg' });
+				return URL.createObjectURL(Array.isArray(blob) ? blob[0] : blob);
+			} else if (
+				file.name.toLowerCase().match(/\.(cr2|nef|arw|dng|orf|rw2|raf|cr3)$/) ||
+				file.type.startsWith('image/x-')
+			) {
+				const thumbnail = await exifr.thumbnail(file, { thumbnail: true, preview: true });
+				if (thumbnail) {
+					return URL.createObjectURL(new Blob([thumbnail], { type: 'image/jpeg' }));
+				} else {
+					toast.error('No embedded preview found in RAW file.');
+					return null;
+				}
+			} else {
+				return URL.createObjectURL(file);
+			}
+		} catch (error) {
+			console.error('Error processing image:', error);
+			toast.error(`Failed to process image: ${error.message}`);
+			return null;
+		}
+	};
+
 	const generateGradientFromImage = async (event) => {
 		const file = event.target.files[0];
 		if (!file) {
 			return;
 		}
 
-		const imageUrl = URL.createObjectURL(file);
+		const imageUrl = await processImageFile(file);
+		if (!imageUrl) return;
 
 		Vibrant.from(imageUrl)
 			.getPalette()
@@ -75,6 +108,11 @@
 					toast.error('Could not extract a palette from the image.');
 				}
 
+				URL.revokeObjectURL(imageUrl);
+			})
+			.catch((err) => {
+				console.error('Vibrant error:', err);
+				toast.error('Failed to extract colors from image.');
 				URL.revokeObjectURL(imageUrl);
 			});
 	};
@@ -139,7 +177,7 @@
 				<input
 					id="image-import-input-gradient"
 					type="file"
-					accept="image/*"
+					accept="image/*,.heic,.heif,.dng,.cr2,.nef,.arw,.orf,.rw2,.raf,.cr3"
 					class="hidden"
 					on:change={generateGradientFromImage}
 				/>
