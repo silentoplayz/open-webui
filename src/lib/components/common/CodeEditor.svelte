@@ -115,7 +115,7 @@
 							activeColorRange = { from, to };
 
 							pickerColor = colord(color).toHex();
-							pickerStyle = `position: fixed; left: ${e.clientX}px; top: ${e.clientY}px; z-index: 9999;`;
+							pickerStyle = `position: fixed; left: ${e.clientX}px; top: ${e.clientY}px; z-index: 10000;`;
 							pickerUpdateCallback = (newColor) => {
 								if (activeColorRange) {
 									let newColorStr = newColor;
@@ -482,12 +482,22 @@ print("${endTag}")
 		}
 		unsubscribe();
 	});
+	const portal = (node) => {
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				if (node.parentNode) {
+					node.parentNode.removeChild(node);
+				}
+			}
+		};
+	};
 </script>
 
 <div id="code-textarea-{id}" class="h-full w-full text-sm" />
 
 {#if showPicker}
-	<div class="color-picker-wrapper" style={pickerStyle}>
+	<div use:portal class="color-picker-wrapper" style={pickerStyle}>
 		<ColorPicker bind:hex={pickerColor} isDialog={false} />
 	</div>
 {/if}
