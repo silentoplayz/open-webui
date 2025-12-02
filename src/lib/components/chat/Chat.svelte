@@ -45,7 +45,6 @@
 		isChatPage,
 		showEmbeds
 	} from '$lib/stores';
-	import { currentThemeStore } from '$lib/theme';
 	import {
 		convertMessagesToHistory,
 		copyToClipboard,
