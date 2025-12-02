@@ -98,9 +98,9 @@
 	let showManageImageCompressionModal = false;
 
 	let textScale = null;
-    let filesInputElement;
-    let inputFiles;
-    let backgroundImageUrl = '';
+	let filesInputElement;
+	let inputFiles;
+	let backgroundImageUrl = '';
 
 	const toggleLandingPageMode = async () => {
 		landingPageMode = landingPageMode === '' ? 'chat' : '';
@@ -1055,8 +1055,12 @@
 					<button
 						class="p-1 px-3 text-xs flex rounded-sm transition"
 						on:click={() => {
-							saveSettings({ backgroundImageUrl: '' });
-							toast.success($i18n.t('Legacy background image reset successfully!'));
+							if ($settings.backgroundImageUrl) {
+								saveSettings({ backgroundImageUrl: '' });
+								toast.success($i18n.t('Legacy background image reset successfully!'));
+							} else {
+								toast.info($i18n.t('No legacy background image to reset.'));
+							}
 						}}
 						type="button"
 					>
