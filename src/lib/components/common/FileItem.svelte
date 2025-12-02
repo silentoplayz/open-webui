@@ -14,7 +14,7 @@
 
 	export let className = 'w-60';
 	export let colorClassName =
-		'bg-white dark:bg-gray-850 border border-gray-50 dark:border-gray-800';
+		'bg-white dark:bg-gray-850 border border-gray-50/30 dark:border-gray-800/30';
 	export let url: string | null = null;
 
 	export let dismissible = false;
@@ -33,6 +33,7 @@
 	import Database from '../icons/Database.svelte';
 	import PageEdit from '../icons/PageEdit.svelte';
 	import ChatBubble from '../icons/ChatBubble.svelte';
+	import Folder from '../icons/Folder.svelte';
 	let showModal = false;
 
 	const decodeString = (str: string) => {
@@ -115,6 +116,8 @@
 						<PageEdit />
 					{:else if type === 'chat'}
 						<ChatBubble />
+					{:else if type === 'folder'}
+						<Folder />
 					{:else}
 						<DocumentPage />
 					{/if}

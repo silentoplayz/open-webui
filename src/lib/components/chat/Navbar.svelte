@@ -37,11 +37,14 @@
 	import EllipsisHorizontal from '../icons/EllipsisHorizontal.svelte';
 	import ChatPlus from '../icons/ChatPlus.svelte';
 	import ChatCheck from '../icons/ChatCheck.svelte';
+	import Knobs from '../icons/Knobs.svelte';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	const i18n = getContext('i18n');
 
 	export let initNewChat: Function;
 	export let shareEnabled: boolean = false;
+	export let scrollTop = 0;
 
 	export let chat;
 	export let history;
@@ -69,8 +72,19 @@
 	aria-label="New Chat"
 />
 
-<nav class="sticky top-0 z-30 w-full py-1 -mb-8 flex flex-col items-center drag-region">
+<nav
+	class="sticky top-0 z-30 w-full {chat?.id
+		? 'pt-0.5 pb-1'
+		: 'pt-1 pb-1'} -mb-12 flex flex-col items-center drag-region"
+>
 	<div class="flex items-center w-full pl-1.5 pr-1">
+		<div
+			id="navbar-bg-gradient-to-b"
+			class="{chat?.id
+				? 'visible'
+				: 'invisible'} bg-linear-to-b via-40% to-97% from-white/90 via-white/50 to-transparent dark:from-gray-900/90 dark:via-gray-900/50 dark:to-transparent pointer-events-none absolute inset-0 -bottom-10 z-[-1]"
+		></div>
+
 		<div class=" flex max-w-full w-full mx-auto px-1.5 md:px-2 pt-0.5 bg-transparent">
 			<div class="flex items-center w-full max-w-full">
 				{#if $mobile && !$showSidebar}
@@ -206,7 +220,7 @@
 								aria-label="Controls"
 							>
 								<div class=" m-auto self-center">
-									<AdjustmentsHorizontal className=" size-5" strokeWidth="1" />
+									<Knobs className=" size-5" strokeWidth="1" />
 								</div>
 							</button>
 						</Tooltip>
@@ -229,7 +243,7 @@
 								<div class=" self-center">
 									<span class="sr-only">{$i18n.t('User menu')}</span>
 									<img
-										src={$user?.profile_image_url}
+										src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
 										class="size-6 object-cover rounded-full"
 										alt=""
 										draggable="false"
@@ -243,7 +257,7 @@
 		</div>
 	</div>
 
-	{#if $temporaryChatEnabled && $chatId === 'local'}
+	{#if $temporaryChatEnabled && ($chatId ?? '').startsWith('local:')}
 		<div class=" w-full z-30 text-center">
 			<div class="text-xs text-gray-500">{$i18n.t('Temporary Chat')}</div>
 		</div>
@@ -251,7 +265,7 @@
 
 	<div class="absolute top-[100%] left-0 right-0 h-fit">
 		{#if !history.currentId && !$chatId && ($banners.length > 0 || ($config?.license_metadata?.type ?? null) === 'trial' || (($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats))}
-			<div class=" w-full z-30 mt-4">
+			<div class=" w-full z-30">
 				<div class=" flex flex-col gap-1 w-full">
 					{#if ($config?.license_metadata?.type ?? null) === 'trial'}
 						<Banner

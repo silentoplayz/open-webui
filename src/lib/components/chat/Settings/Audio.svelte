@@ -175,7 +175,7 @@
 		dispatch('save');
 	}}
 >
-	<div class=" space-y-3 overflow-y-scroll max-h-[28rem] lg:max-h-full">
+	<div class=" space-y-3 overflow-y-scroll max-h-[28rem] md:max-h-full">
 		<div>
 			<div class=" mb-1 text-sm font-medium">{$i18n.t('STT Settings')}</div>
 
@@ -306,7 +306,7 @@
 			</div>
 		</div>
 
-		<hr class=" border-gray-100 dark:border-gray-850" />
+		<hr class=" border-gray-100/30 dark:border-gray-850/30" />
 
 		{#if TTSEngine === 'browser-kokoro'}
 			{#if TTSModel}

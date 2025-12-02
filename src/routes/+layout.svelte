@@ -2,6 +2,7 @@
 	import { io } from 'socket.io-client';
 	import { spring } from 'svelte/motion';
 	import PyodideWorker from '$lib/workers/pyodide.worker?worker';
+	import { Toaster, toast } from 'svelte-sonner';
 
 	let loadingProgress = spring(0, {
 		stiffness: 0.05
@@ -14,6 +15,8 @@
 		settings,
 		theme,
 		WEBUI_NAME,
+		WEBUI_VERSION,
+		WEBUI_DEPLOYMENT_ID,
 		mobile,
 		socket,
 		chatId,
@@ -25,37 +28,57 @@
 		isApp,
 		appInfo,
 		toolServers,
-		playingNotificationSound
+		playingNotificationSound,
+		channels,
+		channelId
 	} from '$lib/stores';
 	import { applyTheme, checkForThemeUpdates } from '$lib/theme';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { Toaster, toast } from 'svelte-sonner';
+	import { beforeNavigate } from '$app/navigation';
+	import { updated } from '$app/state';
 
-	import { executeToolServer, getBackendConfig } from '$lib/apis';
-	import { getSessionUser, userSignOut } from '$lib/apis/auths';
+	import i18n, { initI18n, getLanguages, changeLanguage } from '$lib/i18n';
 
 	import '../tailwind.css';
 	import '../app.css';
-
 	import 'tippy.js/dist/tippy.css';
 	import '@fortawesome/fontawesome-free/css/all.min.css';
 
-	import { WEBUI_BASE_URL, WEBUI_HOSTNAME } from '$lib/constants';
-	import i18n, { initI18n, getLanguages, changeLanguage } from '$lib/i18n';
-	import { bestMatchingLanguage } from '$lib/utils';
+	import { executeToolServer, getBackendConfig, getVersion } from '$lib/apis';
+	import { getSessionUser, userSignOut } from '$lib/apis/auths';
 	import { getAllTags, getChatList } from '$lib/apis/chats';
-	import NotificationToast from '$lib/components/NotificationToast.svelte';
-	import AppSidebar from '$lib/components/app/AppSidebar.svelte';
 	import { chatCompletion } from '$lib/apis/openai';
 
-	import { beforeNavigate, afterNavigate } from '$app/navigation';
-	import { updated } from '$app/state';
+	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL, WEBUI_HOSTNAME } from '$lib/constants';
+	import { bestMatchingLanguage } from '$lib/utils';
+	import { setTextScale } from '$lib/utils/text-scale';
+
+	import NotificationToast from '$lib/components/NotificationToast.svelte';
+	import AppSidebar from '$lib/components/app/AppSidebar.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	import { getUserSettings } from '$lib/apis/users';
+	import dayjs from 'dayjs';
+	import { getChannels } from '$lib/apis/channels';
+
+	const unregisterServiceWorkers = async () => {
+		if ('serviceWorker' in navigator) {
+			try {
+				const registrations = await navigator.serviceWorker.getRegistrations();
+				await Promise.all(registrations.map((r) => r.unregister()));
+				return true;
+			} catch (error) {
+				console.error('Error unregistering service workers:', error);
+				return false;
+			}
+		}
+		return false;
+	};
 
 	// handle frontend updates (https://svelte.dev/docs/kit/configuration#version)
-	beforeNavigate(({ willUnload, to }) => {
+	beforeNavigate(async ({ willUnload, to }) => {
 		if (updated.current && !willUnload && to?.url) {
+			await unregisterServiceWorkers();
 			location.href = to.url.href;
 		}
 	});
@@ -68,6 +91,8 @@
 	let tokenTimer = null;
 
 	let showRefresh = false;
+
+	let heartbeatInterval = null;
 
 	let themeUpdateCheckDone = false;
 	$: if ($user && !themeUpdateCheckDone) {
@@ -87,15 +112,48 @@
 			transports: enableWebsocket ? ['websocket'] : ['polling', 'websocket'],
 			auth: { token: localStorage.token }
 		});
-
 		await socket.set(_socket);
 
 		_socket.on('connect_error', (err) => {
 			console.log('connect_error', err);
 		});
 
-		_socket.on('connect', () => {
+		_socket.on('connect', async () => {
 			console.log('connected', _socket.id);
+			const res = await getVersion(localStorage.token);
+
+			const deploymentId = res?.deployment_id ?? null;
+			const version = res?.version ?? null;
+
+			if (version !== null || deploymentId !== null) {
+				if (
+					($WEBUI_VERSION !== null && version !== $WEBUI_VERSION) ||
+					($WEBUI_DEPLOYMENT_ID !== null && deploymentId !== $WEBUI_DEPLOYMENT_ID)
+				) {
+					await unregisterServiceWorkers();
+					location.href = location.href;
+					return;
+				}
+			}
+
+			// Send heartbeat every 30 seconds
+			heartbeatInterval = setInterval(() => {
+				if (_socket.connected) {
+					console.log('Sending heartbeat');
+					_socket.emit('heartbeat', {});
+				}
+			}, 30000);
+
+			if (deploymentId !== null) {
+				WEBUI_DEPLOYMENT_ID.set(deploymentId);
+			}
+
+			if (version !== null) {
+				WEBUI_VERSION.set(version);
+			}
+
+			console.log('version', version);
+
 			if (localStorage.getItem('token')) {
 				// Emit user-join event with auth token
 				_socket.emit('user-join', { auth: { token: localStorage.token } });
@@ -114,6 +172,12 @@
 
 		_socket.on('disconnect', (reason, details) => {
 			console.log(`Socket ${_socket.id} disconnected due to ${reason}`);
+
+			if (heartbeatInterval) {
+				clearInterval(heartbeatInterval);
+				heartbeatInterval = null;
+			}
+
 			if (details) {
 				console.log('Additional details:', details);
 			}
@@ -423,7 +487,19 @@
 	};
 
 	const channelEventHandler = async (event) => {
+		console.log('channelEventHandler', event);
 		if (event.data?.type === 'typing') {
+			return;
+		}
+
+		// handle channel created event
+		if (event.data?.type === 'channel:created') {
+			await channels.set(
+				(await getChannels(localStorage.token)).sort(
+					(a, b) =>
+						['', null, 'group', 'dm'].indexOf(a.type) - ['', null, 'group', 'dm'].indexOf(b.type)
+				)
+			);
 			return;
 		}
 
@@ -445,12 +521,41 @@
 			const type = event?.data?.type ?? null;
 			const data = event?.data?.data ?? null;
 
+			if ($channels) {
+				if ($channels.find((ch) => ch.id === event.channel_id) && $channelId !== event.channel_id) {
+					channels.set(
+						$channels.map((ch) => {
+							if (ch.id === event.channel_id) {
+								if (type === 'message') {
+									return {
+										...ch,
+										unread_count: (ch.unread_count ?? 0) + 1,
+										last_message_at: event.created_at
+									};
+								}
+							}
+							return ch;
+						})
+					);
+				} else {
+					await channels.set(
+						(await getChannels(localStorage.token)).sort(
+							(a, b) =>
+								['', null, 'group', 'dm'].indexOf(a.type) -
+								['', null, 'group', 'dm'].indexOf(b.type)
+						)
+					);
+				}
+			}
+
 			if (type === 'message') {
+				const title = `${data?.user?.name}${event?.channel?.type !== 'dm' ? ` (#${event?.channel?.name})` : ''}`;
+
 				if ($isLastActiveTab) {
 					if ($settings?.notificationEnabled ?? false) {
-						new Notification(`${data?.user?.name} (#${event?.channel?.name}) • Open WebUI`, {
+						new Notification(`${title} • Open WebUI`, {
 							body: data?.content,
-							icon: data?.user?.profile_image_url ?? `${WEBUI_BASE_URL}/static/favicon.png`
+							icon: `${WEBUI_API_BASE_URL}/users/${data?.user?.id}/profile/image`
 						});
 					}
 				}
@@ -461,7 +566,7 @@
 							goto(`/channels/${event.channel_id}`);
 						},
 						content: data?.content,
-						title: `#${event?.channel?.name}`
+						title: `${title}`
 					},
 					duration: 15000,
 					unstyled: true
@@ -520,8 +625,10 @@
 			}
 		});
 
-		if (typeof window !== 'undefined' && window.applyTheme) {
-			window.applyTheme();
+		if (typeof window !== 'undefined') {
+			if (window.applyTheme) {
+				window.applyTheme();
+			}
 		}
 
 		if (window?.electronAPI) {
@@ -587,13 +694,21 @@
 		};
 		window.addEventListener('resize', onResize);
 
-		user.subscribe((value) => {
+		user.subscribe(async (value) => {
 			if (value) {
-				$socket?.off('chat-events', chatEventHandler);
-				$socket?.off('channel-events', channelEventHandler);
+				$socket?.off('events', chatEventHandler);
+				$socket?.off('events:channel', channelEventHandler);
 
-				$socket?.on('chat-events', chatEventHandler);
-				$socket?.on('channel-events', channelEventHandler);
+				$socket?.on('events', chatEventHandler);
+				$socket?.on('events:channel', channelEventHandler);
+
+				const userSettings = await getUserSettings(localStorage.token);
+				if (userSettings) {
+					settings.set(userSettings.ui);
+				} else {
+					settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
+				}
+				setTextScale($settings?.textScale ?? 1);
 
 				// Set up the token expiry check
 				if (tokenTimer) {
@@ -601,8 +716,8 @@
 				}
 				tokenTimer = setInterval(checkTokenExpiry, 15000);
 			} else {
-				$socket?.off('chat-events', chatEventHandler);
-				$socket?.off('channel-events', channelEventHandler);
+				$socket?.off('events', chatEventHandler);
+				$socket?.off('events:channel', channelEventHandler);
 			}
 		});
 
@@ -626,6 +741,7 @@
 				? backendConfig.default_locale
 				: bestMatchingLanguage(languages, browserLanguages, 'en-US');
 			changeLanguage(lang);
+			dayjs.locale(lang);
 		}
 
 		if (backendConfig) {

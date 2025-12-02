@@ -23,7 +23,7 @@ log.setLevel(SRC_LOG_LEVELS["MODELS"])
 
 class Folder(Base):
     __tablename__ = "folder"
-    id = Column(Text, primary_key=True)
+    id = Column(Text, primary_key=True, unique=True)
     parent_id = Column(Text, nullable=True)
     user_id = Column(Text)
     name = Column(Text)
@@ -48,6 +48,20 @@ class FolderModel(BaseModel):
     updated_at: int
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class FolderMetadataResponse(BaseModel):
+    icon: Optional[str] = None
+
+
+class FolderNameIdResponse(BaseModel):
+    id: str
+    name: str
+    meta: Optional[FolderMetadataResponse] = None
+    parent_id: Optional[str] = None
+    is_expanded: bool = False
+    created_at: int
+    updated_at: int
 
 
 ####################

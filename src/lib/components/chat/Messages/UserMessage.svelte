@@ -6,7 +6,7 @@
 	import { models, settings } from '$lib/stores';
 	import { user as _user } from '$lib/stores';
 	import { copyToClipboard as _copyToClipboard, formatDate } from '$lib/utils';
-	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import Name from './Name.svelte';
 	import ProfileImage from './ProfileImage.svelte';
@@ -81,7 +81,7 @@
 	};
 
 	const editMessageConfirmHandler = async (submit = true) => {
-		if (!editedContent && editedFiles.length === 0) {
+		if (!editedContent && (editedFiles ?? []).length === 0) {
 			toast.error($i18n.t('Please enter a message or attach a file.'));
 			return;
 		}
@@ -124,10 +124,7 @@
 	{#if !($settings?.chatBubble ?? true)}
 		<div class={`shrink-0 ltr:mr-3 rtl:ml-3 mt-1`}>
 			<ProfileImage
-				src={message.user
-					? ($models.find((m) => m.id === message.user)?.info?.meta?.profile_image_url ??
-						`${WEBUI_BASE_URL}/user.png`)
-					: (user?.profile_image_url ?? `${WEBUI_BASE_URL}/user.png`)}
+				src={`${WEBUI_API_BASE_URL}/users/${user.id}/profile/image`}
 				className={'size-8 user-message-profile-image'}
 			/>
 		</div>

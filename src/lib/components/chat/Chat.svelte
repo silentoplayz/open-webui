@@ -4,6 +4,7 @@
 	import { PaneGroup, Pane, PaneResizer } from 'paneforge';
 
 	import { getContext, onDestroy, onMount, tick } from 'svelte';
+	import { fade } from 'svelte/transition';
 	const i18n: Writable<i18nType> = getContext('i18n');
 
 	import { goto } from '$app/navigation';
@@ -26,6 +27,7 @@
 		banners,
 		user,
 		socket,
+		audioQueue,
 		showControls,
 		showCallOverlay,
 		currentChatPage,
@@ -34,12 +36,14 @@
 		showOverview,
 		chatTitle,
 		showArtifacts,
+		artifactContents,
 		tools,
 		toolServers,
 		functions,
 		selectedFolder,
 		pinnedChats,
-		isChatPage
+		isChatPage,
+		showEmbeds
 	} from '$lib/stores';
 	import { currentThemeStore } from '$lib/theme';
 	import {
@@ -49,8 +53,10 @@
 		createMessagesList,
 		getPromptVariables,
 		processDetails,
-		removeAllDetails
+		removeAllDetails,
+		getCodeBlockContents
 	} from '$lib/utils';
+	import { AudioQueue } from '$lib/utils/audio';
 
 	import {
 		createNewChat,
@@ -76,8 +82,8 @@
 	import { getTools } from '$lib/apis/tools';
 	import { uploadFile } from '$lib/apis/files';
 	import { createOpenAITextStream } from '$lib/apis/streaming';
-
-	import { fade } from 'svelte/transition';
+	import { getFunctions } from '$lib/apis/functions';
+	import { updateFolderById } from '$lib/apis/folders';
 
 	import Banner from '../common/Banner.svelte';
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
@@ -90,7 +96,6 @@
 	import Spinner from '../common/Spinner.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Sidebar from '../icons/Sidebar.svelte';
-	import { getFunctions } from '$lib/apis/functions';
 	import Image from '../common/Image.svelte';
 
 	export let chatIdProp = '';
@@ -122,7 +127,11 @@
 	let selectedModels = [''];
 	let atSelectedModel: Model | undefined;
 	let selectedModelIds = [];
-	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
+	$: if (atSelectedModel !== undefined) {
+		selectedModelIds = [atSelectedModel.id];
+	} else {
+		selectedModelIds = selectedModels;
+	}
 
 	let selectedToolIds = [];
 	let selectedFilterIds = [];
@@ -192,6 +201,8 @@
 						codeInterpreterEnabled = input.codeInterpreterEnabled;
 					}
 				} catch (e) {}
+			} else {
+				await setDefaults();
 			}
 
 			const chatInput = document.getElementById('chat-input');
@@ -220,10 +231,15 @@
 	}
 
 	const saveSessionSelectedModels = () => {
-		if (selectedModels.length === 0 || (selectedModels.length === 1 && selectedModels[0] === '')) {
+		const selectedModelsString = JSON.stringify(selectedModels);
+		if (
+			selectedModels.length === 0 ||
+			(selectedModels.length === 1 && selectedModels[0] === '') ||
+			sessionStorage.selectedModels === selectedModelsString
+		) {
 			return;
 		}
-		sessionStorage.selectedModels = JSON.stringify(selectedModels);
+		sessionStorage.selectedModels = selectedModelsString;
 		console.log('saveSessionSelectedModels', selectedModels, sessionStorage.selectedModels);
 	};
 
@@ -233,10 +249,8 @@
 	}
 
 	const onSelectedModelIdsChange = () => {
-		if (oldSelectedModelIds.filter((id) => id).length > 0) {
-			resetInput();
-		}
-		oldSelectedModelIds = selectedModelIds;
+		resetInput();
+		oldSelectedModelIds = JSON.parse(JSON.stringify(selectedModelIds));
 	};
 
 	const resetInput = () => {
@@ -246,7 +260,9 @@
 		imageGenerationEnabled = false;
 		codeInterpreterEnabled = false;
 
-		setDefaults();
+		if (selectedModelIds.filter((id) => id).length > 0) {
+			setDefaults();
+		}
 	};
 
 	const setDefaults = async () => {
@@ -295,7 +311,7 @@
 		}
 	};
 
-	const showMessage = async (message) => {
+	const showMessage = async (message, ignoreSettings = false) => {
 		await tick();
 
 		const _chatId = JSON.parse(JSON.stringify($chatId));
@@ -321,7 +337,7 @@
 		await tick();
 		await tick();
 
-		if ($settings?.scrollOnBranchChange ?? true) {
+		if (($settings?.scrollOnBranchChange ?? true) || ignoreSettings) {
 			const messageElement = document.getElementById(`message-${message.id}`);
 			if (messageElement) {
 				messageElement.scrollIntoView({ behavior: 'smooth' });
@@ -364,6 +380,8 @@
 					message.content = data.content;
 				} else if (type === 'chat:message:files' || type === 'files') {
 					message.files = data.files;
+				} else if (type === 'chat:message:embeds' || type === 'embeds') {
+					message.embeds = data.embeds;
 				} else if (type === 'chat:message:error') {
 					message.error = data.error;
 				} else if (type === 'chat:message:follow_ups') {
@@ -467,6 +485,15 @@
 			return;
 		}
 
+		if (event.data.type === 'action:submit') {
+			console.debug(event.data.text);
+
+			if (prompt !== '') {
+				await tick();
+				submitPrompt(prompt);
+			}
+		}
+
 		// Replace with your iframe's origin
 		if (event.data.type === 'input:prompt') {
 			console.debug(event.data.text);
@@ -476,15 +503,6 @@
 			if (inputElement) {
 				messageInput?.setText(event.data.text);
 				inputElement.focus();
-			}
-		}
-
-		if (event.data.type === 'action:submit') {
-			console.debug(event.data.text);
-
-			if (prompt !== '') {
-				await tick();
-				submitPrompt(prompt);
 			}
 		}
 
@@ -498,19 +516,51 @@
 		}
 	};
 
+	const savedModelIds = async () => {
+		if (
+			$selectedFolder &&
+			selectedModels.filter((modelId) => modelId !== '').length > 0 &&
+			JSON.stringify($selectedFolder?.data?.model_ids) !== JSON.stringify(selectedModels)
+		) {
+			const res = await updateFolderById(localStorage.token, $selectedFolder.id, {
+				data: {
+					model_ids: selectedModels
+				}
+			});
+		}
+	};
+
+	$: if (selectedModels !== null) {
+		savedModelIds();
+	}
+
 	let pageSubscribe = null;
+	let showControlsSubscribe = null;
+	let selectedFolderSubscribe = null;
+
+	const stopAudio = () => {
+		try {
+			speechSynthesis.cancel();
+			$audioQueue.stop();
+		} catch {}
+	};
+
 	onMount(async () => {
 		isChatPage.set(true);
 		loading = true;
 		console.log('mounted');
 		window.addEventListener('message', onMessageHandler);
-		$socket?.on('chat-events', chatEventHandler);
+		$socket?.on('events', chatEventHandler);
+
+		audioQueue.set(new AudioQueue(document.getElementById('audioElement')));
 
 		pageSubscribe = page.subscribe(async (p) => {
 			if (p.url.pathname === '/') {
 				await tick();
 				initNewChat();
 			}
+
+			stopAudio();
 		});
 
 		const storageChatInput = sessionStorage.getItem(
@@ -548,7 +598,7 @@
 			} catch (e) {}
 		}
 
-		showControls.subscribe(async (value) => {
+		showControlsSubscribe = showControls.subscribe(async (value) => {
 			if (controlPane && !$mobile) {
 				try {
 					if (value) {
@@ -565,21 +615,37 @@
 				showCallOverlay.set(false);
 				showOverview.set(false);
 				showArtifacts.set(false);
+				showEmbeds.set(false);
+			}
+		});
+
+		selectedFolderSubscribe = selectedFolder.subscribe(async (folder) => {
+			if (
+				folder?.data?.model_ids &&
+				JSON.stringify(selectedModels) !== JSON.stringify(folder.data.model_ids)
+			) {
+				selectedModels = folder.data.model_ids;
+
+				console.log('Set selectedModels from folder data:', selectedModels);
 			}
 		});
 
 		const chatInput = document.getElementById('chat-input');
 		chatInput?.focus();
-
-		chats.subscribe(() => {});
 	});
 
 	onDestroy(() => {
-		isChatPage.set(false);
-		pageSubscribe();
-		chatIdUnsubscriber?.();
-		window.removeEventListener('message', onMessageHandler);
-		$socket?.off('chat-events', chatEventHandler);
+		try {
+			pageSubscribe();
+			showControlsSubscribe();
+			selectedFolderSubscribe();
+			chatIdUnsubscriber?.();
+			window.removeEventListener('message', onMessageHandler);
+			$socket?.off('events', chatEventHandler);
+			$audioQueue?.destroy();
+		} catch (e) {
+			console.error(e);
+		}
 	});
 
 	// File upload functions
@@ -775,11 +841,69 @@
 		}
 	};
 
+	$: if (history) {
+		getContents();
+	} else {
+		artifactContents.set([]);
+	}
+
+	const getContents = () => {
+		const messages = history ? createMessagesList(history, history.currentId) : [];
+		let contents = [];
+		messages.forEach((message) => {
+			if (message?.role !== 'user' && message?.content) {
+				const {
+					codeBlocks: codeBlocks,
+					html: htmlContent,
+					css: cssContent,
+					js: jsContent
+				} = getCodeBlockContents(message.content);
+
+				if (htmlContent || cssContent || jsContent) {
+					const renderedContent = `
+                        <!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+							<${''}style>
+								body {
+									background-color: white; /* Ensure the iframe has a white background */
+								}
+
+								${cssContent}
+							</${''}style>
+                        </head>
+                        <body>
+                            ${htmlContent}
+
+							<${''}script>
+                            	${jsContent}
+							</${''}script>
+                        </body>
+                        </html>
+                    `;
+					contents = [...contents, { type: 'iframe', content: renderedContent }];
+				} else {
+					// Check for SVG content
+					for (const block of codeBlocks) {
+						if (block.lang === 'svg' || (block.lang === 'xml' && block.code.includes('<svg'))) {
+							contents = [...contents, { type: 'svg', content: block.code }];
+						}
+					}
+				}
+			}
+		});
+
+		artifactContents.set(contents);
+	};
+
 	//////////////////////////
 	// Web functions
 	//////////////////////////
 
 	const initNewChat = async () => {
+		console.log('initNewChat');
 		if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
 			await temporaryChatEnabled.set(true);
 		}
@@ -830,17 +954,22 @@
 				$models.map((m) => m.id).includes(modelId)
 			);
 		} else {
-			if (sessionStorage.selectedModels) {
-				selectedModels = JSON.parse(sessionStorage.selectedModels);
-				sessionStorage.removeItem('selectedModels');
+			if ($selectedFolder?.data?.model_ids) {
+				selectedModels = $selectedFolder?.data?.model_ids;
 			} else {
-				if ($settings?.models) {
-					selectedModels = $settings?.models;
-				} else if ($config?.default_models) {
-					console.log($config?.default_models.split(',') ?? '');
-					selectedModels = $config?.default_models.split(',');
+				if (sessionStorage.selectedModels) {
+					selectedModels = JSON.parse(sessionStorage.selectedModels);
+					sessionStorage.removeItem('selectedModels');
+				} else {
+					if ($settings?.models) {
+						selectedModels = $settings?.models;
+					} else if ($config?.default_models) {
+						console.log($config?.default_models.split(',') ?? '');
+						selectedModels = $config?.default_models.split(',');
+					}
 				}
 			}
+
 			selectedModels = selectedModels.filter((modelId) => availableModels.includes(modelId));
 		}
 
@@ -932,14 +1061,6 @@
 			$models.map((m) => m.id).includes(modelId) ? modelId : ''
 		);
 
-		const userSettings = await getUserSettings(localStorage.token);
-
-		if (userSettings) {
-			settings.set(userSettings.ui);
-		} else {
-			settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
-		}
-
 		const chatInput = document.getElementById('chat-input');
 		setTimeout(() => chatInput?.focus(), 0);
 	};
@@ -975,7 +1096,7 @@
 					selectedModels = selectedModels.length > 0 ? [selectedModels[0]] : [''];
 				}
 
-				oldSelectedModelIds = selectedModels;
+				oldSelectedModelIds = JSON.parse(JSON.stringify(selectedModels));
 
 				history =
 					(chatContent?.history ?? undefined) !== undefined
@@ -983,14 +1104,6 @@
 						: convertMessagesToHistory(chatContent.messages);
 
 				chatTitle.set(chatContent.title);
-
-				const userSettings = await getUserSettings(localStorage.token);
-
-				if (userSettings) {
-					await settings.set(userSettings.ui);
-				} else {
-					await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
-				}
 
 				params = chatContent?.params ?? {};
 				chatFiles = chatContent?.files ?? [];
@@ -1032,7 +1145,7 @@
 			});
 		}
 	};
-	const chatCompletedHandler = async (chatId, modelId, responseMessageId, messages) => {
+	const chatCompletedHandler = async (_chatId, modelId, responseMessageId, messages) => {
 		const res = await chatCompleted(localStorage.token, {
 			model: modelId,
 			messages: messages.map((m) => ({
@@ -1046,7 +1159,7 @@
 			})),
 			filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 			model_item: $models.find((m) => m.id === modelId),
-			chat_id: chatId,
+			chat_id: _chatId,
 			session_id: $socket?.id,
 			id: responseMessageId
 		}).catch((error) => {
@@ -1074,9 +1187,9 @@
 
 		await tick();
 
-		if ($chatId == chatId) {
+		if ($chatId == _chatId) {
 			if (!$temporaryChatEnabled) {
-				chat = await updateChatById(localStorage.token, chatId, {
+				chat = await updateChatById(localStorage.token, _chatId, {
 					models: selectedModels,
 					messages: messages,
 					history: history,
@@ -1092,7 +1205,7 @@
 		taskIds = null;
 	};
 
-	const chatActionHandler = async (chatId, actionId, modelId, responseMessageId, event = null) => {
+	const chatActionHandler = async (_chatId, actionId, modelId, responseMessageId, event = null) => {
 		const messages = createMessagesList(history, responseMessageId);
 
 		const res = await chatAction(localStorage.token, actionId, {
@@ -1107,7 +1220,7 @@
 			})),
 			...(event ? { event: event } : {}),
 			model_item: $models.find((m) => m.id === modelId),
-			chat_id: chatId,
+			chat_id: _chatId,
 			session_id: $socket?.id,
 			id: responseMessageId
 		}).catch((error) => {
@@ -1129,9 +1242,9 @@
 			}
 		}
 
-		if ($chatId == chatId) {
+		if ($chatId == _chatId) {
 			if (!$temporaryChatEnabled) {
-				chat = await updateChatById(localStorage.token, chatId, {
+				chat = await updateChatById(localStorage.token, _chatId, {
 					models: selectedModels,
 					messages: messages,
 					history: history,
@@ -1498,7 +1611,9 @@
 		const _files = JSON.parse(JSON.stringify(files));
 
 		chatFiles.push(
-			..._files.filter((item) => ['doc', 'text', 'file', 'collection'].includes(item.type))
+			..._files.filter((item) =>
+				['doc', 'text', 'file', 'note', 'chat', 'folder', 'collection'].includes(item.type)
+			)
 		);
 		chatFiles = chatFiles.filter(
 			// Remove duplicates
@@ -1667,6 +1782,7 @@
 
 		if ($config?.features)
 			features = {
+				voice: $showCallOverlay,
 				image_generation:
 					$config?.features?.enable_image_generation &&
 					($user?.role === 'admin' || $user?.permissions?.features?.image_generation)
@@ -1841,7 +1957,9 @@
 
 				session_id: $socket?.id,
 				chat_id: $chatId,
+
 				id: responseMessageId,
+				parent_id: userMessage?.id ?? null,
 
 				background_tasks: {
 					...(!$temporaryChatEnabled &&
@@ -2157,8 +2275,8 @@
 
 			selectedFolder.set(null);
 		} else {
-			_chatId = 'local';
-			await chatId.set('local');
+			_chatId = `local:${$socket?.id}`; // Use socket id for temporary chat
+			await chatId.set(_chatId);
 		}
 		await tick();
 
@@ -2232,13 +2350,13 @@
 
 <svelte:head>
 	<title>
-		{$chatTitle
+		{$settings.showChatTitleInTab !== false && $chatTitle
 			? `${$chatTitle.length > 30 ? `${$chatTitle.slice(0, 30)}...` : $chatTitle} • ${$WEBUI_NAME}`
 			: `${$WEBUI_NAME}`}
 	</title>
 </svelte:head>
 
-<audio id="audioElement" src="" style="display: none;" />
+<audio id="audioElement" src="" style="display: none;"></audio>
 
 <EventConfirmDialog
 	bind:show={showEventConfirmation}
@@ -2269,9 +2387,7 @@
 		<div in:fade={{ duration: 50 }} class="w-full h-full flex flex-col">
 			{#if $selectedFolder && $selectedFolder?.meta?.background_image_url}
 				<div
-					class="absolute {$showSidebar
-						? 'md:max-w-[calc(100%-260px)] md:translate-x-[260px]'
-						: ''} top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
+					class="absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
 					style="background-image: url({$selectedFolder?.meta?.background_image_url})  "
 				/>
 
@@ -2280,9 +2396,7 @@
 				/>
 			{:else if $settings?.backgroundImageUrl ?? $config?.license_metadata?.background_image_url ?? null}
 				<div
-					class="absolute {$showSidebar
-						? 'md:max-w-[calc(100%-260px)] md:translate-x-[260px]'
-						: ''} top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
+					class="absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
 					style="background-image: url({$settings?.backgroundImageUrl ??
 						$config?.license_metadata?.background_image_url})  "
 				/>
@@ -2390,7 +2504,7 @@
 								</div>
 							</div>
 
-							<div class=" pb-2">
+							<div class=" pb-2 z-10">
 								<MessageInput
 									bind:this={messageInput}
 									{history}
@@ -2520,3 +2634,10 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	::-webkit-scrollbar {
+		height: 0.5rem;
+		width: 0.5rem;
+	}
+</style>

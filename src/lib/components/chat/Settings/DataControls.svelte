@@ -2,14 +2,22 @@
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
-	import { chats, user, settings, scrollPaginationEnabled, currentChatPage } from '$lib/stores';
+	import {
+		chats,
+		user,
+		settings,
+		scrollPaginationEnabled,
+		currentChatPage,
+		pinnedChats
+	} from '$lib/stores';
 
 	import {
 		archiveAllChats,
 		deleteAllChats,
 		getAllChats,
 		getChatList,
-		importChat
+		getPinnedChatList,
+		importChats
 	} from '$lib/apis/chats';
 	import { getImportOrigin, convertOpenAIChats } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
@@ -44,7 +52,7 @@
 					console.log('Unable to import chats:', error);
 				}
 			}
-			importChats(chats);
+			importChatsHandler(chats);
 		};
 
 		if (importFiles.length > 0) {
@@ -52,28 +60,39 @@
 		}
 	}
 
-	const importChats = async (_chats) => {
-		for (const chat of _chats) {
-			console.log(chat);
-
-			if (chat.chat) {
-				await importChat(
-					localStorage.token,
-					chat.chat,
-					chat.meta ?? {},
-					false,
-					null,
-					chat?.created_at ?? null,
-					chat?.updated_at ?? null
-				);
-			} else {
-				// Legacy format
-				await importChat(localStorage.token, chat, {}, false, null);
-			}
+	const importChatsHandler = async (_chats) => {
+		const res = await importChats(
+			localStorage.token,
+			_chats.map((chat) => {
+				if (chat.chat) {
+					return {
+						chat: chat.chat,
+						meta: chat.meta ?? {},
+						pinned: false,
+						folder_id: chat?.folder_id ?? null,
+						created_at: chat?.created_at ?? null,
+						updated_at: chat?.updated_at ?? null
+					};
+				} else {
+					// Legacy format
+					return {
+						chat: chat,
+						meta: {},
+						pinned: false,
+						folder_id: null,
+						created_at: chat?.created_at ?? null,
+						updated_at: chat?.updated_at ?? null
+					};
+				}
+			})
+		);
+		if (res) {
+			toast.success(`Successfully imported ${res.length} chats.`);
 		}
 
 		currentChatPage.set(1);
 		await chats.set(await getChatList(localStorage.token, $currentChatPage));
+		pinnedChats.set(await getPinnedChatList(localStorage.token));
 		scrollPaginationEnabled.set(true);
 	};
 
@@ -92,6 +111,7 @@
 
 		currentChatPage.set(1);
 		await chats.set(await getChatList(localStorage.token, $currentChatPage));
+		pinnedChats.set([]);
 		scrollPaginationEnabled.set(true);
 	};
 
@@ -117,7 +137,7 @@
 <ArchivedChatsModal bind:show={showArchivedChatsModal} onUpdate={handleArchivedChatsChange} />
 
 <div id="tab-chats" class="flex flex-col h-full justify-between space-y-3 text-sm">
-	<div class=" space-y-2 overflow-y-scroll max-h-[28rem] lg:max-h-full">
+	<div class=" space-y-2 overflow-y-scroll max-h-[28rem] md:max-h-full">
 		<div class="flex flex-col">
 			<input
 				id="chat-import-input"
@@ -176,7 +196,7 @@
 			{/if}
 		</div>
 
-		<hr class=" border-gray-100 dark:border-gray-850" />
+		<hr class=" border-gray-100/30 dark:border-gray-850/30" />
 
 		<div class="flex flex-col">
 			<button
