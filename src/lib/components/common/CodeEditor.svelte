@@ -10,8 +10,11 @@
 	extend([namesPlugin]);
 
 	class ColorSwatchWidget extends WidgetType {
-		constructor(readonly color: string) {
+		color: string;
+
+		constructor(color: string) {
 			super();
+			this.color = color;
 		}
 
 		eq(other: ColorSwatchWidget) {

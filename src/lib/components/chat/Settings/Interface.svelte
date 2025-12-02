@@ -98,6 +98,9 @@
 	let showManageImageCompressionModal = false;
 
 	let textScale = null;
+    let filesInputElement;
+    let inputFiles;
+    let backgroundImageUrl = '';
 
 	const toggleLandingPageMode = async () => {
 		landingPageMode = landingPageMode === '' ? 'chat' : '';
