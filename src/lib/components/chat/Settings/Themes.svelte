@@ -32,6 +32,7 @@
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
 	import ChevronUpDown from '$lib/components/icons/ChevronUpDown.svelte';
 	import ArrowPath from '$lib/components/icons/ArrowPath.svelte';
+	import Plus from '$lib/components/icons/Plus.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import emojiGroups from '$lib/emoji-groups.json';
 	import { config, user } from '$lib/stores';
@@ -506,6 +507,15 @@
 							<ArrowPath class={`w-4 h-4 ${isCheckingForUpdates ? 'animate-spin' : ''}`} />
 						</button>
 					</Tooltip>
+					<Tooltip content="New Theme" placement="top">
+						<button
+							class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+							on:click={createNewTheme}
+							disabled={isLoading}
+						>
+							<Plus class="w-4 h-4" />
+						</button>
+					</Tooltip>
 				</div>
 			</div>
 			<div
@@ -671,16 +681,21 @@
 					{$i18n.t('Load a custom theme by providing a URL to a valid theme.json file.')}
 				</p>
 
-				<div class="flex items-center gap-2">
+				<div class="relative flex items-center">
 					<input
 						type="url"
-						class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none"
+						class="w-full rounded-lg py-2 pl-4 pr-20 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none"
 						placeholder="https://example.com/theme.json"
 						bind:value={themeUrl}
 						disabled={isLoading}
+						on:keydown={(e) => {
+							if (e.key === 'Enter' && !isLoading) {
+								addThemeHandler();
+							}
+						}}
 					/>
 					<button
-						class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full disabled:opacity-50 whitespace-nowrap"
+						class="absolute right-1.5 px-3 py-1 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-md disabled:opacity-50"
 						on:click={addThemeHandler}
 						disabled={isLoading}
 					>
@@ -690,6 +705,8 @@
 							{$i18n.t('Add')}
 						{/if}
 					</button>
+				</div>
+				<div class="flex items-center gap-2">
 					<input
 						type="file"
 						accept=".json"
@@ -709,13 +726,6 @@
 						on:click={exportAllThemes}
 					>
 						{$i18n.t('Export All')}
-					</button>
-					<button
-						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
-						on:click={createNewTheme}
-						disabled={isLoading}
-					>
-						{$i18n.t('Add Manually')}
 					</button>
 				</div>
 			</div>
