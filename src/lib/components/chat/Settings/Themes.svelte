@@ -24,9 +24,11 @@
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import Pencil from '$lib/components/icons/Pencil.svelte';
 	import Share from '$lib/components/icons/Share.svelte';
+	import EllipsisVertical from '$lib/components/icons/EllipsisVertical.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
 	import ThemeImportWarningModal from '$lib/components/common/ThemeImportWarningModal.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import ThemeMenu from './ThemeMenu.svelte';
 	import ChevronRight from '$lib/components/icons/ChevronRight.svelte';
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
@@ -117,6 +119,24 @@
 			return `Active Toggles: ${toggles.join(', ')}`;
 		}
 		return '';
+	};
+
+	const getTooltipContent = (theme: Theme) => {
+		if ($themes.has(theme.id)) {
+			return '';
+		}
+
+		const toggles = getThemeToggles(theme);
+		let content = [];
+
+		if (theme.description) {
+			content.push(theme.description);
+		}
+		if (toggles) {
+			content.push(toggles);
+		}
+
+		return content.join('\n');
 	};
 
 	$: allThemes = new Map([...$themes, ...$communityThemes]);
@@ -425,6 +445,18 @@
 		URL.revokeObjectURL(url);
 	};
 
+	const duplicateTheme = (theme: Theme) => {
+		const duplicatedTheme = {
+			...theme,
+			id: `theme-${crypto.randomUUID()}`,
+			name: `${theme.name} (Copy)`,
+			sourceUrl: undefined
+		};
+		if (processAndAddTheme(duplicatedTheme)) {
+			toast.success($i18n.t('Theme duplicated successfully!'));
+		}
+	};
+
 	const exportAllThemes = () => {
 		const allThemes = [...$themes.values(), ...$communityThemes.values()];
 		const themesJson = JSON.stringify(allThemes, null, 2);
@@ -453,7 +485,7 @@
 							<Search />
 						</div>
 						<input
-							class="w-full rounded-r-xl py-1.5 pl-2.5 text-sm bg-transparent dark:text-gray-300 outline-hidden"
+							class="w-full rounded-r-xl py-1.5 pl-2.5 text-sm bg-transparent dark:text-gray-300 outline-none"
 							placeholder={$i18n.t('Search themes...')}
 							autocomplete="off"
 							bind:value={searchQuery}
@@ -463,8 +495,8 @@
 						content={sortOrder === 'default'
 							? $i18n.t('Sort Ascending')
 							: sortOrder === 'asc'
-								? 'Sort Descending'
-								: 'Default Sort Order'}
+								? $i18n.t('Sort Descending')
+								: $i18n.t('Default Sort Order')}
 						placement="top"
 					>
 						<button
@@ -510,11 +542,11 @@
 			</div>
 			<div
 				bind:this={themesScrollContainer}
-				class="grid grid-cols-2 gap-2 overflow-y-auto max-h-[24rem] min-h-[14.5rem] content-start"
+				class="grid grid-cols-2 gap-2 overflow-y-auto max-h-[24rem] min-h-[14.5rem] content-start relative"
 			>
 				{#if filteredThemes.length}
 					{#each filteredThemes as theme (theme.id)}
-						{@const tooltipContent = $themes.has(theme.id) ? '' : getThemeToggles(theme)}
+						{@const tooltipContent = getTooltipContent(theme)}
 						<Tooltip
 							content={tooltipContent}
 							placement="top"
@@ -525,9 +557,16 @@
 									: 'hover:bg-gray-100 dark:hover:bg-gray-800'
 							}`}
 						>
-							<button
-								class="flex items-center p-2 w-full text-left"
+							<div
+								class="flex items-center p-2 w-full text-left cursor-pointer"
 								on:click={() => themeChangeHandler(theme.id)}
+								on:keydown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										themeChangeHandler(theme.id);
+									}
+								}}
+								role="button"
+								tabindex="0"
 							>
 								<span class="text-xl mr-2">{theme.emoji}</span>
 								<div class="text-left overflow-hidden">
@@ -563,7 +602,13 @@
 								</div>
 
 								{#if !$themes.has(theme.id)}
-									<div class="ml-auto items-center flex">
+									<div
+										class="ml-auto items-center flex"
+										on:click|stopPropagation
+										on:keydown|stopPropagation
+										role="button"
+										tabindex="0"
+									>
 										{#if $themeUpdateErrors.has(theme.id)}
 											<Tooltip content="Retry Update Check" placement="top">
 												<button
@@ -587,16 +632,9 @@
 											</Tooltip>
 										{/if}
 
-										<div class="items-center hidden" class:group-hover:flex={!isScrolling}>
-											<Tooltip content="Copy Theme" placement="top">
-												<button
-													class="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white transition rounded-full"
-													on:click|stopPropagation={() => copyTheme(theme)}
-													aria-label={$i18n.t('Copy theme')}
-												>
-													<Clipboard className="w-4 h-4" />
-												</button>
-											</Tooltip>
+										<div
+											class="items-center flex opacity-0 transition-opacity group-hover:opacity-100"
+										>
 											<Tooltip content="Edit Theme" placement="top">
 												<button
 													class="p-1.5 text-gray-500 hover:text-yellow-500 dark:hover:text-yellow-400 transition rounded-full"
@@ -604,24 +642,6 @@
 													aria-label={$i18n.t('Edit theme')}
 												>
 													<Pencil className="w-4 h-4" />
-												</button>
-											</Tooltip>
-											<Tooltip content="Share Theme" placement="top">
-												<button
-													on:click={() => window.open('https://openwebui.com/', '_blank')}
-													class="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white transition rounded-full"
-													aria-label={$i18n.t('Share theme')}
-												>
-													<Share class="w-4 h-4" />
-												</button>
-											</Tooltip>
-											<Tooltip content="Export Theme" placement="top">
-												<button
-													class="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white transition rounded-full"
-													on:click|stopPropagation={() => exportTheme(theme)}
-													aria-label={$i18n.t('Export theme')}
-												>
-													<DocumentArrowDown class="w-4 h-4" />
 												</button>
 											</Tooltip>
 											<Tooltip content="Remove Theme" placement="top">
@@ -647,10 +667,24 @@
 													</svg>
 												</button>
 											</Tooltip>
+											<ThemeMenu
+												copyHandler={() => copyTheme(theme)}
+												shareHandler={() => window.open('https://openwebui.com/', '_blank')}
+												exportHandler={() => exportTheme(theme)}
+												duplicateHandler={() => duplicateTheme(theme)}
+												onClose={() => {}}
+											>
+												<button
+													class="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white transition rounded-full"
+													aria-label={$i18n.t('More options')}
+												>
+													<EllipsisVertical className="w-4 h-4" />
+												</button>
+											</ThemeMenu>
 										</div>
 									</div>
 								{/if}
-							</button>
+							</div>
 						</Tooltip>
 					{/each}
 				{:else}
