@@ -68,6 +68,10 @@
 	let importSuccessCount = 0;
 	let importErrorCount = 0;
 
+	let themesScrollContainer: HTMLDivElement;
+	let isScrolling = false;
+	let scrollTimeout: NodeJS.Timeout;
+
 	const handleCheckForUpdates = async () => {
 		isCheckingForUpdates = true;
 		await checkForThemeUpdates(true); // Pass true for manual check
@@ -141,6 +145,34 @@
 
 	onMount(() => {
 		selectedThemeId = localStorage.theme ?? 'system';
+
+		const handleScroll = () => {
+			// Hide tooltips
+			document.querySelectorAll('[data-tippy-root]').forEach((tooltip) => {
+				const instance = (tooltip as any)._tippy;
+				if (instance) {
+					instance.hide();
+				}
+			});
+
+			// Set scrolling state
+			isScrolling = true;
+
+			// Clear existing timeout
+			clearTimeout(scrollTimeout);
+
+			// Reset scrolling state after scroll ends
+			scrollTimeout = setTimeout(() => {
+				isScrolling = false;
+			}, 150);
+		};
+
+		if (themesScrollContainer) {
+			themesScrollContainer.addEventListener('scroll', handleScroll);
+			return () => {
+				themesScrollContainer.removeEventListener('scroll', handleScroll);
+			};
+		}
 	});
 
 	const _finalizeAddTheme = (theme: Theme, source: string = ''): boolean => {
@@ -477,6 +509,7 @@
 				</div>
 			</div>
 			<div
+				bind:this={themesScrollContainer}
 				class="grid grid-cols-2 gap-2 overflow-y-auto max-h-[24rem] min-h-[14.5rem] content-start"
 			>
 				{#if filteredThemes.length}
@@ -554,7 +587,7 @@
 											</Tooltip>
 										{/if}
 
-										<div class="items-center hidden group-hover:flex">
+										<div class="items-center hidden" class:group-hover:flex={!isScrolling}>
 											<Tooltip content="Copy Theme" placement="top">
 												<button
 													class="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white transition rounded-full"
