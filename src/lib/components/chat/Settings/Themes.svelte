@@ -57,6 +57,7 @@
 	let isEditingTheme = false;
 	let selectedTheme: Theme | null = null;
 	let showConfirmDialog = false;
+	let showExportConfirmDialog = false;
 	let themeToDeleteId = '';
 	let searchQuery = '';
 	let showThemeImportWarning = false;
@@ -747,7 +748,9 @@
 					</button>
 					<button
 						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
-						on:click={exportAllThemes}
+						on:click={() => {
+							showExportConfirmDialog = true;
+						}}
 					>
 						{$i18n.t('Export All')}
 					</button>
@@ -817,6 +820,16 @@
 	on:confirm={() => {
 		removeCommunityTheme(themeToDeleteId);
 		showConfirmDialog = false;
+	}}
+/>
+
+<ConfirmDialog
+	bind:show={showExportConfirmDialog}
+	title={$i18n.t('Export All Themes')}
+	message={$i18n.t('Are you sure you want to export all themes?')}
+	on:confirm={() => {
+		exportAllThemes();
+		showExportConfirmDialog = false;
 	}}
 />
 
