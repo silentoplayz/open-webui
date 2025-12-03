@@ -33,6 +33,7 @@
 	import ChevronUpDown from '$lib/components/icons/ChevronUpDown.svelte';
 	import ArrowPath from '$lib/components/icons/ArrowPath.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
+	import Search from '$lib/components/icons/Search.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import emojiGroups from '$lib/emoji-groups.json';
 	import { config, user } from '$lib/stores';
@@ -447,31 +448,20 @@
 					<span class="text-gray-500 dark:text-gray-300">{filteredThemes.length}</span>
 				</div>
 				<div class="flex items-center gap-2">
-					<div class="relative">
-						<input
-							type="text"
-							bind:value={searchQuery}
-							placeholder="Search themes..."
-							class="w-full pl-8 pr-4 py-1.5 text-sm rounded-lg bg-gray-50 dark:bg-gray-850 outline-none"
-						/>
-						<div class="absolute inset-y-0 left-0 flex items-center pl-2">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								viewBox="0 0 20 20"
-								fill="currentColor"
-								class="w-4 h-4 text-gray-500"
-							>
-								<path
-									fill-rule="evenodd"
-									d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
-									clip-rule="evenodd"
-								/>
-							</svg>
+					<div class="flex w-full rounded-xl" id="chat-search">
+						<div class="self-center py-2 rounded-l-xl bg-transparent dark:text-gray-300">
+							<Search />
 						</div>
+						<input
+							class="w-full rounded-r-xl py-1.5 pl-2.5 text-sm bg-transparent dark:text-gray-300 outline-hidden"
+							placeholder={$i18n.t('Search themes...')}
+							autocomplete="off"
+							bind:value={searchQuery}
+						/>
 					</div>
 					<Tooltip
 						content={sortOrder === 'default'
-							? 'Sort Ascending'
+							? $i18n.t('Sort Ascending')
 							: sortOrder === 'asc'
 								? 'Sort Descending'
 								: 'Default Sort Order'}
