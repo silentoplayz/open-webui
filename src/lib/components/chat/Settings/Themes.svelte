@@ -411,9 +411,7 @@
 				<div class="flex items-center self-center text-sm font-medium">
 					{$i18n.t('Themes')}
 					<div class="flex self-center w-[1px] h-4 mx-2 bg-gray-50 dark:bg-gray-850" />
-					<span class="text-gray-500 dark:text-gray-300"
-						>{$themes.size + $communityThemes.size}</span
-					>
+					<span class="text-gray-500 dark:text-gray-300">{filteredThemes.length}</span>
 				</div>
 				<div class="flex items-center gap-2">
 					<div class="relative">
@@ -479,7 +477,7 @@
 				</div>
 			</div>
 			<div
-				class="grid grid-cols-2 gap-2 overflow-y-auto max-h-[17rem] min-h-[14.5rem] content-start"
+				class="grid grid-cols-2 gap-2 overflow-y-auto max-h-[24rem] min-h-[14.5rem] content-start"
 			>
 				{#if filteredThemes.length}
 					{#each filteredThemes as theme (theme.id)}
