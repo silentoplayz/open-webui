@@ -479,6 +479,16 @@
 					{$i18n.t('Themes')}
 					<div class="flex self-center w-[1px] h-4 mx-2 bg-gray-50 dark:bg-gray-850" />
 					<span class="text-gray-500 dark:text-gray-300">{filteredThemes.length}</span>
+					<Tooltip content={$i18n.t('Export All')} placement="top" className="ml-2">
+						<button
+							class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+							on:click={() => {
+								showExportConfirmDialog = true;
+							}}
+						>
+							<Share class="w-4 h-4" />
+						</button>
+					</Tooltip>
 				</div>
 				<div class="flex items-center gap-2">
 					<div class="flex w-full rounded-xl" id="chat-search">
@@ -706,54 +716,48 @@
 					{$i18n.t('Load a custom theme by providing a URL to a valid theme.json file.')}
 				</p>
 
-				<div class="relative flex items-center">
-					<input
-						type="url"
-						class="w-full rounded-lg py-2 pl-4 pr-20 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none"
-						placeholder="https://example.com/theme.json"
-						bind:value={themeUrl}
-						disabled={isLoading}
-						on:keydown={(e) => {
-							if (e.key === 'Enter' && !isLoading) {
-								addThemeHandler();
-							}
-						}}
-					/>
-					<button
-						class="absolute right-1.5 px-3 py-1 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-md disabled:opacity-50"
-						on:click={addThemeHandler}
-						disabled={isLoading}
-					>
-						{#if isLoading && !themeUrl}
-							{$i18n.t('Loading...')}
-						{:else}
-							{$i18n.t('Add')}
-						{/if}
-					</button>
-				</div>
 				<div class="flex items-center gap-2">
-					<input
-						type="file"
-						accept=".json"
-						class="hidden"
-						bind:this={fileInput}
-						on:change={importThemeFromFile}
-					/>
-					<button
-						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
-						on:click={() => fileInput.click()}
-						disabled={isLoading}
-					>
-						{$i18n.t('Import File')}
-					</button>
-					<button
-						class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
-						on:click={() => {
-							showExportConfirmDialog = true;
-						}}
-					>
-						{$i18n.t('Export All')}
-					</button>
+					<div class="relative flex items-center flex-1">
+						<input
+							type="url"
+							class="w-full rounded-lg py-2 pl-4 pr-20 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none"
+							placeholder="https://example.com/theme.json"
+							bind:value={themeUrl}
+							disabled={isLoading}
+							on:keydown={(e) => {
+								if (e.key === 'Enter' && !isLoading) {
+									addThemeHandler();
+								}
+							}}
+						/>
+						<button
+							class="absolute right-1.5 px-3 py-1 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-md disabled:opacity-50"
+							on:click={addThemeHandler}
+							disabled={isLoading}
+						>
+							{#if isLoading && !themeUrl}
+								{$i18n.t('Loading...')}
+							{:else}
+								{$i18n.t('Add')}
+							{/if}
+						</button>
+					</div>
+					<div>
+						<input
+							type="file"
+							accept=".json"
+							class="hidden"
+							bind:this={fileInput}
+							on:change={importThemeFromFile}
+						/>
+						<button
+							class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
+							on:click={() => fileInput.click()}
+							disabled={isLoading}
+						>
+							{$i18n.t('Import File')}
+						</button>
+					</div>
 				</div>
 			</div>
 		</div>
