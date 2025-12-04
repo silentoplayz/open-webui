@@ -18,15 +18,20 @@
 	export let duplicateHandler: Function;
 
 	export let onClose: Function;
+	export let onOpenChange: ((open: boolean) => void) | undefined = undefined;
 
 	let show = false;
 </script>
 
 <Dropdown
 	bind:show
+	portal={null}
 	on:change={(e) => {
 		if (e.detail === false) {
 			onClose();
+		}
+		if (onOpenChange) {
+			onOpenChange(e.detail);
 		}
 	}}
 >
