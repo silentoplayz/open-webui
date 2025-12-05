@@ -1,3 +1,4 @@
+<script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import type { Container } from '@tsparticles/engine';
 	import { loadAll } from '@tsparticles/all';
