@@ -77,6 +77,8 @@
 	let isCheckingForUpdates = false;
 
 	let showAnimationScriptWarning = false;
+	let acceptAllScriptWarning = false;
+	let skipAnimationScriptWarning = false;
 	let themeWithScriptToImport: { theme: Theme; source: string } | null = null;
 
 	let importQueue: Theme[] = [];
@@ -411,7 +413,7 @@
 		}
 
 		// Security check for animation script
-		if (theme.animationScript) {
+		if (theme.animationScript && !skipAnimationScriptWarning) {
 			themeWithScriptToImport = { theme, source };
 			showAnimationScriptWarning = true;
 			return false;
@@ -436,6 +438,8 @@
 			importQueue = [theme];
 			importSuccessCount = 0;
 			importErrorCount = 0;
+			skipAnimationScriptWarning = false;
+			acceptAllScriptWarning = false;
 			processNextThemeInQueue();
 		} catch (error) {
 			console.error(`Failed to load theme from ${themeUrl}:`, error);
@@ -489,6 +493,8 @@
 				const content = JSON.parse(reader.result as string);
 				importSuccessCount = 0;
 				importErrorCount = 0;
+				skipAnimationScriptWarning = false;
+				acceptAllScriptWarning = false;
 
 				if (Array.isArray(content)) {
 					importQueue = [...content];
@@ -1074,6 +1080,10 @@
 	bind:show={showAnimationScriptWarning}
 	title="Security Warning"
 	on:confirm={() => {
+		if (acceptAllScriptWarning) {
+			skipAnimationScriptWarning = true;
+		}
+
 		if (themeWithScriptToImport) {
 			const success = _finalizeAddTheme(
 				themeWithScriptToImport.theme,
@@ -1121,6 +1131,22 @@
 				'I acknowledge that I have read and I understand the implications of my action. I am aware of the risks associated with executing arbitrary code and I have verified the trustworthiness of the source.'
 			)}
 		</div>
+
+		{#if importQueue.length > 0}
+			<div class=" mt-2 flex items-center">
+				<input
+					id="accept-all-checkbox"
+					type="checkbox"
+					class="size-4 rounded border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-700"
+					bind:checked={acceptAllScriptWarning}
+				/>
+				<label for="accept-all-checkbox" class="ml-2 text-sm font-medium">
+					{$i18n.t('Apply to all {{count}} themes in the queue', {
+						count: importQueue.length + 1
+					})}
+				</label>
+			</div>
+		{/if}
 	</div>
 </ConfirmDialog>
 
