@@ -151,18 +151,35 @@ function helloWorld() {
 		<Tooltip
 			content="The base theme to inherit styles from. Your theme will be applied on top of this."
 		>
-			<select
-				id="theme-base"
-				class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
-				bind:value={themeCopy.base}
-				on:change={handleBaseThemeChange}
-			>
-				<option value="system">System</option>
-				<option value="light">Light</option>
-				<option value="dark">Dark</option>
-				<option value="oled-dark">OLED Dark</option>
-				<option value="her">Her</option>
-			</select>
+			<div class="flex gap-2 w-full">
+				<select
+					id="theme-base"
+					class="flex-1 rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
+					bind:value={themeCopy.base}
+					on:change={handleBaseThemeChange}
+				>
+					<option value="system">System</option>
+					<option value="light">Light</option>
+					<option value="dark">Dark</option>
+					<option value="oled-dark">OLED Dark</option>
+					<option value="her">Her</option>
+				</select>
+
+				<Tooltip content="An emoji to represent the theme in the theme list.">
+					<EmojiPicker
+						onSubmit={(emoji) => {
+							themeCopy.emoji = emoji;
+						}}
+					>
+						<button
+							class="mt-1 p-2 h-fit rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 text-sm min-w-[2.5rem]"
+							type="button"
+						>
+							{themeCopy.emoji ?? '🎨'}
+						</button>
+					</EmojiPicker>
+				</Tooltip>
+			</div>
 		</Tooltip>
 	</div>
 	<div>
@@ -170,10 +187,10 @@ function helloWorld() {
 			>{$i18n.t('CodeMirror Theme')}</label
 		>
 		<Tooltip content="The theme for the editable code editor.">
-			<div class="flex gap-2">
+			<div class="flex gap-2 w-full">
 				<select
 					id="theme-codemirror"
-					class="w-full flex-1 rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
+					class="flex-1 rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
 					bind:value={themeCopy.codeMirrorTheme}
 					on:change={handleCodeMirrorThemeChange}
 				>
@@ -233,26 +250,11 @@ function helloWorld() {
 					type="button"
 				>
 					{#if showThemePreview}
-						<EyeSlash class="w-4 h-4" />
+						<EyeSlash className="w-4 h-4" />
 					{:else}
-						<Eye class="w-4 h-4" />
+						<Eye className="w-4 h-4" />
 					{/if}
 				</button>
-
-				<Tooltip content="An emoji to represent the theme in the theme list.">
-					<EmojiPicker
-						onSubmit={(emoji) => {
-							themeCopy.emoji = emoji;
-						}}
-					>
-						<button
-							class="mt-1 p-2 h-fit rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 text-sm min-w-[2.5rem]"
-							type="button"
-						>
-							{themeCopy.emoji ?? '🎨'}
-						</button>
-					</EmojiPicker>
-				</Tooltip>
 			</div>
 		</Tooltip>
 	</div>
