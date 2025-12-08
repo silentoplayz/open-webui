@@ -22,7 +22,7 @@
 		id="note-container"
 		class="w-full h-full transition-all duration-300 ease-in-out {$showSidebar
 			? 'md:max-w-[calc(100%-260px)]'
-			: ''} {$showThemeEditor ? ($themeEditorCollapsed ? 'pr-5' : 'pr-[600px]') : ''}"
+			: ''} {$showThemeEditor ? ($themeEditorCollapsed ? 'pr-[44px]' : 'pr-[600px]') : ''}"
 	>
 		<NoteEditor id={$page.params.id} />
 	</div>
