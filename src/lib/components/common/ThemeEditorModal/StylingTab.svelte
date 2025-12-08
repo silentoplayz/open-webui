@@ -246,17 +246,10 @@
 		{#if themeCopy.toggles.cssVariables}
 			<!-- Palette Generator -->
 			<div class="mt-2 mb-4">
-				<button
-					class="flex items-center gap-2 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition"
-					on:click={() => (showPaletteGenerator = !showPaletteGenerator)}
-				>
-					<span class="text-lg">{showPaletteGenerator ? '−' : '+'}</span>
-					{$i18n.t('Advanced Palette Generator')}
-				</button>
-
-				{#if showPaletteGenerator}
+				<Collapsible title={$i18n.t('Advanced Palette Generator')} bind:open={showPaletteGenerator}>
 					<div
 						class="mt-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200 space-y-4"
+						slot="content"
 					>
 						<div class="space-y-2">
 							<label
@@ -324,13 +317,13 @@
 						</div>
 
 						<button
-							class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition shadow-sm"
+							class="w-full py-1.5 px-3.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
 							on:click={handleGeneratePalette}
 						>
 							{$i18n.t('Generate Palette')}
 						</button>
 					</div>
-				{/if}
+				</Collapsible>
 			</div>
 
 			<!-- Visual Editor -->
