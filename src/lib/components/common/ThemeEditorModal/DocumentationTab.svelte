@@ -224,7 +224,17 @@ body {
 						{#each variables as variable}
 							<tr class="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
 								<td class="px-6 py-4 font-mono whitespace-nowrap"> {variable.name} </td>
-								<td class="px-6 py-4 font-mono whitespace-nowrap"> {variable.defaultValue} </td>
+								<td class="px-6 py-4 font-mono whitespace-nowrap">
+									<div class="flex items-center gap-2">
+										{#if /^#[0-9A-Fa-f]{3,8}$/.test(variable.defaultValue)}
+											<div
+												class="w-4 h-4 rounded-full border border-gray-200 dark:border-gray-600 shadow-sm"
+												style="background-color: {variable.defaultValue}"
+											></div>
+										{/if}
+										<span>{variable.defaultValue}</span>
+									</div>
+								</td>
 								<td class="px-6 py-4 min-w-[200px]"> {variable.description} </td>
 							</tr>
 						{/each}
