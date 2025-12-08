@@ -258,7 +258,7 @@ function helloWorld() {
 	</div>
 	{#if showThemePreview}
 		<div
-			class="col-span-2 mt-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden h-44"
+			class="col-span-2 mt-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-visible h-fit"
 		>
 			<CodeEditor
 				value={previewCode}
