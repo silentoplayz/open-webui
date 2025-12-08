@@ -57,7 +57,7 @@
 	};
 </script>
 
-<div class="mt-4 space-y-4 overflow-y-auto max-h-[70vh] text-sm">
+<div class="space-y-4 text-sm">
 	<Collapsible title="Full Theme Schema" open={false}>
 		<div slot="content" class="pt-2">
 			<p class="text-gray-500">
