@@ -394,6 +394,15 @@ print("${endTag}")
 		return false;
 	};
 
+	// Fix for fold placeholder styling in non-default themes
+	const fixedTheme = EditorView.theme({
+		'.cm-foldPlaceholder': {
+			backgroundColor: 'transparent',
+			border: 'none',
+			color: 'inherit'
+		}
+	});
+
 	let extensions = [
 		basicSetup,
 		keymap.of([{ key: 'Tab', run: acceptCompletion }, indentWithTab]),
@@ -409,7 +418,8 @@ print("${endTag}")
 		}),
 		editorTheme.of([]),
 		editorLanguage.of([]),
-		colorSwatchPlugin
+		colorSwatchPlugin,
+		fixedTheme
 	];
 
 	$: if (lang) {

@@ -119,6 +119,32 @@ function helloWorld() {
 		</Tooltip>
 	</div>
 	<div>
+		<label for="theme-repo" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+			>{$i18n.t('Repository URL')}</label
+		>
+		<Tooltip content="The URL of the theme's source code repository (e.g., on GitHub).">
+			<input
+				type="text"
+				id="theme-repo"
+				class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
+				bind:value={themeCopy.repository}
+			/>
+		</Tooltip>
+	</div>
+	<div>
+		<label for="theme-update-url" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+			>{$i18n.t('Theme Update URL')}</label
+		>
+		<Tooltip content="The URL to a raw JSON file for theme updates.">
+			<input
+				type="text"
+				id="theme-update-url"
+				class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
+				bind:value={themeCopy.sourceUrl}
+			/>
+		</Tooltip>
+	</div>
+	<div>
 		<label for="theme-base" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
 			>{$i18n.t('Base Theme')}</label
 		>
@@ -147,7 +173,7 @@ function helloWorld() {
 			<div class="flex gap-2">
 				<select
 					id="theme-codemirror"
-					class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
+					class="w-full flex-1 rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
 					bind:value={themeCopy.codeMirrorTheme}
 					on:change={handleCodeMirrorThemeChange}
 				>
@@ -212,61 +238,34 @@ function helloWorld() {
 						<Eye class="w-4 h-4" />
 					{/if}
 				</button>
+
+				<Tooltip content="An emoji to represent the theme in the theme list.">
+					<EmojiPicker
+						onSubmit={(emoji) => {
+							themeCopy.emoji = emoji;
+						}}
+					>
+						<button
+							class="mt-1 p-2 h-fit rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 text-sm min-w-[2.5rem]"
+							type="button"
+						>
+							{themeCopy.emoji ?? '🎨'}
+						</button>
+					</EmojiPicker>
+				</Tooltip>
 			</div>
 		</Tooltip>
-		{#if showThemePreview}
-			<div class="mt-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden h-40">
-				<CodeEditor
-					value={previewCode}
-					lang="javascript"
-					theme={themeCopy.codeMirrorTheme}
-					id="preview-editor"
-				/>
-			</div>
-		{/if}
 	</div>
-	<div>
-		<label for="theme-repo" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-			>{$i18n.t('Repository URL')}</label
+	{#if showThemePreview}
+		<div
+			class="col-span-2 mt-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden h-44"
 		>
-		<Tooltip content="The URL of the theme's source code repository (e.g., on GitHub).">
-			<input
-				type="text"
-				id="theme-repo"
-				class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
-				bind:value={themeCopy.repository}
+			<CodeEditor
+				value={previewCode}
+				lang="javascript"
+				theme={themeCopy.codeMirrorTheme}
+				id="preview-editor"
 			/>
-		</Tooltip>
-	</div>
-	<div>
-		<label for="theme-update-url" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-			>{$i18n.t('Theme Update URL')}</label
-		>
-		<Tooltip content="The URL to a raw JSON file for theme updates.">
-			<input
-				type="text"
-				id="theme-update-url"
-				class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
-				bind:value={themeCopy.sourceUrl}
-			/>
-		</Tooltip>
-	</div>
-	<div>
-		<label for="theme-emoji" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-			>{$i18n.t('Emoji')}</label
-		>
-		<Tooltip content="An emoji to represent the theme in the theme list.">
-			<EmojiPicker
-				onSubmit={(emoji) => {
-					themeCopy.emoji = emoji;
-				}}
-			>
-				<button
-					class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1 text-left"
-				>
-					{themeCopy.emoji ?? 'Select an emoji'}
-				</button>
-			</EmojiPicker>
-		</Tooltip>
-	</div>
+		</div>
+	{/if}
 </div>
