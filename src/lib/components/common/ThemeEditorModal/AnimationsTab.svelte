@@ -9,6 +9,19 @@
 	export let animationScriptText: string;
 	export let tsParticleConfigText: string;
 
+	// Check validity of initial prop
+	let isJsonValid = true;
+	$: {
+		try {
+			if (tsParticleConfigText && tsParticleConfigText.trim()) {
+				JSON.parse(tsParticleConfigText);
+			}
+			isJsonValid = true;
+		} catch {
+			isJsonValid = false;
+		}
+	}
+
 	const dispatch = createEventDispatcher();
 	const i18n = getContext('i18n');
 
@@ -21,13 +34,20 @@
 	const handleTsParticleConfigInput = (e) => {
 		tsParticleConfigText = e.detail;
 		try {
-			themeCopy.tsparticlesConfig = JSON.parse(tsParticleConfigText);
-			dispatch('update', { ...themeCopy });
-		} catch (error) {
-			if (tsParticleConfigText.trim() === '') {
+			if (tsParticleConfigText.trim()) {
+				themeCopy.tsparticlesConfig = JSON.parse(tsParticleConfigText);
+				isJsonValid = true;
+				// Only dispatch update if valid
+				dispatch('update', { ...themeCopy });
+			} else {
+				// Empty is considered valid (no config)
 				themeCopy.tsparticlesConfig = undefined;
+				isJsonValid = true;
 				dispatch('update', { ...themeCopy });
 			}
+		} catch (error) {
+			isJsonValid = false;
+			// Don't dispatch update if invalid to prevent breaking the app ref
 		}
 	};
 </script>
@@ -102,6 +122,15 @@
 						edit={true}
 						on:change={handleTsParticleConfigInput}
 					/>
+				</div>
+				<div class="mt-1 flex justify-end">
+					<span
+						class="text-xs transition-colors {isJsonValid
+							? 'text-green-500'
+							: 'text-red-500 font-medium'}"
+					>
+						{isJsonValid ? 'Valid JSON' : 'Invalid JSON'}
+					</span>
 				</div>
 			{/key}
 		{/if}
