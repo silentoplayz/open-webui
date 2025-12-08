@@ -223,7 +223,7 @@
 		{#if themeCopy.toggles.cssVariables}
 			<!-- Visual Editor -->
 			<div class="mt-2 text-sm text-gray-500 font-medium">Standard Colors</div>
-			<div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
+			<div class="mt-2 grid grid-cols-2 gap-2 mb-4">
 				{#each variables as variable}
 					<button
 						class="flex items-center justify-between p-2 rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition group border-2 {activeVariable ===
