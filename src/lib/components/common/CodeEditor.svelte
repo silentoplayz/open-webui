@@ -246,6 +246,7 @@
 
 	export let id = '';
 	export let lang = '';
+	export let theme: string | null = null;
 
 	let codeEditor;
 
@@ -424,17 +425,24 @@ print("${endTag}")
 		}
 	};
 
-	const setTheme = (themeName) => {
-		const theme = themeName === 'one-dark' ? oneDark : (themes[themeName] ?? oneDark);
+	const setEditorTheme = (themeName) => {
+		const selectedThemeStr = themeName || $codeMirrorTheme;
+		const selectedTheme =
+			selectedThemeStr === 'one-dark' ? oneDark : (themes[selectedThemeStr] ?? oneDark);
+
 		if (codeEditor) {
 			codeEditor.dispatch({
-				effects: editorTheme.reconfigure(theme)
+				effects: editorTheme.reconfigure(selectedTheme)
 			});
 		}
 	};
 
-	const unsubscribe = codeMirrorTheme.subscribe((theme) => {
-		setTheme(theme);
+	$: setEditorTheme(theme);
+
+	const unsubscribe = codeMirrorTheme.subscribe((currentTheme) => {
+		if (!theme) {
+			setEditorTheme(currentTheme);
+		}
 	});
 
 	onMount(() => {
@@ -453,7 +461,7 @@ print("${endTag}")
 			parent: document.getElementById(`code-textarea-${id}`)
 		});
 
-		setTheme($codeMirrorTheme);
+		setEditorTheme(theme);
 
 		const keydownHandler = async (e) => {
 			if ((e.ctrlKey || e.metaKey) && e.key === 's') {

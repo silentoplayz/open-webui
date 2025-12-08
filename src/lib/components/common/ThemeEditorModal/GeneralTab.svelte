@@ -3,6 +3,9 @@
 	import type { Theme } from '$lib/types';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import EmojiPicker from '$lib/components/common/EmojiPicker.svelte';
+	import CodeEditor from '$lib/components/common/CodeEditor.svelte';
+	import Eye from '$lib/components/icons/Eye.svelte';
+	import EyeSlash from '$lib/components/icons/EyeSlash.svelte';
 
 	export let themeCopy: Theme;
 
@@ -17,6 +20,15 @@
 	const handleCodeMirrorThemeChange = () => {
 		dispatch('update', { ...themeCopy });
 	};
+
+	let showThemePreview = false;
+	const previewCode = `// Sample Code for Theme Preview
+function helloWorld() {
+  console.log("Hello, World!");
+  const x = 10;
+  const y = 20;
+  return x + y;
+}`;
 </script>
 
 <div class="grid grid-cols-2 gap-4">
@@ -132,60 +144,86 @@
 			>{$i18n.t('CodeMirror Theme')}</label
 		>
 		<Tooltip content="The theme for the editable code editor.">
-			<select
-				id="theme-codemirror"
-				class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
-				bind:value={themeCopy.codeMirrorTheme}
-				on:change={handleCodeMirrorThemeChange}
-			>
-				<option value="one-dark">One Dark</option>
-				<option value="abcdef">Abcdef</option>
-				<option value="abyss">Abyss</option>
-				<option value="androidstudio">Android Studio</option>
-				<option value="andromeda">Andromeda</option>
-				<option value="atomone">Atom One</option>
-				<option value="aura">Aura</option>
-				<option value="bbedit">BBEdit</option>
-				<option value="basicLight">Basic Light</option>
-				<option value="basicDark">Basic Dark</option>
-				<option value="bespin">Bespin</option>
-				<option value="copilot">Copilot</option>
-				<option value="consoleLight">Console Light</option>
-				<option value="consoleDark">Console Dark</option>
-				<option value="dracula">Dracula</option>
-				<option value="darcula">Darcula</option>
-				<option value="duotoneLight">Duotone Light</option>
-				<option value="duotoneDark">Duotone Dark</option>
-				<option value="eclipse">Eclipse</option>
-				<option value="githubLight">GitHub Light</option>
-				<option value="githubDark">GitHub Dark</option>
-				<option value="gruvboxDark">Gruvbox Dark</option>
-				<option value="gruvboxLight">Gruvbox Light</option>
-				<option value="materialLight">Material Light</option>
-				<option value="materialDark">Material Dark</option>
-				<option value="monokai">Monokai</option>
-				<option value="monokaiDimmed">Monokai Dimmed</option>
-				<option value="kimbie">Kimbie</option>
-				<option value="noctisLilac">Noctis Lilac</option>
-				<option value="nord">Nord</option>
-				<option value="okaidia">Okaidia</option>
-				<option value="quietlight">Quietlight</option>
-				<option value="red">Red</option>
-				<option value="solarizedLight">Solarized Light</option>
-				<option value="solarizedDark">Solarized Dark</option>
-				<option value="sublime">Sublime</option>
-				<option value="tokyoNight">Tokyo Night</option>
-				<option value="tokyoNightStorm">Tokyo Night Storm</option>
-				<option value="tokyoNightDay">Tokyo Night Day</option>
-				<option value="tomorrowNightBlue">Tomorrow Night Blue</option>
-				<option value="whiteLight">White Light</option>
-				<option value="whiteDark">White Dark</option>
-				<option value="vscodeDark">VSCode Dark</option>
-				<option value="vscodeLight">VSCode Light</option>
-				<option value="xcodeLight">Xcode Light</option>
-				<option value="xcodeDark">Xcode Dark</option>
-			</select>
+			<div class="flex gap-2">
+				<select
+					id="theme-codemirror"
+					class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
+					bind:value={themeCopy.codeMirrorTheme}
+					on:change={handleCodeMirrorThemeChange}
+				>
+					<option value="one-dark">One Dark</option>
+					<option value="abcdef">Abcdef</option>
+					<option value="abyss">Abyss</option>
+					<option value="androidstudio">Android Studio</option>
+					<option value="andromeda">Andromeda</option>
+					<option value="atomone">Atom One</option>
+					<option value="aura">Aura</option>
+					<option value="bbedit">BBEdit</option>
+					<option value="basicLight">Basic Light</option>
+					<option value="basicDark">Basic Dark</option>
+					<option value="bespin">Bespin</option>
+					<option value="copilot">Copilot</option>
+					<option value="consoleLight">Console Light</option>
+					<option value="consoleDark">Console Dark</option>
+					<option value="dracula">Dracula</option>
+					<option value="darcula">Darcula</option>
+					<option value="duotoneLight">Duotone Light</option>
+					<option value="duotoneDark">Duotone Dark</option>
+					<option value="eclipse">Eclipse</option>
+					<option value="githubLight">GitHub Light</option>
+					<option value="githubDark">GitHub Dark</option>
+					<option value="gruvboxDark">Gruvbox Dark</option>
+					<option value="gruvboxLight">Gruvbox Light</option>
+					<option value="materialLight">Material Light</option>
+					<option value="materialDark">Material Dark</option>
+					<option value="monokai">Monokai</option>
+					<option value="monokaiDimmed">Monokai Dimmed</option>
+					<option value="kimbie">Kimbie</option>
+					<option value="noctisLilac">Noctis Lilac</option>
+					<option value="nord">Nord</option>
+					<option value="okaidia">Okaidia</option>
+					<option value="quietlight">Quietlight</option>
+					<option value="red">Red</option>
+					<option value="solarizedLight">Solarized Light</option>
+					<option value="solarizedDark">Solarized Dark</option>
+					<option value="sublime">Sublime</option>
+					<option value="tokyoNight">Tokyo Night</option>
+					<option value="tokyoNightStorm">Tokyo Night Storm</option>
+					<option value="tokyoNightDay">Tokyo Night Day</option>
+					<option value="tomorrowNightBlue">Tomorrow Night Blue</option>
+					<option value="whiteLight">White Light</option>
+					<option value="whiteDark">White Dark</option>
+					<option value="vscodeDark">VSCode Dark</option>
+					<option value="vscodeLight">VSCode Light</option>
+					<option value="xcodeLight">Xcode Light</option>
+					<option value="xcodeDark">Xcode Dark</option>
+				</select>
+				<button
+					class="mt-1 p-2 rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700"
+					on:click={() => {
+						showThemePreview = !showThemePreview;
+					}}
+					title={showThemePreview ? 'Hide Preview' : 'Show Preview'}
+					type="button"
+				>
+					{#if showThemePreview}
+						<EyeSlash class="w-4 h-4" />
+					{:else}
+						<Eye class="w-4 h-4" />
+					{/if}
+				</button>
+			</div>
 		</Tooltip>
+		{#if showThemePreview}
+			<div class="mt-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden h-40">
+				<CodeEditor
+					value={previewCode}
+					lang="javascript"
+					theme={themeCopy.codeMirrorTheme}
+					id="preview-editor"
+				/>
+			</div>
+		{/if}
 	</div>
 	<div>
 		<label for="theme-repo" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
