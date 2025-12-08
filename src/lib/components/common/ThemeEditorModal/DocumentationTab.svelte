@@ -86,19 +86,38 @@
 			</p>
 			<ul class="mt-2 list-disc list-inside space-y-1">
 				<li>
-					<strong>base:</strong> The base theme to inherit styles from. Can be 'light' or 'dark'. Your
-					theme will be applied on top of this.
+					<strong>name:</strong> The display name of the theme.
 				</li>
 				<li>
 					<strong>description:</strong> A brief description of the theme.
+				</li>
+				<li>
+					<strong>author:</strong> The creator of the theme.
+				</li>
+				<li>
+					<strong>version:</strong> The version of the theme.
+				</li>
+				<li>
+					<strong>base:</strong> The base theme to inherit styles from. Can be 'light' or 'dark'. Your
+					theme will be applied on top of this.
+				</li>
+				<li><strong>emoji:</strong> An emoji key to identify your theme.</li>
+				<li>
+					<strong>variables:</strong> Define custom values for the core CSS variables. This is the primary
+					way to change the colors of the UI.
 				</li>
 				<li>
 					<strong>css:</strong> Add custom CSS rules to style the UI. This is for more advanced styling
 					that can't be achieved with variables alone.
 				</li>
 				<li>
-					<strong>variables:</strong> Define custom values for the core CSS variables. This is the primary
-					way to change the colors of the UI.
+					<strong>gradient:</strong> Configuration for the background gradient (colors, direction, intensity).
+				</li>
+				<li>
+					<strong>codeMirrorTheme:</strong> The color theme for code blocks.
+				</li>
+				<li>
+					<strong>metaThemeColor:</strong> The color used for the browser's theme color meta tag.
 				</li>
 				<li>
 					<strong>animationScript:</strong> Custom Javascript for canvas-based animations.
