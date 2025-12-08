@@ -25,6 +25,9 @@
 	let useNeutralSeed = false;
 	let neutralSeedColor = '#171717'; // Default Dark Gray
 	let showPaletteGenerator = false;
+	let previewPalette: Record<string, string>;
+
+	$: previewPalette = generatePalette(seedColor, useNeutralSeed ? neutralSeedColor : undefined);
 
 	const handleGeneratePalette = () => {
 		const newPalette = generatePalette(seedColor, useNeutralSeed ? neutralSeedColor : undefined);
@@ -251,6 +254,7 @@
 						class="mt-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200 space-y-4"
 						slot="content"
 					>
+						<!-- Inputs -->
 						<div class="space-y-2">
 							<label
 								for="seed-color"
@@ -315,6 +319,49 @@
 								</p>
 							{/if}
 						</div>
+
+						<!-- Live Preview -->
+						{#if previewPalette}
+							<div class="space-y-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+								<div class="text-xs font-medium text-gray-500">Preview</div>
+
+								<!-- Primary Scale -->
+								<div class="flex flex-col gap-1">
+									<div class="text-[10px] text-gray-400">Primary Scale</div>
+									<div
+										class="grid grid-cols-12 gap-0.5 rounded-lg overflow-hidden ring-1 ring-gray-200 dark:ring-gray-700"
+									>
+										{#each [50, 100, 200, 300, 400, 500, 600, 700, 800, 850, 900, 950] as step}
+											<Tooltip content={`${previewPalette[`--color-blue-${step}`]} (${step})`}>
+												<div
+													class="h-6 w-full cursor-help transition-transform hover:scale-110 hover:z-10"
+													style="background-color: {previewPalette[`--color-blue-${step}`]}"
+												></div>
+											</Tooltip>
+										{/each}
+									</div>
+								</div>
+
+								<!-- Neutral Scale -->
+								<div class="flex flex-col gap-1">
+									<div class="text-[10px] text-gray-400">Neutral Scale</div>
+									<div
+										class="grid grid-cols-6 gap-0.5 rounded-lg overflow-hidden ring-1 ring-gray-200 dark:ring-gray-700"
+									>
+										{#each [50, 100, 200, 300, 400, 500, 600, 700, 800, 850, 900, 950] as step}
+											{#if previewPalette[`--color-gray-${step}`]}
+												<Tooltip content={`${previewPalette[`--color-gray-${step}`]} (${step})`}>
+													<div
+														class="h-6 w-full cursor-help transition-transform hover:scale-110 hover:z-10"
+														style="background-color: {previewPalette[`--color-gray-${step}`]}"
+													></div>
+												</Tooltip>
+											{/if}
+										{/each}
+									</div>
+								</div>
+							</div>
+						{/if}
 
 						<button
 							class="w-full py-1.5 px-3.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
