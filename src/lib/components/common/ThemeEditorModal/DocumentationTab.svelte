@@ -209,7 +209,9 @@ body {
 				Here is a list of all the available CSS variables that you can use to customize your theme.
 			</p>
 
-			<div class="mt-4 overflow-y-auto overflow-x-auto max-h-96">
+			<div
+				class="mt-4 overflow-y-auto overflow-x-auto max-h-96 rounded-lg border border-gray-200 dark:border-gray-700"
+			>
 				<table class="w-full text-sm text-left">
 					<thead
 						class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400"
