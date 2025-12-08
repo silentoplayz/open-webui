@@ -12,62 +12,62 @@
 	{
 		"name": "--color-gray-50",
 		"defaultValue": "#f9f9f9",
-		"description": "Very light gray, almost white. Used for backgrounds."
+		"description": "Light mode background (sidebars, menus) and hover states."
 	},
 	{
 		"name": "--color-gray-100",
 		"defaultValue": "#ececec",
-		"description": "Light gray. Used for subtle backgrounds and borders."
+		"description": "Light mode secondary background and button hover states."
 	},
 	{
 		"name": "--color-gray-200",
 		"defaultValue": "#e3e3e3",
-		"description": "Light gray. Used for UI elements like disabled buttons."
+		"description": "Light mode borders and disabled states."
 	},
 	{
 		"name": "--color-gray-300",
 		"defaultValue": "#cdcdcd",
-		"description": "Gray. Used for borders and dividers."
+		"description": "Light mode dividers and borders."
 	},
 	{
 		"name": "--color-gray-400",
 		"defaultValue": "#b4b4b4",
-		"description": "Medium gray. Used for placeholder text and secondary icons."
+		"description": "Secondary text and icons."
 	},
 	{
 		"name": "--color-gray-500",
 		"defaultValue": "#9b9b9b",
-		"description": "Medium-dark gray. Used for secondary text."
+		"description": "Secondary text and placeholders."
 	},
 	{
 		"name": "--color-gray-600",
 		"defaultValue": "#676767",
-		"description": "Dark gray. Used for primary text in light themes."
+		"description": "Primary text in light mode."
 	},
 	{
 		"name": "--color-gray-700",
 		"defaultValue": "#4e4e4e",
-		"description": "Very dark gray. Used for headings and important text."
+		"description": "Headings and important text in light mode."
 	},
 	{
 		"name": "--color-gray-800",
 		"defaultValue": "#333333",
-		"description": "Almost black. Used for backgrounds in dark themes."
+		"description": "Dark mode card backgrounds and button hover states."
 	},
 	{
 		"name": "--color-gray-850",
 		"defaultValue": "#262626",
-		"description": "Slightly lighter than --color-gray-900. Used for secondary backgrounds in dark themes."
+		"description": "Dark mode secondary background (menus, sidebars)."
 	},
 	{
 		"name": "--color-gray-900",
 		"defaultValue": "#171717",
-		"description": "Very dark gray, near black. Used for main backgrounds in dark themes."
+		"description": "Dark mode primary background."
 	},
 	{
 		"name": "--color-gray-950",
 		"defaultValue": "#0d0d0d",
-		"description": "The darkest gray. Used for the outermost background in dark themes."
+		"description": "Dark mode deepest background (sidebars, modals)."
 	},
 	{
 		"name": "--color-blue-100",

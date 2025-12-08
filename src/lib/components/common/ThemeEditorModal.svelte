@@ -32,6 +32,7 @@
 	const i18n = getContext('i18n');
 
 	let themeCopy: Theme;
+	let initialVariables: Record<string, string>;
 	let variablesText: string;
 	let cssText: string;
 	let animationScriptText: string;
@@ -127,6 +128,9 @@
 			}
 
 			originalCodeMirrorTheme = themeCopy.codeMirrorTheme ?? $codeMirrorTheme;
+
+			// Safeguard/Clone initial variables for Reset functionality
+			initialVariables = JSON.parse(JSON.stringify(themeCopy.variables || {}));
 
 			variablesText = objectToCss(themeCopy.variables);
 			cssText = themeCopy.css ?? '';
@@ -468,7 +472,13 @@
 									<GeneralTab bind:themeCopy on:update />
 								{/if}
 								{#if activeTab === 'Styling'}
-									<StylingTab bind:themeCopy bind:variablesText bind:cssText on:update />
+									<StylingTab
+										bind:themeCopy
+										bind:variablesText
+										bind:cssText
+										{initialVariables}
+										on:update
+									/>
 								{/if}
 								{#if activeTab === 'Animations'}
 									<AnimationsTab

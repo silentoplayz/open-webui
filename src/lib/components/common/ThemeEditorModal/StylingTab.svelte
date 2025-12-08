@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { createEventDispatcher, getContext } from 'svelte';
+	import { createEventDispatcher, getContext, tick } from 'svelte';
 	import type { Theme } from '$lib/types';
 	import Switch from '$lib/components/common/Switch.svelte';
+	import Collapsible from '$lib/components/common/Collapsible.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import CodeBlock from '$lib/components/chat/Messages/CodeBlock.svelte';
 	import { objectToCss, cssToObject } from '$lib/utils/theme';
@@ -9,26 +10,39 @@
 	import { Vibrant } from 'node-vibrant/browser';
 	import exifr from 'exifr';
 	import heic2any from 'heic2any';
+	import ColorPicker from 'svelte-awesome-color-picker';
+	import variables from '$lib/themes/variables.json';
 
 	export let themeCopy: Theme;
 	export let variablesText: string;
 	export let cssText: string;
+
+	export let initialVariables: Record<string, string> = {};
 
 	let imageImportInput: HTMLInputElement;
 
 	const dispatch = createEventDispatcher();
 	const i18n = getContext('i18n');
 
-	const handleVariablesInput = (e) => {
+	const handleVariablesInput = (e: CustomEvent<string>) => {
 		variablesText = e.detail;
 		themeCopy.variables = cssToObject(variablesText);
 		dispatch('update', { ...themeCopy });
 	};
 
-	const handleCssInput = (e) => {
+	const handleCssInput = (e: CustomEvent<string>) => {
 		cssText = e.detail;
 		themeCopy.css = cssText;
 		dispatch('update', { ...themeCopy });
+	};
+
+	const resetVariables = () => {
+		// Reset to initial state (either what it was when modal opened, or empty if new)
+		themeCopy.variables = JSON.parse(JSON.stringify(initialVariables));
+		variablesText = objectToCss(themeCopy.variables);
+		dispatch('update', { ...themeCopy });
+		activeVariable = null; // Close color picker if open
+		toast.success($i18n.t('Theme variables reset to initial state.'));
 	};
 
 	const generateRandomColors = () => {
@@ -131,6 +145,49 @@
 				URL.revokeObjectURL(imageUrl);
 			});
 	};
+
+	let showColorPicker = false;
+	let activeVariable: (typeof variables)[0] | null = null;
+	let activeColor = '';
+
+	let isUpdatingFromPicker = false;
+
+	const openColorPicker = (variable: typeof activeVariable) => {
+		if (activeVariable === variable) {
+			showColorPicker = !showColorPicker;
+		} else {
+			activeVariable = variable;
+			activeColor = themeCopy.variables?.[variable.name] ?? variable.defaultValue;
+			showColorPicker = true;
+		}
+	};
+
+	const handleColorPickerInput = (event: CustomEvent<any>) => {
+		if (activeVariable) {
+			activeColor = event.detail.hex;
+			if (themeCopy.variables?.[activeVariable.name] !== activeColor) {
+				if (!themeCopy.variables) themeCopy.variables = {};
+
+				isUpdatingFromPicker = true;
+				themeCopy.variables[activeVariable.name] = activeColor;
+				variablesText = objectToCss(themeCopy.variables);
+				dispatch('update', { ...themeCopy });
+
+				// Reset flag after a delay to ensure incoming theme updates from round-trip don't override picker
+				setTimeout(() => {
+					isUpdatingFromPicker = false;
+				}, 100);
+			}
+		}
+	};
+
+	// Only sync from theme if we are NOT currently updating from the picker
+	$: if (themeCopy && showColorPicker && activeVariable && !isUpdatingFromPicker) {
+		const val = themeCopy.variables?.[activeVariable.name] ?? activeVariable.defaultValue;
+		if (val && val !== activeColor) {
+			activeColor = val;
+		}
+	}
 </script>
 
 <input
@@ -164,18 +221,89 @@
 			</Tooltip>
 		</div>
 		{#if themeCopy.toggles.cssVariables}
+			<!-- Visual Editor -->
+			<div class="mt-2 text-sm text-gray-500 font-medium">Standard Colors</div>
+			<div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
+				{#each variables as variable}
+					<button
+						class="flex items-center justify-between p-2 rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition group border-2 {activeVariable ===
+							variable && showColorPicker
+							? 'border-blue-500'
+							: 'border-transparent hover:border-gray-200 dark:hover:border-gray-700'}"
+						on:click={() => openColorPicker(variable)}
+					>
+						<div class="flex flex-col text-left overflow-hidden mr-2">
+							<span
+								class="text-xs font-semibold truncate {activeVariable === variable &&
+								showColorPicker
+									? 'text-blue-600 dark:text-blue-400'
+									: 'text-gray-700 dark:text-gray-200'}"
+								>{variable.name.replace('--color-', '').replace(/-/g, ' ')}</span
+							>
+							<Tooltip content={variable.description} placement="bottom-start">
+								<span class="text-[10px] text-gray-500 line-clamp-2">{variable.description}</span>
+							</Tooltip>
+						</div>
+						<div
+							class="flex-shrink-0 w-8 h-8 rounded-full border border-gray-200 dark:border-gray-700 shadow-sm"
+							style="background-color: {themeCopy.variables?.[variable.name] ||
+								variable.defaultValue}"
+						></div>
+					</button>
+				{/each}
+			</div>
+
+			{#if showColorPicker && activeVariable}
+				<div
+					class="mb-4 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
+				>
+					<div class="flex items-center justify-between mb-2">
+						<span class="text-sm font-medium text-gray-900 dark:text-gray-100">
+							Editing: <span class="text-blue-600 dark:text-blue-400">{activeVariable.name}</span>
+						</span>
+						<button
+							class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline"
+							on:click={() => {
+								if (activeVariable) {
+									themeCopy.variables[activeVariable.name] = activeVariable.defaultValue;
+									variablesText = objectToCss(themeCopy.variables);
+									activeColor = activeVariable.defaultValue;
+									dispatch('update', { ...themeCopy });
+								}
+							}}
+						>
+							Reset to Default
+						</button>
+					</div>
+					<div class="flex justify-center color-picker-wrapper">
+						<ColorPicker hex={activeColor} isDialog={false} on:input={handleColorPickerInput} />
+					</div>
+				</div>
+			{/if}
+
 			{#key 'css-variables'}
-				<div class="mt-1 rounded-lg overflow-hidden">
-					<CodeBlock
-						id="theme-variables-editor"
-						code={variablesText}
-						lang={'css'}
-						edit={true}
-						on:change={handleVariablesInput}
-					/>
+				<div class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">Advanced</div>
+				<div class="rounded-lg overflow-hidden">
+					<Collapsible title={$i18n.t('Raw CSS Variables')}>
+						<div class="mt-1" slot="content">
+							<CodeBlock
+								id="theme-variables-editor"
+								code={variablesText}
+								lang={'css'}
+								edit={true}
+								on:change={handleVariablesInput}
+							/>
+						</div>
+					</Collapsible>
 				</div>
 			{/key}
 			<div class="flex justify-end mt-2 space-x-2">
+				<button
+					class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
+					on:click={resetVariables}
+				>
+					{$i18n.t('Reset')}
+				</button>
 				<button
 					class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
 					on:click={generateRandomColors}
@@ -227,3 +355,20 @@
 		{/if}
 	</div>
 </div>
+
+<style>
+	:global(.dark .color-picker-wrapper) {
+		--cp-bg-color: transparent;
+		--cp-border-color: #374151; /* bg-gray-700 */
+		--cp-text-color: #f9fafb; /* text-gray-50 */
+		--cp-input-color: #374151; /* bg-gray-700 */
+		--cp-button-hover-color: #4b5563; /* bg-gray-600 */
+	}
+	:global(.color-picker-wrapper) {
+		--cp-bg-color: transparent;
+		--cp-border-color: #d1d5db; /* bg-gray-300 */
+		--cp-text-color: #111827; /* text-gray-900 */
+		--cp-input-color: #e5e7eb; /* bg-gray-200 */
+		--cp-button-hover-color: #d1d5db; /* bg-gray-300 */
+	}
+</style>
