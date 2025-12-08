@@ -148,15 +148,17 @@
 
 	let showColorPicker = false;
 	let activeVariable: (typeof variables)[0] | null = null;
+	let activeVariableIndex: number | null = null;
 	let activeColor = '';
 
 	let isUpdatingFromPicker = false;
 
-	const openColorPicker = (variable: typeof activeVariable) => {
+	const openColorPicker = (variable: typeof activeVariable, index: number) => {
 		if (activeVariable === variable) {
 			showColorPicker = !showColorPicker;
 		} else {
 			activeVariable = variable;
+			activeVariableIndex = index;
 			activeColor = themeCopy.variables?.[variable.name] ?? variable.defaultValue;
 			showColorPicker = true;
 		}
@@ -224,13 +226,13 @@
 			<!-- Visual Editor -->
 			<div class="mt-2 text-sm text-gray-500 font-medium">Standard Colors</div>
 			<div class="mt-2 grid grid-cols-2 gap-2 mb-4">
-				{#each variables as variable}
+				{#each variables as variable, i}
 					<button
 						class="flex items-center justify-between p-2 rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition group border-2 {activeVariable ===
 							variable && showColorPicker
 							? 'border-blue-500'
 							: 'border-transparent hover:border-gray-200 dark:hover:border-gray-700'}"
-						on:click={() => openColorPicker(variable)}
+						on:click={() => openColorPicker(variable, i)}
 					>
 						<div class="flex flex-col text-left overflow-hidden mr-2">
 							<span
@@ -250,36 +252,38 @@
 								variable.defaultValue}"
 						></div>
 					</button>
+
+					{#if showColorPicker && activeVariable && activeVariableIndex !== null && ((i % 2 === 1 && Math.floor(i / 2) === Math.floor(activeVariableIndex / 2)) || (i === variables.length - 1 && Math.floor(i / 2) === Math.floor(activeVariableIndex / 2)))}
+						<div
+							class="col-span-2 mb-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
+						>
+							<div class="flex items-center justify-between mb-2">
+								<span class="text-sm font-medium text-gray-900 dark:text-gray-100">
+									Editing: <span class="text-blue-600 dark:text-blue-400"
+										>{activeVariable.name}</span
+									>
+								</span>
+								<button
+									class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline"
+									on:click={() => {
+										if (activeVariable) {
+											themeCopy.variables[activeVariable.name] = activeVariable.defaultValue;
+											variablesText = objectToCss(themeCopy.variables);
+											activeColor = activeVariable.defaultValue;
+											dispatch('update', { ...themeCopy });
+										}
+									}}
+								>
+									Reset to Default
+								</button>
+							</div>
+							<div class="flex justify-center color-picker-wrapper">
+								<ColorPicker hex={activeColor} isDialog={false} on:input={handleColorPickerInput} />
+							</div>
+						</div>
+					{/if}
 				{/each}
 			</div>
-
-			{#if showColorPicker && activeVariable}
-				<div
-					class="mb-4 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
-				>
-					<div class="flex items-center justify-between mb-2">
-						<span class="text-sm font-medium text-gray-900 dark:text-gray-100">
-							Editing: <span class="text-blue-600 dark:text-blue-400">{activeVariable.name}</span>
-						</span>
-						<button
-							class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline"
-							on:click={() => {
-								if (activeVariable) {
-									themeCopy.variables[activeVariable.name] = activeVariable.defaultValue;
-									variablesText = objectToCss(themeCopy.variables);
-									activeColor = activeVariable.defaultValue;
-									dispatch('update', { ...themeCopy });
-								}
-							}}
-						>
-							Reset to Default
-						</button>
-					</div>
-					<div class="flex justify-center color-picker-wrapper">
-						<ColorPicker hex={activeColor} isDialog={false} on:input={handleColorPickerInput} />
-					</div>
-				</div>
-			{/if}
 
 			{#key 'css-variables'}
 				<div class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">Advanced</div>
