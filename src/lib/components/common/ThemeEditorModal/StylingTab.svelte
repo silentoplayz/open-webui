@@ -19,9 +19,30 @@
 
 	export let initialVariables: Record<string, string> = {};
 
+	import { generatePalette } from '$lib/utils/palette-generator';
+
+	let seedColor = '#2563eb'; // Default Blue
+	let useNeutralSeed = false;
+	let neutralSeedColor = '#171717'; // Default Dark Gray
+	let showPaletteGenerator = false;
+
+	const handleGeneratePalette = () => {
+		const newPalette = generatePalette(seedColor, useNeutralSeed ? neutralSeedColor : undefined);
+
+		themeCopy.variables = {
+			...themeCopy.variables,
+			...newPalette
+		};
+		variablesText = objectToCss(themeCopy.variables);
+		dispatch('update', { ...themeCopy });
+		toast.success('Palette generated successfully!');
+		showPaletteGenerator = false;
+	};
+
 	let imageImportInput: HTMLInputElement;
 
 	const dispatch = createEventDispatcher();
+
 	const i18n = getContext('i18n');
 
 	const handleVariablesInput = (e: CustomEvent<string>) => {
@@ -223,6 +244,95 @@
 			</Tooltip>
 		</div>
 		{#if themeCopy.toggles.cssVariables}
+			<!-- Palette Generator -->
+			<div class="mt-2 mb-4">
+				<button
+					class="flex items-center gap-2 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition"
+					on:click={() => (showPaletteGenerator = !showPaletteGenerator)}
+				>
+					<span class="text-lg">{showPaletteGenerator ? '−' : '+'}</span>
+					{$i18n.t('Advanced Palette Generator')}
+				</button>
+
+				{#if showPaletteGenerator}
+					<div
+						class="mt-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200 space-y-4"
+					>
+						<div class="space-y-2">
+							<label
+								for="seed-color"
+								class="block text-xs font-medium text-gray-700 dark:text-gray-300"
+							>
+								{$i18n.t('Primary Brand Color')}
+							</label>
+							<div class="flex items-center gap-3">
+								<div
+									class="relative w-10 h-10 rounded-full overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 group cursor-pointer"
+								>
+									<input
+										id="seed-color"
+										type="color"
+										class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] p-0 m-0 border-0 cursor-pointer"
+										bind:value={seedColor}
+									/>
+								</div>
+								<div class="flex-1">
+									<input
+										type="text"
+										class="w-full px-3 py-1.5 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:border-blue-500"
+										bind:value={seedColor}
+									/>
+								</div>
+							</div>
+						</div>
+
+						<div class="space-y-2">
+							<div class="flex items-center justify-between">
+								<label
+									for="neutral-seed-toggle"
+									class="text-xs font-medium text-gray-700 dark:text-gray-300"
+								>
+									{$i18n.t('Custom Neutral Base')}
+								</label>
+								<Switch bind:state={useNeutralSeed} />
+							</div>
+
+							{#if useNeutralSeed}
+								<div class="flex items-center gap-3 animate-in fade-in duration-200">
+									<div
+										class="relative w-10 h-10 rounded-full overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 group cursor-pointer"
+									>
+										<input
+											type="color"
+											class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] p-0 m-0 border-0 cursor-pointer"
+											bind:value={neutralSeedColor}
+										/>
+									</div>
+									<div class="flex-1">
+										<input
+											type="text"
+											class="w-full px-3 py-1.5 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:border-blue-500"
+											bind:value={neutralSeedColor}
+										/>
+									</div>
+								</div>
+							{:else}
+								<p class="text-[10px] text-gray-500">
+									{$i18n.t('Neutral colors will be derived from the primary color (desaturated).')}
+								</p>
+							{/if}
+						</div>
+
+						<button
+							class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition shadow-sm"
+							on:click={handleGeneratePalette}
+						>
+							{$i18n.t('Generate Palette')}
+						</button>
+					</div>
+				{/if}
+			</div>
+
 			<!-- Visual Editor -->
 			<div class="mt-2 text-sm text-gray-500 font-medium">Standard Colors</div>
 			<div class="mt-2 grid grid-cols-2 gap-2 mb-4">
