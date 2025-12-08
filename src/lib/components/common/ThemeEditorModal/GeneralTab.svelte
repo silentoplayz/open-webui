@@ -148,13 +148,14 @@ function helloWorld() {
 		<label for="theme-base" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
 			>{$i18n.t('Base Theme')}</label
 		>
-		<Tooltip
-			content="The base theme to inherit styles from. Your theme will be applied on top of this."
-		>
-			<div class="flex gap-2 w-full">
+		<div class="flex gap-2 w-full">
+			<Tooltip
+				content="The base theme to inherit styles from. Your theme will be applied on top of this."
+				className="flex-1"
+			>
 				<select
 					id="theme-base"
-					class="flex-1 rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
+					class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
 					bind:value={themeCopy.base}
 					on:change={handleBaseThemeChange}
 				>
@@ -164,33 +165,33 @@ function helloWorld() {
 					<option value="oled-dark">OLED Dark</option>
 					<option value="her">Her</option>
 				</select>
+			</Tooltip>
 
-				<Tooltip content="An emoji to represent the theme in the theme list.">
-					<EmojiPicker
-						onSubmit={(emoji) => {
-							themeCopy.emoji = emoji;
-						}}
+			<Tooltip content="An emoji to represent the theme in the theme list.">
+				<EmojiPicker
+					onSubmit={(emoji) => {
+						themeCopy.emoji = emoji;
+					}}
+				>
+					<button
+						class="mt-1 p-2 h-fit rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 text-sm min-w-[2.5rem]"
+						type="button"
 					>
-						<button
-							class="mt-1 p-2 h-fit rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 text-sm min-w-[2.5rem]"
-							type="button"
-						>
-							{themeCopy.emoji ?? '🎨'}
-						</button>
-					</EmojiPicker>
-				</Tooltip>
-			</div>
-		</Tooltip>
+						{themeCopy.emoji ?? '🎨'}
+					</button>
+				</EmojiPicker>
+			</Tooltip>
+		</div>
 	</div>
 	<div>
 		<label for="theme-codemirror" class="block text-sm font-medium text-gray-700 dark:text-gray-300"
 			>{$i18n.t('CodeMirror Theme')}</label
 		>
-		<Tooltip content="The theme for the editable code editor.">
-			<div class="flex gap-2 w-full">
+		<div class="flex gap-2 w-full">
+			<Tooltip content="The theme for the editable code editor." className="flex-1">
 				<select
 					id="theme-codemirror"
-					class="flex-1 rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
+					class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none mt-1"
 					bind:value={themeCopy.codeMirrorTheme}
 					on:change={handleCodeMirrorThemeChange}
 				>
@@ -241,12 +242,13 @@ function helloWorld() {
 					<option value="xcodeLight">Xcode Light</option>
 					<option value="xcodeDark">Xcode Dark</option>
 				</select>
+			</Tooltip>
+			<Tooltip content={showThemePreview ? 'Hide Preview' : 'Show Preview'}>
 				<button
 					class="mt-1 p-2 rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700"
 					on:click={() => {
 						showThemePreview = !showThemePreview;
 					}}
-					title={showThemePreview ? 'Hide Preview' : 'Show Preview'}
 					type="button"
 				>
 					{#if showThemePreview}
@@ -255,8 +257,8 @@ function helloWorld() {
 						<Eye className="w-4 h-4" />
 					{/if}
 				</button>
-			</div>
-		</Tooltip>
+			</Tooltip>
+		</div>
 	</div>
 	{#if showThemePreview}
 		<div
