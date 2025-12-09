@@ -353,6 +353,18 @@
 							{/each}
 						</div>
 
+						{#key 'css-variables'}
+							<div class="mb-2 rounded-lg overflow-hidden">
+								<CodeBlock
+									id="theme-variables-editor"
+									code={variablesText}
+									lang={'css'}
+									edit={true}
+									on:change={handleVariablesInput}
+								/>
+							</div>
+						{/key}
+
 						<div class="flex justify-end mt-2 mb-4 space-x-2">
 							<button
 								class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
@@ -533,22 +545,6 @@
 					</div>
 				</Collapsible>
 			</div>
-
-			{#key 'css-variables'}
-				<div class="rounded-lg overflow-hidden">
-					<Collapsible title={$i18n.t('Raw CSS Variables')}>
-						<div class="mt-1" slot="content">
-							<CodeBlock
-								id="theme-variables-editor"
-								code={variablesText}
-								lang={'css'}
-								edit={true}
-								on:change={handleVariablesInput}
-							/>
-						</div>
-					</Collapsible>
-				</div>
-			{/key}
 		{/if}
 	</div>
 	<div>

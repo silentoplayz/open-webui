@@ -97,7 +97,7 @@ export const objectToCss = (obj: { [key: string]: string }): string => {
 	for (const key in obj) {
 		css += `${key}: ${obj[key]};\n`;
 	}
-	return css;
+	return css.trim();
 };
 
 export const cssToObject = (css: string): { [key: string]: string } => {
