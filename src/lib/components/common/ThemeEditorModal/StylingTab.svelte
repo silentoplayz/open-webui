@@ -46,7 +46,7 @@
 
 	const dispatch = createEventDispatcher();
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	const handleVariablesInput = (e: CustomEvent<string>) => {
 		variablesText = e.detail;
@@ -97,6 +97,22 @@
 		dispatch('update', updatedTheme);
 
 		toast.success(`Theme variables updated with random colors.`);
+	};
+
+	const randomizeGeneratorInputs = () => {
+		const getRandomHexColor = () => {
+			const letters = '0123456789ABCDEF';
+			let color = '#';
+			for (let i = 0; i < 6; i++) {
+				color += letters[Math.floor(Math.random() * 16)];
+			}
+			return color;
+		};
+
+		seedColor = getRandomHexColor();
+		if (useNeutralSeed) {
+			neutralSeedColor = getRandomHexColor();
+		}
 	};
 
 	const processImageFile = async (file: File): Promise<string | null> => {
@@ -214,6 +230,24 @@
 			activeColor = val;
 		}
 	}
+
+	let activeGeneratorField: 'seed' | 'neutral' | null = null;
+	const toggleGeneratorPicker = (field: 'seed' | 'neutral') => {
+		if (activeGeneratorField === field) {
+			activeGeneratorField = null;
+		} else {
+			activeGeneratorField = field;
+		}
+	};
+
+	const handleGeneratorPickerInput = (event: CustomEvent<any>) => {
+		const color = event.detail.hex;
+		if (activeGeneratorField === 'seed') {
+			seedColor = color;
+		} else if (activeGeneratorField === 'neutral') {
+			neutralSeedColor = color;
+		}
+	};
 </script>
 
 <input
@@ -263,16 +297,13 @@
 								{$i18n.t('Primary Brand Color')}
 							</label>
 							<div class="flex items-center gap-3">
-								<div
+								<button
 									class="relative w-10 h-10 rounded-full overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 group cursor-pointer"
+									style="background-color: {seedColor}"
+									aria-label={$i18n.t('Change Primary Brand Color')}
+									on:click={() => toggleGeneratorPicker('seed')}
 								>
-									<input
-										id="seed-color"
-										type="color"
-										class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] p-0 m-0 border-0 cursor-pointer"
-										bind:value={seedColor}
-									/>
-								</div>
+								</button>
 								<div class="flex-1">
 									<input
 										type="text"
@@ -281,6 +312,19 @@
 									/>
 								</div>
 							</div>
+							{#if activeGeneratorField === 'seed'}
+								<div
+									class="mt-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
+								>
+									<div class="flex justify-center color-picker-wrapper">
+										<ColorPicker
+											hex={seedColor}
+											isDialog={false}
+											on:input={handleGeneratorPickerInput}
+										/>
+									</div>
+								</div>
+							{/if}
 						</div>
 
 						<div class="space-y-2">
@@ -296,15 +340,13 @@
 
 							{#if useNeutralSeed}
 								<div class="flex items-center gap-3 animate-in fade-in duration-200">
-									<div
+									<button
 										class="relative w-10 h-10 rounded-full overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 group cursor-pointer"
+										style="background-color: {neutralSeedColor}"
+										aria-label={$i18n.t('Change Custom Neutral Base')}
+										on:click={() => toggleGeneratorPicker('neutral')}
 									>
-										<input
-											type="color"
-											class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] p-0 m-0 border-0 cursor-pointer"
-											bind:value={neutralSeedColor}
-										/>
-									</div>
+									</button>
 									<div class="flex-1">
 										<input
 											type="text"
@@ -313,6 +355,19 @@
 										/>
 									</div>
 								</div>
+								{#if activeGeneratorField === 'neutral'}
+									<div
+										class="mt-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
+									>
+										<div class="flex justify-center color-picker-wrapper">
+											<ColorPicker
+												hex={neutralSeedColor}
+												isDialog={false}
+												on:input={handleGeneratorPickerInput}
+											/>
+										</div>
+									</div>
+								{/if}
 							{:else}
 								<p class="text-[10px] text-gray-500">
 									{$i18n.t('Neutral colors will be derived from the primary color (desaturated).')}
@@ -363,12 +418,20 @@
 							</div>
 						{/if}
 
-						<button
-							class="w-full py-1.5 px-3.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
-							on:click={handleGeneratePalette}
-						>
-							{$i18n.t('Generate Palette')}
-						</button>
+						<div class="flex gap-2">
+							<button
+								class="flex-1 py-1.5 px-3.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
+								on:click={randomizeGeneratorInputs}
+							>
+								{$i18n.t('Random')}
+							</button>
+							<button
+								class="flex-[3] py-1.5 px-3.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
+								on:click={handleGeneratePalette}
+							>
+								{$i18n.t('Generate Palette')}
+							</button>
+						</div>
 					</div>
 				</Collapsible>
 			</div>
