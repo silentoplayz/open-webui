@@ -14,11 +14,7 @@ import { currentThemeStore, liveThemeStore, communityThemes, themes } from '$lib
 let currentStylesheet: HTMLStyleElement | undefined;
 
 const cleanupTheme = () => {
-	// Remove old stylesheet
-	if (currentStylesheet) {
-		currentStylesheet.remove();
-		currentStylesheet = undefined;
-	}
+	// Note: currentStylesheet is now managed in _applyGlobalThemeStyles to allow reuse
 
 	// Cleanup base class and CSS variables
 	document.documentElement.classList.remove('light', 'dark', 'oled-dark', 'her');
@@ -30,10 +26,19 @@ const cleanupTheme = () => {
 const _applyGlobalThemeStyles = (theme: Theme) => {
 	console.log('Applying theme:', theme);
 	if (theme.css && (!theme.toggles || theme.toggles.customCss)) {
-		currentStylesheet = document.createElement('style');
-		currentStylesheet.id = `${theme.id}-stylesheet`;
-		currentStylesheet.innerHTML = theme.css;
-		document.head.appendChild(currentStylesheet);
+		if (!currentStylesheet) {
+			currentStylesheet = document.createElement('style');
+			currentStylesheet.id = `${theme.id}-stylesheet`;
+			document.head.appendChild(currentStylesheet);
+		}
+		// Update content of existing stylesheet
+		if (currentStylesheet.innerHTML !== theme.css) {
+			currentStylesheet.innerHTML = theme.css;
+		}
+	} else if (currentStylesheet) {
+		// Remove stylesheet if theme has no custom CSS
+		currentStylesheet.remove();
+		currentStylesheet = undefined;
 	}
 
 	let resolvedBase = theme.base;

@@ -2,7 +2,14 @@
 	import { onMount, getContext } from 'svelte';
 	import { goto } from '$app/navigation';
 
-	import { WEBUI_NAME, mobile, showSidebar, user } from '$lib/stores';
+	import {
+		WEBUI_NAME,
+		mobile,
+		showSidebar,
+		showThemeEditor,
+		themeEditorCollapsed,
+		user
+	} from '$lib/stores';
 	import { page } from '$app/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
@@ -28,9 +35,13 @@
 
 {#if loaded}
 	<div
-		class=" flex flex-col h-screen max-h-[100dvh] flex-1 transition-width duration-200 ease-in-out {$showSidebar
+		class=" flex flex-col h-screen max-h-[100dvh] transition-all duration-300 ease-in-out {$showSidebar
 			? 'md:max-w-[calc(100%-var(--sidebar-width))]'
-			: ' md:max-w-[calc(100%-49px)]'}  w-full max-w-full"
+			: ' md:max-w-[calc(100%-49px)]'}  w-full max-w-full {$showThemeEditor
+			? $themeEditorCollapsed
+				? 'pr-5'
+				: 'pr-[600px]'
+			: ''}"
 	>
 		<nav class="   px-2.5 pt-1.5 drag-region">
 			<div class=" flex items-center gap-1">

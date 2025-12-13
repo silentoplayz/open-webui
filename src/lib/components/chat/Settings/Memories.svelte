@@ -3,7 +3,7 @@
 	import { config, models, settings, user } from '$lib/stores';
 	import { createEventDispatcher, onMount, getContext, tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import ManageModal from './Personalization/ManageModal.svelte';
+	import ManageModal from './Memories/ManageModal.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	const dispatch = createEventDispatcher();
 
@@ -24,7 +24,7 @@
 <ManageModal bind:show={showManageModal} />
 
 <form
-	id="tab-personalization"
+	id="tab-memories"
 	class="flex flex-col h-full justify-between space-y-3 text-sm"
 	on:submit|preventDefault={() => {
 		dispatch('save');

@@ -9,6 +9,7 @@
 	import Share from '$lib/components/icons/Share.svelte';
 	import DocumentArrowDown from '$lib/components/icons/DocumentArrowDown.svelte';
 	import DocumentDuplicate from '$lib/components/icons/DocumentDuplicate.svelte';
+	import ArrowPath from '$lib/components/icons/ArrowPath.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -16,6 +17,8 @@
 	export let shareHandler: Function;
 	export let exportHandler: Function;
 	export let duplicateHandler: Function;
+	export let checkForUpdateHandler: Function | null = null;
+	export let hasSourceUrl: boolean = false;
 
 	export let onClose: Function;
 	export let onOpenChange: ((open: boolean) => void) | undefined = undefined;
@@ -88,9 +91,21 @@
 					show = false;
 				}}
 			>
-				<DocumentDuplicate className="w-4 h-4" />
-				<div class="flex items-center">{$i18n.t('Duplicate')}</div>
+				<div class="flex items-center">{$i18n.t('Clone')}</div>
 			</DropdownMenu.Item>
+
+			{#if hasSourceUrl && checkForUpdateHandler}
+				<DropdownMenu.Item
+					class="flex gap-2 items-center px-3 py-1.5 text-sm font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
+					on:click={() => {
+						checkForUpdateHandler();
+						show = false;
+					}}
+				>
+					<ArrowPath class="w-4 h-4" />
+					<div class="flex items-center">{$i18n.t('Check for Update')}</div>
+				</DropdownMenu.Item>
+			{/if}
 		</DropdownMenu.Content>
 	</div>
 </Dropdown>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
+	import { v4 as uuidv4 } from 'uuid';
 	import { WEBUI_VERSION } from '$lib/constants';
 	import {
 		themes,
@@ -16,7 +17,14 @@
 		retryThemeUpdateCheck,
 		checkForThemeUpdates
 	} from '$lib/theme';
-	import { settings, theme as themeStore } from '$lib/stores';
+	import {
+		settings,
+		theme as themeStore,
+		showSettings,
+		showThemeEditor,
+		editingThemeId,
+		mobile
+	} from '$lib/stores';
 	import type { Theme } from '$lib/types';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
@@ -34,6 +42,8 @@
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
 	import ChevronUpDown from '$lib/components/icons/ChevronUpDown.svelte';
 	import ArrowPath from '$lib/components/icons/ArrowPath.svelte';
+	import ArchiveBox from '$lib/components/icons/ArchiveBox.svelte';
+	import DocumentArrowUp from '$lib/components/icons/DocumentArrowUp.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -53,20 +63,22 @@
 	let themeUrl = '';
 	let isLoading = false;
 	let fileInput: HTMLInputElement;
-	let showThemeEditor = false;
-	let isEditingTheme = false;
-	let selectedTheme: Theme | null = null;
 	let showConfirmDialog = false;
 	let showExportConfirmDialog = false;
+	let showEditThemeWarning = false;
+	let showActiveThemeChangeConfirm = false;
+	let pendingActiveThemeId: string | null = null;
 	let themeToDeleteId = '';
 	let searchQuery = '';
 	let showThemeImportWarning = false;
 	let themeToImport: Theme | null = null;
+	let themeToEdit: Theme | null = null;
 	let sortOrder = 'default';
-	let previousThemeId = '';
 	let isCheckingForUpdates = false;
 
 	let showAnimationScriptWarning = false;
+	let acceptAllScriptWarning = false;
+	let skipAnimationScriptWarning = false;
 	let themeWithScriptToImport: { theme: Theme; source: string } | null = null;
 
 	let importQueue: Theme[] = [];
@@ -84,61 +96,202 @@
 		isCheckingForUpdates = false;
 	};
 
-	const getThemeToggles = (theme: Theme) => {
-		const toggles = [];
+	/**
+	 * Returns the active feature toggles for a theme
+	 */
+	const getActiveFeatures = (theme: Theme): string[] => {
+		const features: string[] = [];
 
 		if (theme.toggles?.cssVariables && theme.variables && Object.keys(theme.variables).length > 0) {
 			const hasCustomVariables = Object.keys(theme.variables).some((key) => {
 				return defaultVariables[key] !== theme.variables[key];
 			});
 			if (hasCustomVariables) {
-				toggles.push('CSS Variables');
+				features.push('CSS Variables');
 			}
 		}
 		if (theme.toggles?.customCss && theme.css) {
-			toggles.push('Custom CSS');
+			features.push('Custom CSS');
 		}
 		if (theme.toggles?.animationScript && theme.animationScript) {
-			toggles.push('Animation Script');
+			features.push('Animation');
 		}
 		if (
 			theme.toggles?.tsParticles &&
 			theme.tsparticlesConfig &&
 			Object.keys(theme.tsparticlesConfig).length > 0
 		) {
-			toggles.push('tsParticles');
+			features.push('Particles');
 		}
 		if (theme.toggles?.gradient) {
-			toggles.push('System Gradient Background');
+			features.push('Gradient');
 		}
 		if (theme.toggles?.systemBackgroundImage && theme.systemBackgroundImageUrl) {
-			toggles.push('System Background Image');
+			features.push('Background');
 		}
 		if (theme.toggles?.chatBackgroundImage && theme.chatBackgroundImageUrl) {
-			toggles.push('Chat Background Image');
+			features.push('Chat BG');
 		}
-		if (toggles.length > 0) {
-			return `Active Toggles: ${toggles.join(', ')}`;
-		}
-		return '';
+
+		return features;
 	};
 
+	/**
+	 * Returns a styled HTML model-card-like tooltip for the theme
+	 */
 	const getTooltipContent = (theme: Theme) => {
+		// Skip tooltip for built-in themes
 		if ($themes.has(theme.id)) {
 			return '';
 		}
 
-		const toggles = getThemeToggles(theme);
-		let content = [];
+		const features = getActiveFeatures(theme);
 
+		// Base theme badge colors
+		const baseColors: Record<string, { bg: string; text: string; label: string }> = {
+			light: { bg: '#fef3c7', text: '#92400e', label: 'Light' },
+			dark: { bg: '#1e3a5f', text: '#93c5fd', label: 'Dark' },
+			'oled-dark': { bg: '#0a0a0a', text: '#a3a3a3', label: 'OLED' },
+			her: { bg: '#fce7f3', text: '#be185d', label: 'Her' }
+		};
+
+		const baseStyle = baseColors[theme.base] || baseColors['dark'];
+
+		// Build the HTML card
+		let html = `
+			<div style="
+				max-width: 280px;
+				font-family: system-ui, -apple-system, sans-serif;
+				line-height: 1.4;
+			">`;
+
+		// Header: Name + Version
+		html += `
+			<div style="
+				display: flex;
+				align-items: flex-start;
+				justify-content: space-between;
+				gap: 8px;
+				margin-bottom: 6px;
+			">
+				<div style="
+					font-size: 14px;
+					font-weight: 600;
+					color: #f9fafb;
+					display: flex;
+					align-items: center;
+					gap: 6px;
+				">
+					${theme.emoji ? `<span style="font-size: 16px;">${theme.emoji}</span>` : ''}
+					<span style="overflow-wrap: break-word; word-break: break-word;">${theme.name}</span>
+				</div>`;
+
+		// Version badge
+		if (theme.version) {
+			html += `
+				<span style="
+					font-size: 10px;
+					padding: 2px 6px;
+					border-radius: 9999px;
+					background: rgba(255, 255, 255, 0.15);
+					color: #d1d5db;
+					white-space: nowrap;
+					flex-shrink: 0;
+				">v${theme.version}</span>`;
+		}
+
+		html += `</div>`;
+
+		// Author row
+		if (theme.author) {
+			html += `
+				<div style="
+					font-size: 11px;
+					color: #9ca3af;
+					margin-bottom: 8px;
+					display: flex;
+					align-items: center;
+					gap: 4px;
+				">
+					<span>by</span>
+					<span style="color: #d1d5db; font-weight: 500;">${theme.author}</span>
+					${
+						theme.repository
+							? `<span style="color: #6b7280;">•</span>
+					   <span style="color: #60a5fa;">🔗</span>`
+							: ''
+					}
+				</div>`;
+		}
+
+		// Base theme badge
+		html += `
+			<div style="margin-bottom: 8px;">
+				<span style="
+					font-size: 10px;
+					padding: 2px 8px;
+					border-radius: 4px;
+					background: ${baseStyle.bg};
+					color: ${baseStyle.text};
+					font-weight: 500;
+					text-transform: uppercase;
+					letter-spacing: 0.5px;
+				">${baseStyle.label} Base</span>
+			</div>`;
+
+		// Description
 		if (theme.description) {
-			content.push(theme.description);
-		}
-		if (toggles) {
-			content.push(toggles);
+			const truncatedDesc =
+				theme.description.length > 150
+					? theme.description.substring(0, 147) + '...'
+					: theme.description;
+			html += `
+				<div style="
+					font-size: 12px;
+					color: #d1d5db;
+					margin-bottom: 10px;
+					line-height: 1.5;
+				">${truncatedDesc}</div>`;
 		}
 
-		return content.join('\n');
+		// Feature pills
+		if (features.length > 0) {
+			html += `
+				<div style="
+					display: flex;
+					flex-wrap: wrap;
+					gap: 4px;
+				">`;
+
+			for (const feature of features) {
+				// Unique colors for each feature type
+				const featureColors: Record<string, { bg: string; text: string }> = {
+					'CSS Variables': { bg: 'rgba(59, 130, 246, 0.2)', text: '#60a5fa' }, // Blue
+					'Custom CSS': { bg: 'rgba(168, 85, 247, 0.2)', text: '#c084fc' }, // Purple
+					Animation: { bg: 'rgba(251, 146, 60, 0.2)', text: '#fb923c' }, // Orange
+					Particles: { bg: 'rgba(34, 211, 238, 0.2)', text: '#22d3ee' }, // Cyan
+					Gradient: { bg: 'rgba(244, 114, 182, 0.2)', text: '#f472b6' }, // Pink
+					Background: { bg: 'rgba(251, 191, 36, 0.2)', text: '#fbbf24' }, // Amber
+					'Chat BG': { bg: 'rgba(45, 212, 191, 0.2)', text: '#2dd4bf' } // Teal
+				};
+				const colors = featureColors[feature] || { bg: 'rgba(34, 197, 94, 0.2)', text: '#4ade80' };
+				html += `
+					<span style="
+						font-size: 10px;
+						padding: 3px 8px;
+						border-radius: 9999px;
+						background: ${colors.bg};
+						color: ${colors.text};
+						font-weight: 500;
+					">${feature}</span>`;
+			}
+
+			html += `</div>`;
+		}
+
+		html += `</div>`;
+
+		return html;
 	};
 
 	$: allThemes = new Map([...$themes, ...$communityThemes]);
@@ -162,6 +315,17 @@
 	);
 
 	const themeChangeHandler = (_theme: string) => {
+		if (_theme === selectedThemeId) {
+			return;
+		}
+
+		// If theme editor is open, show confirmation before changing active theme
+		if ($showThemeEditor) {
+			pendingActiveThemeId = _theme;
+			showActiveThemeChangeConfirm = true;
+			return;
+		}
+
 		selectedThemeId = _theme;
 		themeStore.set(_theme);
 		localStorage.setItem('theme', _theme);
@@ -249,7 +413,7 @@
 		}
 
 		// Security check for animation script
-		if (theme.animationScript) {
+		if (theme.animationScript && !skipAnimationScriptWarning) {
 			themeWithScriptToImport = { theme, source };
 			showAnimationScriptWarning = true;
 			return false;
@@ -274,6 +438,8 @@
 			importQueue = [theme];
 			importSuccessCount = 0;
 			importErrorCount = 0;
+			skipAnimationScriptWarning = false;
+			acceptAllScriptWarning = false;
 			processNextThemeInQueue();
 		} catch (error) {
 			console.error(`Failed to load theme from ${themeUrl}:`, error);
@@ -327,6 +493,8 @@
 				const content = JSON.parse(reader.result as string);
 				importSuccessCount = 0;
 				importErrorCount = 0;
+				skipAnimationScriptWarning = false;
+				acceptAllScriptWarning = false;
 
 				if (Array.isArray(content)) {
 					importQueue = [...content];
@@ -345,10 +513,24 @@
 	};
 
 	const openThemeEditor = (theme: Theme) => {
-		previousThemeId = selectedThemeId;
-		selectedTheme = theme;
-		isEditingTheme = true;
-		showThemeEditor = true;
+		// Check if already editing a different theme
+		if ($editingThemeId && $editingThemeId !== theme.id) {
+			themeToEdit = theme;
+			showEditThemeWarning = true;
+			return;
+		}
+
+		// Set the theme data for the layout to consume
+		window.dispatchEvent(
+			new CustomEvent('open-theme-editor', {
+				detail: { theme, isEditing: true, previousThemeId: selectedThemeId }
+			})
+		);
+
+		// Update global stores
+		editingThemeId.set(theme.id);
+		showThemeEditor.set(true);
+		showSettings.set(false);
 	};
 
 	const getRandomEmoji = () => {
@@ -358,17 +540,17 @@
 		return String.fromCodePoint(...randomEmojiCode.split('-').map((code) => parseInt(code, 16)));
 	};
 
-	const createNewTheme = () => {
-		previousThemeId = selectedThemeId;
-		isEditingTheme = false;
-		selectedTheme = {
-			id: `theme-${crypto.randomUUID()}`,
+	let showNewThemeWarning = false;
+
+	const _proceedCreateNewTheme = () => {
+		const newTheme = {
+			id: `theme-${uuidv4()}`,
 			name: 'My Custom Theme',
 			description: 'A custom theme created by me.',
 			author: $user?.name ?? 'Me',
 			version: '1.0.0',
 			targetWebUIVersion: WEBUI_VERSION,
-			base: 'dark',
+			base: 'dark' as 'light' | 'dark' | 'oled-dark' | 'her',
 			emoji: getRandomEmoji(),
 			variables: variables.reduce((acc, curr) => {
 				acc[curr.name] = curr.defaultValue;
@@ -389,56 +571,44 @@
 				chatBackgroundImage: false
 			}
 		};
-		showThemeEditor = true;
-		applyTheme(selectedTheme, true);
+
+		// Set the theme data for the layout to consume
+		window.dispatchEvent(
+			new CustomEvent('open-theme-editor', {
+				detail: { theme: newTheme, isEditing: false, previousThemeId: selectedThemeId }
+			})
+		);
+
+		// Update global stores
+		editingThemeId.set(null);
+		showThemeEditor.set(true);
+		showSettings.set(false);
+		applyTheme(newTheme, true);
 	};
 
-	const saveTheme = (e) => {
-		const updatedTheme = e.detail;
-
-		const validation = validateTheme(updatedTheme);
-		if (!validation.valid) {
-			toast.error($i18n.t(validation.error ?? ''));
+	const createNewTheme = () => {
+		if ($showThemeEditor) {
+			showNewThemeWarning = true;
 			return;
 		}
-
-		if (
-			isDuplicateTheme(
-				updatedTheme,
-				Array.from($communityThemes.values()),
-				isEditingTheme,
-				updatedTheme.id
-			)
-		) {
-			toast.error($i18n.t('A theme with the same content already exists.'));
-			return;
-		}
-
-		if (isEditingTheme) {
-			if (updateCommunityTheme(updatedTheme)) {
-				toast.success(
-					$i18n.t('Theme "{{name}}" updated successfully!', { name: updatedTheme.name })
-				);
-				if (updatedTheme.id === selectedThemeId) {
-					applyTheme(updatedTheme);
-				}
-				showThemeEditor = false;
-			} else {
-				applyTheme(previousThemeId);
-			}
-		} else {
-			if (processAndAddTheme(updatedTheme)) {
-				showThemeEditor = false;
-				applyTheme(previousThemeId);
-			} else {
-				// Revert to the previous theme if adding the new theme fails
-				// This can happen if the security warning is shown
-				if (!showAnimationScriptWarning) {
-					applyTheme(previousThemeId);
-				}
-			}
-		}
+		_proceedCreateNewTheme();
 	};
+
+	// Note: Save handling is now done in +layout.svelte since this component
+	// gets unmounted when the settings modal closes
+	onMount(() => {
+		// Listen for open theme editor events to set the selected theme
+		const handleOpenThemeEditor = (event: CustomEvent) => {
+			// This event is dispatched by openThemeEditor and createNewTheme
+			// We don't need to do anything here as the layout handles the theme editor
+		};
+
+		window.addEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
+
+		return () => {
+			window.removeEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
+		};
+	});
 
 	const copyTheme = (theme: Theme) => {
 		const themeJson = JSON.stringify(theme, null, 2);
@@ -458,14 +628,20 @@
 	};
 
 	const duplicateTheme = (theme: Theme) => {
+		// Prevent cloning theme while it's being edited
+		if ($editingThemeId === theme.id) {
+			toast.error($i18n.t('Cannot clone theme while editing it'));
+			return;
+		}
+
 		const duplicatedTheme = {
 			...theme,
-			id: `theme-${crypto.randomUUID()}`,
+			id: `theme-${uuidv4()}`,
 			name: `${theme.name} (Copy)`,
 			sourceUrl: undefined
 		};
 		if (processAndAddTheme(duplicatedTheme)) {
-			toast.success($i18n.t('Theme duplicated successfully!'));
+			toast.success($i18n.t('Theme cloned successfully!'));
 		}
 	};
 
@@ -486,7 +662,7 @@
 	<div class="space-y-3">
 		<div class="space-y-2">
 			<div class="flex justify-between items-center">
-				<div class="flex items-center self-center text-sm font-medium">
+				<div class="flex items-center self-center text-sm font-medium whitespace-nowrap">
 					{$i18n.t('Themes')}
 					<div class="flex self-center w-[1px] h-4 mx-2 bg-gray-50 dark:bg-gray-850" />
 					<span class="text-gray-500 dark:text-gray-300">{filteredThemes.length}</span>
@@ -497,7 +673,7 @@
 								showExportConfirmDialog = true;
 							}}
 						>
-							<Share class="w-4 h-4" />
+							<ArchiveBox class="w-4 h-4" />
 						</button>
 					</Tooltip>
 				</div>
@@ -573,16 +749,47 @@
 							{@const tooltipContent = getTooltipContent(theme)}
 							<Tooltip
 								content={tooltipContent}
-								placement="top"
-								disabled={!tooltipContent}
-								className={`w-full rounded-lg transition group ${
+								placement="bottom"
+								touch={false}
+								tippyOptions={{
+									flipOnUpdate: true,
+									popperOptions: {
+										modifiers: [
+											{
+												name: 'flip',
+												options: {
+													fallbackPlacements: ['top', 'bottom'],
+													boundary: themesScrollContainer
+												}
+											},
+											{
+												name: 'preventOverflow',
+												options: {
+													boundary: themesScrollContainer,
+													altAxis: true,
+													tether: false
+												}
+											}
+										]
+									},
+									appendTo: () => themesScrollContainer || document.body
+								}}
+								className={`w-full h-full rounded-lg transition group ${
 									selectedThemeId === theme.id
 										? 'bg-gray-100 dark:bg-gray-800'
 										: 'hover:bg-gray-100 dark:hover:bg-gray-800'
 								}`}
 							>
 								<div
-									class="flex items-center p-2 w-full text-left cursor-pointer"
+									class={`flex h-full items-center p-2 w-full text-left cursor-pointer ${
+										$showThemeEditor && $editingThemeId === theme.id
+											? selectedThemeId === theme.id
+												? 'border-l-3 border-purple-500 dark:border-purple-400 rounded-l'
+												: 'border-l-3 border-blue-500 dark:border-blue-400 rounded-l'
+											: selectedThemeId === theme.id
+												? 'border-l-3 border-green-500 dark:border-green-400 rounded-l'
+												: ''
+									}`}
 									on:click={() => themeChangeHandler(theme.id)}
 									on:keydown={(e) => {
 										if (e.key === 'Enter' || e.key === ' ') {
@@ -676,6 +883,11 @@
 													<button
 														class="p-1.5 text-gray-500 hover:text-red-500 dark:hover:text-red-400 transition rounded-full"
 														on:click|stopPropagation={() => {
+															// Prevent deleting theme while it's being edited
+															if ($editingThemeId === theme.id) {
+																toast.error($i18n.t('Cannot delete theme while editing it'));
+																return;
+															}
 															themeToDeleteId = theme.id;
 															showConfirmDialog = true;
 														}}
@@ -700,6 +912,8 @@
 													shareHandler={() => window.open('https://openwebui.com/', '_blank')}
 													exportHandler={() => exportTheme(theme)}
 													duplicateHandler={() => duplicateTheme(theme)}
+													checkForUpdateHandler={() => retryThemeUpdateCheck(theme)}
+													hasSourceUrl={!!theme.sourceUrl}
 													onClose={() => {}}
 													onOpenChange={(open) => {
 														openMenuThemeId = open ? theme.id : null;
@@ -741,7 +955,7 @@
 					<div class="relative flex items-center flex-1">
 						<input
 							type="url"
-							class="w-full rounded-lg py-2 pl-4 pr-20 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none"
+							class="w-full rounded-lg py-2 pl-4 pr-28 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none"
 							placeholder="https://example.com/theme.json"
 							bind:value={themeUrl}
 							disabled={isLoading}
@@ -751,33 +965,36 @@
 								}
 							}}
 						/>
-						<button
-							class="absolute right-1.5 px-3 py-1 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-md disabled:opacity-50"
-							on:click={addThemeHandler}
-							disabled={isLoading}
-						>
-							{#if isLoading && !themeUrl}
-								{$i18n.t('Loading...')}
-							{:else}
-								{$i18n.t('Add')}
-							{/if}
-						</button>
-					</div>
-					<div>
-						<input
-							type="file"
-							accept=".json"
-							class="hidden"
-							bind:this={fileInput}
-							on:change={importThemeFromFile}
-						/>
-						<button
-							class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
-							on:click={() => fileInput.click()}
-							disabled={isLoading}
-						>
-							{$i18n.t('Import File')}
-						</button>
+						<div class="absolute right-2 flex items-center gap-1">
+							<input
+								type="file"
+								accept=".json"
+								class="hidden"
+								bind:this={fileInput}
+								on:change={importThemeFromFile}
+							/>
+							<Tooltip content={$i18n.t('Import File')} placement="top">
+								<button
+									class="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white transition rounded-full"
+									on:click={() => fileInput.click()}
+									disabled={isLoading}
+									aria-label={$i18n.t('Import File')}
+								>
+									<DocumentArrowUp class="w-4 h-4" />
+								</button>
+							</Tooltip>
+							<button
+								class="px-3 py-1 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-md disabled:opacity-50"
+								on:click={addThemeHandler}
+								disabled={isLoading}
+							>
+								{#if isLoading && !themeUrl}
+									{$i18n.t('Loading...')}
+								{:else}
+									{$i18n.t('Load URL')}
+								{/if}
+							</button>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -862,6 +1079,10 @@
 	bind:show={showAnimationScriptWarning}
 	title="Security Warning"
 	on:confirm={() => {
+		if (acceptAllScriptWarning) {
+			skipAnimationScriptWarning = true;
+		}
+
 		if (themeWithScriptToImport) {
 			const success = _finalizeAddTheme(
 				themeWithScriptToImport.theme,
@@ -874,11 +1095,13 @@
 				importErrorCount++;
 			}
 
-			if (showThemeEditor) {
+			// If theme editor is open, close it and revert to previous theme
+			if ($showThemeEditor) {
 				if (success) {
-					showThemeEditor = false;
+					showThemeEditor.set(false);
+					editingThemeId.set(null);
 				}
-				applyTheme(previousThemeId);
+				// Theme revert is handled by the layout component
 			}
 		}
 		showAnimationScriptWarning = false;
@@ -907,23 +1130,98 @@
 				'I acknowledge that I have read and I understand the implications of my action. I am aware of the risks associated with executing arbitrary code and I have verified the trustworthiness of the source.'
 			)}
 		</div>
+
+		{#if importQueue.length > 0}
+			<div class=" mt-2 flex items-center">
+				<input
+					id="accept-all-checkbox"
+					type="checkbox"
+					class="size-4 rounded border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-700"
+					bind:checked={acceptAllScriptWarning}
+				/>
+				<label for="accept-all-checkbox" class="ml-2 text-sm font-medium">
+					{$i18n.t('Apply to all {{count}} themes in the queue', {
+						count: importQueue.length + 1
+					})}
+				</label>
+			</div>
+		{/if}
 	</div>
 </ConfirmDialog>
 
-{#if showThemeEditor}
-	<ThemeEditorModal
-		theme={selectedTheme}
-		bind:show={showThemeEditor}
-		title={isEditingTheme ? 'Edit Theme' : 'Create New Theme'}
-		isEditing={isEditingTheme}
-		on:save={saveTheme}
-		on:update={(e) => {
-			selectedTheme = e.detail;
-			applyTheme(e.detail, true);
-		}}
-		on:cancel={() => {
-			showThemeEditor = false;
-			applyTheme(previousThemeId);
-		}}
-	/>
-{/if}
+<!-- Edit Theme Warning Modal -->
+<ConfirmDialog
+	bind:show={showEditThemeWarning}
+	title={$i18n.t('Switch Theme Editor')}
+	message={$i18n.t(
+		'You are currently editing another theme. Do you want to switch to editing this theme? Your current changes will be saved.'
+	)}
+	on:confirm={() => {
+		showEditThemeWarning = false;
+		if (themeToEdit) {
+			// User confirmed, dispatch the event directly to bypass the guard check
+			window.dispatchEvent(
+				new CustomEvent('open-theme-editor', {
+					detail: { theme: themeToEdit, isEditing: true, previousThemeId: selectedThemeId }
+				})
+			);
+			// Update global stores
+			editingThemeId.set(themeToEdit.id);
+			showThemeEditor.set(true);
+			themeToEdit = null;
+		}
+	}}
+	on:cancel={() => {
+		showEditThemeWarning = false;
+		themeToEdit = null;
+	}}
+/>
+
+<!-- Active Theme Change Confirmation Modal -->
+<ConfirmDialog
+	bind:show={showActiveThemeChangeConfirm}
+	title={$i18n.t('Change Active Theme')}
+	message={$i18n.t(
+		'You are currently editing a theme. This will change which theme is applied when you close the editor. Your current preview will not be affected. Do you want to proceed?'
+	)}
+	on:confirm={() => {
+		if (pendingActiveThemeId) {
+			// Only update selectedThemeId and localStorage, NOT the theme store
+			// This prevents visual theme change while editing, but persists the selection
+			selectedThemeId = pendingActiveThemeId;
+			localStorage.setItem('theme', pendingActiveThemeId);
+
+			// Notify the layout to update its previousThemeId so closing the editor
+			// applies the correct theme
+			window.dispatchEvent(
+				new CustomEvent('active-theme-changed', {
+					detail: { themeId: pendingActiveThemeId }
+				})
+			);
+
+			pendingActiveThemeId = null;
+		}
+		showActiveThemeChangeConfirm = false;
+	}}
+	on:cancel={() => {
+		showActiveThemeChangeConfirm = false;
+		pendingActiveThemeId = null;
+	}}
+/>
+
+<ConfirmDialog
+	bind:show={showNewThemeWarning}
+	title={$i18n.t('Create New Theme')}
+	message={$i18n.t(
+		$editingThemeId
+			? 'You are currently editing a theme. Do you want to discard your current session and create a new theme? Your changes to the current theme will be saved.'
+			: 'You are currently creating a theme. Do you want to discard your current session and create a new theme? Your changes to the current theme will be saved.'
+	)}
+	on:confirm={() => {
+		showNewThemeWarning = false;
+		_proceedCreateNewTheme();
+	}}
+	on:cancel={() => {
+		showNewThemeWarning = false;
+	}}
+/>

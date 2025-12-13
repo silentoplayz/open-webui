@@ -9,6 +9,19 @@
 	export let animationScriptText: string;
 	export let tsParticleConfigText: string;
 
+	// Check validity of initial prop
+	let isJsonValid = true;
+	$: {
+		try {
+			if (tsParticleConfigText && tsParticleConfigText.trim()) {
+				JSON.parse(tsParticleConfigText);
+			}
+			isJsonValid = true;
+		} catch {
+			isJsonValid = false;
+		}
+	}
+
 	const dispatch = createEventDispatcher();
 	const i18n = getContext('i18n');
 
@@ -21,13 +34,20 @@
 	const handleTsParticleConfigInput = (e) => {
 		tsParticleConfigText = e.detail;
 		try {
-			themeCopy.tsparticlesConfig = JSON.parse(tsParticleConfigText);
-			dispatch('update', { ...themeCopy });
-		} catch (error) {
-			if (tsParticleConfigText.trim() === '') {
+			if (tsParticleConfigText.trim()) {
+				themeCopy.tsparticlesConfig = JSON.parse(tsParticleConfigText);
+				isJsonValid = true;
+				// Only dispatch update if valid
+				dispatch('update', { ...themeCopy });
+			} else {
+				// Empty is considered valid (no config)
 				themeCopy.tsparticlesConfig = undefined;
+				isJsonValid = true;
 				dispatch('update', { ...themeCopy });
 			}
+		} catch (error) {
+			isJsonValid = false;
+			// Don't dispatch update if invalid to prevent breaking the app ref
 		}
 	};
 </script>
@@ -37,7 +57,12 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.animationScript}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there's actual content to apply
+					if (animationScriptText?.trim()) {
+						dispatch('update', { ...themeCopy });
+					}
+				}}
 			/>
 			<Tooltip
 				content="Add custom Javascript to create animations. This is for advanced themes that use canvas or other dynamic elements."
@@ -67,7 +92,17 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.tsParticles}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there's valid config to apply
+					if (tsParticleConfigText?.trim()) {
+						try {
+							JSON.parse(tsParticleConfigText);
+							dispatch('update', { ...themeCopy });
+						} catch {
+							// Don't dispatch if JSON is invalid
+						}
+					}
+				}}
 			/>
 			<Tooltip content="Configuration object for tsParticles animations.">
 				<label
@@ -87,6 +122,15 @@
 						edit={true}
 						on:change={handleTsParticleConfigInput}
 					/>
+				</div>
+				<div class="mt-1 flex justify-end">
+					<span
+						class="text-xs transition-colors {isJsonValid
+							? 'text-green-500'
+							: 'text-red-500 font-medium'}"
+					>
+						{isJsonValid ? 'Valid JSON' : 'Invalid JSON'}
+					</span>
 				</div>
 			{/key}
 		{/if}

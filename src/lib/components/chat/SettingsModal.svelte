@@ -13,7 +13,7 @@
 	import Interface from './Settings/Interface.svelte';
 	import Audio from './Settings/Audio.svelte';
 	import DataControls from './Settings/DataControls.svelte';
-	import Personalization from './Settings/Personalization.svelte';
+	import Memories from './Settings/Memories.svelte';
 	import Search from '../icons/Search.svelte';
 	import XMark from '../icons/XMark.svelte';
 	import Connections from './Settings/Connections.svelte';
@@ -248,8 +248,8 @@
 		},
 
 		{
-			id: 'personalization',
-			title: 'Personalization',
+			id: 'memories',
+			title: 'Memories',
 			keywords: [
 				'account preferences',
 				'account settings',
@@ -750,14 +750,14 @@
 									<div class=" self-center">{$i18n.t('External Tools')}</div>
 								</button>
 							{/if}
-						{:else if tabId === 'personalization'}
+						{:else if tabId === 'memories'}
 							<button
 								role="tab"
-								aria-controls="tab-personalization"
-								aria-selected={selectedTab === 'personalization'}
+								aria-controls="tab-memories"
+								aria-selected={selectedTab === 'memories'}
 								class={`px-0.5 md:px-2.5 py-1 min-w-fit rounded-xl flex-1 md:flex-none flex text-left transition
 								${
-									selectedTab === 'personalization'
+									selectedTab === 'memories'
 										? ($settings?.highContrastMode ?? false)
 											? 'dark:bg-gray-800 bg-gray-200'
 											: ''
@@ -766,13 +766,13 @@
 											: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'
 								}`}
 								on:click={() => {
-									selectedTab = 'personalization';
+									selectedTab = 'memories';
 								}}
 							>
 								<div class=" self-center mr-2">
 									<Face strokeWidth="2" />
 								</div>
-								<div class=" self-center">{$i18n.t('Personalization')}</div>
+								<div class=" self-center">{$i18n.t('Memories')}</div>
 							</button>
 						{:else if tabId === 'audio'}
 							<button
@@ -928,8 +928,8 @@
 							toast.success($i18n.t('Settings saved successfully!'));
 						}}
 					/>
-				{:else if selectedTab === 'personalization'}
-					<Personalization
+				{:else if selectedTab === 'memories'}
+					<Memories
 						{saveSettings}
 						on:save={() => {
 							toast.success($i18n.t('Settings saved successfully!'));

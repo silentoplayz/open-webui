@@ -11,6 +11,8 @@
 		channels,
 		channelId as _channelId,
 		showSidebar,
+		showThemeEditor,
+		themeEditorCollapsed,
 		socket,
 		user
 	} from '$lib/stores';
@@ -289,9 +291,13 @@
 </svelte:head>
 
 <div
-	class="h-screen max-h-[100dvh] transition-width duration-200 ease-in-out {$showSidebar
+	class="h-screen max-h-[100dvh] transition-all duration-300 ease-in-out {$showSidebar
 		? 'md:max-w-[calc(100%-var(--sidebar-width))]'
-		: ''} w-full max-w-full flex flex-col"
+		: ''} w-full max-w-full flex flex-col {$showThemeEditor
+		? $themeEditorCollapsed
+			? 'pr-5'
+			: 'pr-[600px]'
+		: ''}"
 	id="channel-container"
 >
 	<PaneGroup direction="horizontal" class="w-full h-full">

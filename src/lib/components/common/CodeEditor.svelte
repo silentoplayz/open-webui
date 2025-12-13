@@ -114,6 +114,20 @@
 
 							activeColorRange = { from, to };
 
+							const pickerWidth = 250;
+							const pickerHeight = 300;
+
+							let left = e.clientX;
+							let top = e.clientY;
+
+							if (left + pickerWidth > window.innerWidth) {
+								left = window.innerWidth - pickerWidth - 10;
+							}
+
+							if (top + pickerHeight > window.innerHeight) {
+								top = window.innerHeight - pickerHeight - 10;
+							}
+
 							pickerColor = colord(color).toHex();
 							pickerStyle = `position: fixed; left: ${e.clientX}px; top: ${e.clientY}px; z-index: 10000;`;
 							pickerUpdateCallback = (newColor) => {
@@ -232,6 +246,7 @@
 
 	export let id = '';
 	export let lang = '';
+	export let theme: string | null = null;
 
 	let codeEditor;
 
@@ -379,6 +394,15 @@ print("${endTag}")
 		return false;
 	};
 
+	// Fix for fold placeholder styling in non-default themes
+	const fixedTheme = EditorView.theme({
+		'.cm-foldPlaceholder': {
+			backgroundColor: 'transparent',
+			border: 'none',
+			color: 'inherit'
+		}
+	});
+
 	let extensions = [
 		basicSetup,
 		keymap.of([{ key: 'Tab', run: acceptCompletion }, indentWithTab]),
@@ -394,7 +418,8 @@ print("${endTag}")
 		}),
 		editorTheme.of([]),
 		editorLanguage.of([]),
-		colorSwatchPlugin
+		colorSwatchPlugin,
+		fixedTheme
 	];
 
 	$: if (lang) {
@@ -410,17 +435,24 @@ print("${endTag}")
 		}
 	};
 
-	const setTheme = (themeName) => {
-		const theme = themeName === 'one-dark' ? oneDark : (themes[themeName] ?? oneDark);
+	const setEditorTheme = (themeName) => {
+		const selectedThemeStr = themeName || $codeMirrorTheme;
+		const selectedTheme =
+			selectedThemeStr === 'one-dark' ? oneDark : (themes[selectedThemeStr] ?? oneDark);
+
 		if (codeEditor) {
 			codeEditor.dispatch({
-				effects: editorTheme.reconfigure(theme)
+				effects: editorTheme.reconfigure(selectedTheme)
 			});
 		}
 	};
 
-	const unsubscribe = codeMirrorTheme.subscribe((theme) => {
-		setTheme(theme);
+	$: setEditorTheme(theme);
+
+	const unsubscribe = codeMirrorTheme.subscribe((currentTheme) => {
+		if (!theme) {
+			setEditorTheme(currentTheme);
+		}
 	});
 
 	onMount(() => {
@@ -439,7 +471,7 @@ print("${endTag}")
 			parent: document.getElementById(`code-textarea-${id}`)
 		});
 
-		setTheme($codeMirrorTheme);
+		setEditorTheme(theme);
 
 		const keydownHandler = async (e) => {
 			if ((e.ctrlKey || e.metaKey) && e.key === 's') {

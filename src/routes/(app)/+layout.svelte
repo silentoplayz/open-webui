@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { onMount, tick, getContext } from 'svelte';
+	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { openDB, deleteDB } from 'idb';
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
@@ -34,7 +34,9 @@
 		temporaryChatEnabled,
 		toolServers,
 		showSearch,
-		showSidebar
+		showSidebar,
+		showThemeEditor,
+		editingThemeId
 	} from '$lib/stores';
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -46,8 +48,17 @@
 	import { Shortcut, shortcuts } from '$lib/shortcuts';
 	import Particles from '$lib/components/common/Particles.svelte';
 	import BackgroundImage from '$lib/components/layout/BackgroundImage.svelte';
-	import { liveThemeStore } from '$lib/theme';
+	import {
+		liveThemeStore,
+		applyTheme,
+		addCommunityTheme,
+		updateCommunityTheme,
+		communityThemes as communityThemesStore
+	} from '$lib/theme';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
+	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
+	import type { Theme } from '$lib/types';
+	import { validateTheme, isDuplicateTheme } from '$lib/utils/theme';
 
 	const i18n = getContext('i18n');
 
@@ -57,6 +68,20 @@
 	let mainContainer: HTMLElement;
 
 	let version;
+
+	// Theme editor state
+	let selectedTheme: Theme | null = null;
+	let isEditingTheme = false;
+	let previousThemeId = '';
+
+	// Watch for theme editor changes
+	$: if ($showThemeEditor && $editingThemeId) {
+		// Editing existing theme
+		isEditingTheme = true;
+	} else if ($showThemeEditor && !$editingThemeId) {
+		// Creating new theme
+		isEditingTheme = false;
+	}
 
 	const clearChatInputStorage = () => {
 		const chatInputKeys = Object.keys(localStorage).filter((key) => key.startsWith('chat-input'));
@@ -146,6 +171,96 @@
 		tools.set(toolsData);
 	};
 
+	// Event handlers for theme editor - defined at module level for proper cleanup
+	const handleOpenThemeEditor = (event: CustomEvent) => {
+		const { theme, isEditing, previousThemeId: prevTheme } = event.detail;
+		console.log('[+layout] Opening theme editor', { themeName: theme.name, isEditing });
+		// Create a deep copy to ensure reactivity
+		selectedTheme = JSON.parse(JSON.stringify(theme));
+
+		// Apply the theme immediately for live preview
+		applyTheme(selectedTheme);
+
+		isEditingTheme = isEditing;
+		previousThemeId = prevTheme;
+	};
+
+	const handleThemeEditorSaveComplete = (event: CustomEvent) => {
+		const { success } = event.detail;
+		if (success) {
+			// Close the editor and reset state
+			showThemeEditor.set(false);
+			editingThemeId.set(null);
+			selectedTheme = null;
+
+			// Apply the user's active theme from localStorage
+			// This ensures the active theme choice is respected after saving
+			const activeThemeId = localStorage.getItem('theme') ?? 'system';
+			applyTheme(activeThemeId);
+		}
+	};
+
+	const handleActiveThemeChanged = (event: CustomEvent) => {
+		const { themeId } = event.detail;
+		console.log('[+layout] Active theme changed via confirmation modal:', themeId);
+		// Update previousThemeId so that when editor closes, it applies the correct theme
+		previousThemeId = themeId;
+	};
+
+	const handleThemeEditorSave = (event: CustomEvent) => {
+		const { theme: updatedTheme, isEditing } = event.detail;
+		console.log('[+layout] Processing save for theme', updatedTheme.name, 'isEditing:', isEditing);
+
+		// Validation
+		const validation = validateTheme(updatedTheme);
+		if (!validation.valid) {
+			console.log('[+layout] Validation failed:', validation.error);
+			toast.error(validation.error ?? 'Invalid theme');
+			window.dispatchEvent(
+				new CustomEvent('theme-editor-save-complete', { detail: { success: false } })
+			);
+			return;
+		}
+
+		// Check for duplicates
+		// When editing, filter out the theme being edited from the comparison
+		const themesToCheck = isEditing
+			? Array.from($communityThemesStore.values()).filter((t) => t.id !== updatedTheme.id)
+			: Array.from($communityThemesStore.values());
+
+		if (isDuplicateTheme(updatedTheme, themesToCheck, false, updatedTheme.id)) {
+			console.log('[+layout] Duplicate theme detected');
+			toast.error('A theme with the same content already exists.');
+			window.dispatchEvent(
+				new CustomEvent('theme-editor-save-complete', { detail: { success: false } })
+			);
+			return;
+		}
+
+		let success = false;
+		if (isEditing) {
+			// Update existing theme
+			if (updateCommunityTheme(updatedTheme)) {
+				toast.success(`Theme "${updatedTheme.name}" updated successfully!`);
+				// If this is the currently selected theme, apply it
+				if (updatedTheme.id === localStorage.getItem('theme')) {
+					applyTheme(updatedTheme);
+				}
+				success = true;
+			}
+		} else {
+			// Add new theme
+			if (addCommunityTheme(updatedTheme)) {
+				toast.success(`Theme "${updatedTheme.name}" added successfully!`);
+				success = true;
+			}
+		}
+
+		console.log('[+layout] Save result:', success);
+		// Notify completion
+		window.dispatchEvent(new CustomEvent('theme-editor-save-complete', { detail: { success } }));
+	};
+
 	onMount(async () => {
 		if ($user === undefined || $user === null) {
 			await goto('/auth');
@@ -154,6 +269,24 @@
 		if (!['user', 'admin'].includes($user?.role)) {
 			return;
 		}
+
+		// Remove any existing listeners first (prevents duplicates during hot reload)
+		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
+		window.removeEventListener('theme-editor-save', handleThemeEditorSave as EventListener);
+		window.removeEventListener(
+			'theme-editor-save-complete',
+			handleThemeEditorSaveComplete as EventListener
+		);
+		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as EventListener);
+
+		// Now add the listeners
+		window.addEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
+		window.addEventListener('theme-editor-save', handleThemeEditorSave as EventListener);
+		window.addEventListener(
+			'theme-editor-save-complete',
+			handleThemeEditorSaveComplete as EventListener
+		);
+		window.addEventListener('active-theme-changed', handleActiveThemeChanged as EventListener);
 
 		clearChatInputStorage();
 		await Promise.all([
@@ -296,6 +429,16 @@
 		loaded = true;
 	});
 
+	onDestroy(() => {
+		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
+		window.removeEventListener('theme-editor-save', handleThemeEditorSave as EventListener);
+		window.removeEventListener(
+			'theme-editor-save-complete',
+			handleThemeEditorSaveComplete as EventListener
+		);
+		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as EventListener);
+	});
+
 	const checkForVersionUpdates = async () => {
 		version = await getVersionUpdates(localStorage.token).catch((error) => {
 			return {
@@ -308,6 +451,38 @@
 
 <SettingsModal bind:show={$showSettings} />
 <ChangelogModal bind:show={$showChangelog} />
+
+{#if $showThemeEditor && selectedTheme}
+	<ThemeEditorModal
+		theme={selectedTheme}
+		bind:show={$showThemeEditor}
+		isEditing={isEditingTheme}
+		on:save={(e) => {
+			const updatedTheme = e.detail;
+			console.log('[+layout] Save event received from ThemeEditorModal', updatedTheme);
+			// Dispatch save event for Themes.svelte to handle
+			window.dispatchEvent(
+				new CustomEvent('theme-editor-save', {
+					detail: { theme: updatedTheme, isEditing: isEditingTheme }
+				})
+			);
+			console.log('[+layout] Dispatched theme-editor-save event');
+		}}
+		on:update={(e) => {
+			selectedTheme = e.detail;
+			applyTheme(e.detail, true);
+		}}
+		on:cancel={() => {
+			showThemeEditor.set(false);
+			editingThemeId.set(null);
+			selectedTheme = null;
+			// Apply the user's active theme from localStorage
+			// This respects any active theme changes made via the confirmation modal
+			const activeThemeId = localStorage.getItem('theme') ?? 'system';
+			applyTheme(activeThemeId);
+		}}
+	/>
+{/if}
 
 {#if version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
 	<div class=" absolute bottom-8 right-8 z-50" in:fade={{ duration: 100 }}>

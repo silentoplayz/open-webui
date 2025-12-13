@@ -1,32 +1,72 @@
 <script lang="ts">
-	import { createEventDispatcher, getContext } from 'svelte';
+	import { createEventDispatcher, getContext, tick } from 'svelte';
 	import type { Theme } from '$lib/types';
 	import Switch from '$lib/components/common/Switch.svelte';
+	import Collapsible from '$lib/components/common/Collapsible.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import CodeBlock from '$lib/components/chat/Messages/CodeBlock.svelte';
 	import { objectToCss, cssToObject } from '$lib/utils/theme';
 	import { toast } from 'svelte-sonner';
 	import { Vibrant } from 'node-vibrant/browser';
+	import exifr from 'exifr';
+	import heic2any from 'heic2any';
+	import ColorPicker from 'svelte-awesome-color-picker';
+	import variables from '$lib/themes/variables.json';
 
 	export let themeCopy: Theme;
 	export let variablesText: string;
 	export let cssText: string;
 
+	export let initialVariables: Record<string, string> = {};
+
+	import { generatePalette } from '$lib/utils/palette-generator';
+
+	let seedColor = '#2563eb'; // Default Blue
+	let useNeutralSeed = false;
+	let neutralSeedColor = '#171717'; // Default Dark Gray
+	let showPaletteGenerator = false;
+	let previewPalette: Record<string, string>;
+
+	$: previewPalette = generatePalette(seedColor, useNeutralSeed ? neutralSeedColor : undefined);
+
+	const handleGeneratePalette = () => {
+		const newPalette = generatePalette(seedColor, useNeutralSeed ? neutralSeedColor : undefined);
+
+		themeCopy.variables = {
+			...themeCopy.variables,
+			...newPalette
+		};
+		variablesText = objectToCss(themeCopy.variables);
+		dispatch('update', { ...themeCopy });
+		toast.success($i18n.t('Palette applied successfully!'));
+		showPaletteGenerator = false;
+	};
+
 	let imageImportInput: HTMLInputElement;
 
 	const dispatch = createEventDispatcher();
-	const i18n = getContext('i18n');
 
-	const handleVariablesInput = (e) => {
+	const i18n: any = getContext('i18n');
+
+	const handleVariablesInput = (e: CustomEvent<string>) => {
 		variablesText = e.detail;
 		themeCopy.variables = cssToObject(variablesText);
 		dispatch('update', { ...themeCopy });
 	};
 
-	const handleCssInput = (e) => {
+	const handleCssInput = (e: CustomEvent<string>) => {
 		cssText = e.detail;
 		themeCopy.css = cssText;
 		dispatch('update', { ...themeCopy });
+	};
+
+	const resetVariables = () => {
+		// Reset to initial state (either what it was when modal opened, or empty if new)
+		themeCopy.variables = JSON.parse(JSON.stringify(initialVariables));
+		variablesText = objectToCss(themeCopy.variables);
+		dispatch('update', { ...themeCopy });
+		activeVariable = null; // Close color picker if open
+		toast.success($i18n.t('Theme variables reset to initial state.'));
 	};
 
 	const generateRandomColors = () => {
@@ -59,13 +99,60 @@
 		toast.success(`Theme variables updated with random colors.`);
 	};
 
+	const randomizeGeneratorInputs = () => {
+		const getRandomHexColor = () => {
+			const letters = '0123456789ABCDEF';
+			let color = '#';
+			for (let i = 0; i < 6; i++) {
+				color += letters[Math.floor(Math.random() * 16)];
+			}
+			return color;
+		};
+
+		seedColor = getRandomHexColor();
+		if (useNeutralSeed) {
+			neutralSeedColor = getRandomHexColor();
+		}
+	};
+
+	const processImageFile = async (file: File): Promise<string | null> => {
+		try {
+			if (
+				file.type === 'image/heic' ||
+				file.type === 'image/heif' ||
+				file.name.toLowerCase().endsWith('.heic')
+			) {
+				const blob = await heic2any({ blob: file, toType: 'image/jpeg' });
+				return URL.createObjectURL(Array.isArray(blob) ? blob[0] : blob);
+			} else if (
+				file.name.toLowerCase().match(/\.(cr2|nef|arw|dng|orf|rw2|raf|cr3)$/) ||
+				file.type.startsWith('image/x-')
+			) {
+				const thumbnail = await exifr.thumbnail(file, { thumbnail: true, preview: true });
+				if (thumbnail) {
+					return URL.createObjectURL(new Blob([thumbnail], { type: 'image/jpeg' }));
+				} else {
+					toast.error('No embedded preview found in RAW file.');
+					return null;
+				}
+			} else {
+				return URL.createObjectURL(file);
+			}
+		} catch (error) {
+			console.error('Error processing image:', error);
+			toast.error(`Failed to process image: ${error.message}`);
+			return null;
+		}
+	};
+
 	const generateThemeFromImage = async (event) => {
 		const file = event.target.files[0];
 		if (!file) {
 			return;
 		}
 
-		const imageUrl = URL.createObjectURL(file);
+		const imageUrl = await processImageFile(file);
+		if (!imageUrl) return;
 
 		Vibrant.from(imageUrl)
 			.getPalette()
@@ -83,25 +170,90 @@
 
 				variablesText = objectToCss(newVariables);
 				themeCopy.variables = newVariables;
-				themeCopy.imageFingerprint = {
-					name: file.name,
-					size: file.size,
-					lastModified: file.lastModified
-				};
+				// Note: We don't store imageFingerprint to avoid false duplicate detection
+				// when different themes use the same image file for color generation
 
 				const updatedTheme = { ...themeCopy };
 				dispatch('update', updatedTheme);
 
 				toast.success(`Theme variables updated from ${file.name}`);
 				URL.revokeObjectURL(imageUrl);
+			})
+			.catch((err) => {
+				console.error('Vibrant error:', err);
+				toast.error('Failed to extract colors from image.');
+				URL.revokeObjectURL(imageUrl);
 			});
+	};
+
+	let showColorPicker = false;
+	let activeVariable: (typeof variables)[0] | null = null;
+	let activeVariableIndex: number | null = null;
+	let activeColor = '';
+
+	let isUpdatingFromPicker = false;
+
+	const openColorPicker = (variable: typeof activeVariable, index: number) => {
+		if (activeVariable === variable) {
+			showColorPicker = !showColorPicker;
+		} else {
+			activeVariable = variable;
+			activeVariableIndex = index;
+			activeColor = themeCopy.variables?.[variable.name] ?? variable.defaultValue;
+			showColorPicker = true;
+		}
+	};
+
+	const handleColorPickerInput = (event: CustomEvent<any>) => {
+		if (activeVariable) {
+			activeColor = event.detail.hex;
+			if (themeCopy.variables?.[activeVariable.name] !== activeColor) {
+				if (!themeCopy.variables) themeCopy.variables = {};
+
+				isUpdatingFromPicker = true;
+				themeCopy.variables[activeVariable.name] = activeColor;
+				variablesText = objectToCss(themeCopy.variables);
+				dispatch('update', { ...themeCopy });
+
+				// Reset flag after a delay to ensure incoming theme updates from round-trip don't override picker
+				setTimeout(() => {
+					isUpdatingFromPicker = false;
+				}, 100);
+			}
+		}
+	};
+
+	// Only sync from theme if we are NOT currently updating from the picker
+	$: if (themeCopy && showColorPicker && activeVariable && !isUpdatingFromPicker) {
+		const val = themeCopy.variables?.[activeVariable.name] ?? activeVariable.defaultValue;
+		if (val && val !== activeColor) {
+			activeColor = val;
+		}
+	}
+
+	let activeGeneratorField: 'seed' | 'neutral' | null = null;
+	const toggleGeneratorPicker = (field: 'seed' | 'neutral') => {
+		if (activeGeneratorField === field) {
+			activeGeneratorField = null;
+		} else {
+			activeGeneratorField = field;
+		}
+	};
+
+	const handleGeneratorPickerInput = (event: CustomEvent<any>) => {
+		const color = event.detail.hex;
+		if (activeGeneratorField === 'seed') {
+			seedColor = color;
+		} else if (activeGeneratorField === 'neutral') {
+			neutralSeedColor = color;
+		}
 	};
 </script>
 
 <input
 	bind:this={imageImportInput}
 	type="file"
-	accept="image/*"
+	accept="image/*,.heic,.heif,.dng,.cr2,.nef,.arw,.orf,.rw2,.raf,.cr3"
 	class="hidden"
 	on:change={generateThemeFromImage}
 />
@@ -111,7 +263,12 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.cssVariables}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there are actual variables to apply
+					if (variablesText?.trim()) {
+						dispatch('update', { ...themeCopy });
+					}
+				}}
 			/>
 			<Tooltip
 				content="Define custom CSS variables to be used in your theme. These are the core of the theming system."
@@ -124,32 +281,269 @@
 			</Tooltip>
 		</div>
 		{#if themeCopy.toggles.cssVariables}
-			{#key 'css-variables'}
-				<div class="mt-1 rounded-lg overflow-hidden">
-					<CodeBlock
-						id="theme-variables-editor"
-						code={variablesText}
-						lang={'css'}
-						edit={true}
-						on:change={handleVariablesInput}
-					/>
-				</div>
-			{/key}
-			<div class="flex justify-end mt-2 space-x-2">
-				<button
-					class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
-					on:click={generateRandomColors}
-				>
-					{$i18n.t('Random')}
-				</button>
-				<button
-					class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
-					on:click={() => {
-						imageImportInput.click();
-					}}
-				>
-					{$i18n.t('Generate from Image')}
-				</button>
+			<!-- Palette Generator -->
+
+			<!-- Visual Editor -->
+			<div class="mt-2 mb-4">
+				<Collapsible title={$i18n.t('Standard Colors')} open={true}>
+					<div slot="content" class="mt-2">
+						<div class="grid grid-cols-2 gap-2 mb-4">
+							{#each variables as variable, i}
+								<button
+									class="flex items-center justify-between p-2 rounded-lg bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition group border-2 {activeVariable ===
+										variable && showColorPicker
+										? 'border-blue-500'
+										: 'border-transparent hover:border-gray-200 dark:hover:border-gray-700'}"
+									on:click={() => openColorPicker(variable, i)}
+								>
+									<div class="flex flex-col text-left overflow-hidden mr-2">
+										<span
+											class="text-xs font-semibold truncate {activeVariable === variable &&
+											showColorPicker
+												? 'text-blue-600 dark:text-blue-400'
+												: 'text-gray-700 dark:text-gray-200'}"
+											>{variable.name.replace('--color-', '').replace(/-/g, ' ')}</span
+										>
+										<Tooltip content={variable.description} placement="bottom-start">
+											<span class="text-[10px] text-gray-500 line-clamp-2"
+												>{variable.description}</span
+											>
+										</Tooltip>
+									</div>
+									<div
+										class="flex-shrink-0 w-8 h-8 rounded-full border border-gray-200 dark:border-gray-700 shadow-sm"
+										style="background-color: {themeCopy.variables?.[variable.name] ||
+											variable.defaultValue}"
+									></div>
+								</button>
+
+								{#if showColorPicker && activeVariable && activeVariableIndex !== null && ((i % 2 === 1 && Math.floor(i / 2) === Math.floor(activeVariableIndex / 2)) || (i === variables.length - 1 && Math.floor(i / 2) === Math.floor(activeVariableIndex / 2)))}
+									<div
+										class="col-span-2 mb-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
+									>
+										<div class="flex items-center justify-between mb-2">
+											<span class="text-sm font-medium text-gray-900 dark:text-gray-100">
+												Editing: <span class="text-blue-600 dark:text-blue-400"
+													>{activeVariable.name}</span
+												>
+											</span>
+											<button
+												class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline"
+												on:click={() => {
+													if (activeVariable) {
+														themeCopy.variables[activeVariable.name] = activeVariable.defaultValue;
+														variablesText = objectToCss(themeCopy.variables);
+														activeColor = activeVariable.defaultValue;
+														dispatch('update', { ...themeCopy });
+													}
+												}}
+											>
+												Reset to Default
+											</button>
+										</div>
+										<div class="flex justify-center color-picker-wrapper">
+											<ColorPicker
+												hex={activeColor}
+												isDialog={false}
+												on:input={handleColorPickerInput}
+											/>
+										</div>
+									</div>
+								{/if}
+							{/each}
+						</div>
+
+						{#key 'css-variables'}
+							<div class="mb-2 rounded-lg overflow-hidden">
+								<CodeBlock
+									id="theme-variables-editor"
+									code={variablesText}
+									lang={'css'}
+									edit={true}
+									on:change={handleVariablesInput}
+								/>
+							</div>
+						{/key}
+
+						<div class="flex justify-end mt-2 mb-4 space-x-2">
+							<button
+								class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
+								on:click={resetVariables}
+							>
+								{$i18n.t('Reset')}
+							</button>
+							<button
+								class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
+								on:click={generateRandomColors}
+							>
+								{$i18n.t('Random')}
+							</button>
+							<button
+								class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full disabled:opacity-50 whitespace-nowrap"
+								on:click={() => {
+									imageImportInput.click();
+								}}
+							>
+								{$i18n.t('Generate from Image')}
+							</button>
+						</div>
+					</div>
+				</Collapsible>
+			</div>
+
+			<!-- Palette Generator -->
+			<div class="mt-2 mb-4">
+				<Collapsible title={$i18n.t('Advanced Palette Generator')} bind:open={showPaletteGenerator}>
+					<div
+						class="mt-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200 space-y-4"
+						slot="content"
+					>
+						<!-- Inputs -->
+						<div class="space-y-2">
+							<label
+								for="seed-color"
+								class="block text-xs font-medium text-gray-700 dark:text-gray-300"
+							>
+								{$i18n.t('Primary Brand Color')}
+							</label>
+							<div class="flex items-center gap-3">
+								<button
+									class="relative w-10 h-10 rounded-full overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 group cursor-pointer"
+									style="background-color: {seedColor}"
+									aria-label={$i18n.t('Change Primary Brand Color')}
+									on:click={() => toggleGeneratorPicker('seed')}
+								>
+								</button>
+								<div class="flex-1">
+									<input
+										type="text"
+										class="w-full px-3 py-1.5 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:border-blue-500"
+										bind:value={seedColor}
+									/>
+								</div>
+							</div>
+							{#if activeGeneratorField === 'seed'}
+								<div
+									class="mt-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
+								>
+									<div class="flex justify-center color-picker-wrapper">
+										<ColorPicker
+											hex={seedColor}
+											isDialog={false}
+											on:input={handleGeneratorPickerInput}
+										/>
+									</div>
+								</div>
+							{/if}
+						</div>
+
+						<div class="space-y-2">
+							<div class="flex items-center justify-between">
+								<label
+									for="neutral-seed-toggle"
+									class="text-xs font-medium text-gray-700 dark:text-gray-300"
+								>
+									{$i18n.t('Custom Neutral Base')}
+								</label>
+								<Switch bind:state={useNeutralSeed} />
+							</div>
+
+							{#if useNeutralSeed}
+								<div class="flex items-center gap-3 animate-in fade-in duration-200">
+									<button
+										class="relative w-10 h-10 rounded-full overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 group cursor-pointer"
+										style="background-color: {neutralSeedColor}"
+										aria-label={$i18n.t('Change Custom Neutral Base')}
+										on:click={() => toggleGeneratorPicker('neutral')}
+									>
+									</button>
+									<div class="flex-1">
+										<input
+											type="text"
+											class="w-full px-3 py-1.5 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:border-blue-500"
+											bind:value={neutralSeedColor}
+										/>
+									</div>
+								</div>
+								{#if activeGeneratorField === 'neutral'}
+									<div
+										class="mt-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
+									>
+										<div class="flex justify-center color-picker-wrapper">
+											<ColorPicker
+												hex={neutralSeedColor}
+												isDialog={false}
+												on:input={handleGeneratorPickerInput}
+											/>
+										</div>
+									</div>
+								{/if}
+							{:else}
+								<p class="text-[10px] text-gray-500">
+									{$i18n.t('Neutral colors will be derived from the primary color (desaturated).')}
+								</p>
+							{/if}
+						</div>
+
+						<!-- Live Preview -->
+						{#if previewPalette}
+							<div class="space-y-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+								<div class="text-xs font-medium text-gray-500">Preview</div>
+
+								<!-- Primary Scale -->
+								<div class="flex flex-col gap-1">
+									<div class="text-[10px] text-gray-400">Primary Scale</div>
+									<div
+										class="grid grid-cols-12 gap-0.5 rounded-lg overflow-hidden ring-1 ring-gray-200 dark:ring-gray-700"
+									>
+										{#each [50, 100, 200, 300, 400, 500, 600, 700, 800, 850, 900, 950] as step}
+											<Tooltip content={`${previewPalette[`--color-blue-${step}`]} (${step})`}>
+												<div
+													class="h-6 w-full cursor-help transition-transform hover:scale-110 hover:scale-z-10"
+													style="background-color: {previewPalette[`--color-blue-${step}`]}"
+												></div>
+											</Tooltip>
+										{/each}
+									</div>
+								</div>
+
+								<!-- Neutral Scale -->
+								<div class="flex flex-col gap-1">
+									<div class="text-[10px] text-gray-400">Neutral Scale</div>
+									<div
+										class="grid grid-cols-6 gap-0.5 rounded-lg overflow-hidden ring-1 ring-gray-200 dark:ring-gray-700"
+									>
+										{#each [50, 100, 200, 300, 400, 500, 600, 700, 800, 850, 900, 950] as step}
+											{#if previewPalette[`--color-gray-${step}`]}
+												<Tooltip content={`${previewPalette[`--color-gray-${step}`]} (${step})`}>
+													<div
+														class="h-6 w-full cursor-help transition-transform hover:scale-110 hover:z-10"
+														style="background-color: {previewPalette[`--color-gray-${step}`]}"
+													></div>
+												</Tooltip>
+											{/if}
+										{/each}
+									</div>
+								</div>
+							</div>
+						{/if}
+
+						<div class="flex gap-2">
+							<button
+								class="flex-1 py-1.5 px-3.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-black dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition rounded-full"
+								on:click={randomizeGeneratorInputs}
+							>
+								{$i18n.t('Random')}
+							</button>
+							<button
+								class="flex-[3] py-1.5 px-3.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
+								on:click={handleGeneratePalette}
+							>
+								{$i18n.t('Apply Palette')}
+							</button>
+						</div>
+					</div>
+				</Collapsible>
 			</div>
 		{/if}
 	</div>
@@ -157,7 +551,12 @@
 		<div class="flex items-center gap-2">
 			<Switch
 				bind:state={themeCopy.toggles.customCss}
-				on:change={() => dispatch('update', { ...themeCopy })}
+				on:change={() => {
+					// Only dispatch update if there's actual CSS to apply
+					if (cssText?.trim()) {
+						dispatch('update', { ...themeCopy });
+					}
+				}}
 			/>
 			<Tooltip
 				content="Add custom CSS rules to style the UI. This is for more advanced styling that can't be achieved with variables alone."
@@ -182,3 +581,20 @@
 		{/if}
 	</div>
 </div>
+
+<style>
+	:global(.dark .color-picker-wrapper) {
+		--cp-bg-color: transparent;
+		--cp-border-color: #374151; /* bg-gray-700 */
+		--cp-text-color: #f9fafb; /* text-gray-50 */
+		--cp-input-color: #374151; /* bg-gray-700 */
+		--cp-button-hover-color: #4b5563; /* bg-gray-600 */
+	}
+	:global(.color-picker-wrapper) {
+		--cp-bg-color: transparent;
+		--cp-border-color: #d1d5db; /* bg-gray-300 */
+		--cp-text-color: #111827; /* text-gray-900 */
+		--cp-input-color: #e5e7eb; /* bg-gray-200 */
+		--cp-button-hover-color: #d1d5db; /* bg-gray-300 */
+	}
+</style>

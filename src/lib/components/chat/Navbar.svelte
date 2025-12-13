@@ -12,6 +12,7 @@
 		showArchivedChats,
 		showControls,
 		showSidebar,
+		showThemeEditor,
 		temporaryChatEnabled,
 		user
 	} from '$lib/stores';
