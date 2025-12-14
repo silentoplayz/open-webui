@@ -1,6 +1,7 @@
 <script>
 	import { toast } from 'svelte-sonner';
 	import { onMount, getContext } from 'svelte';
+	import { page } from '$app/stores';
 
 	const i18n = getContext('i18n');
 
@@ -9,14 +10,13 @@
 	import Pencil from '$lib/components/icons/Pencil.svelte';
 	import User from '$lib/components/icons/User.svelte';
 	import UserCircleSolid from '$lib/components/icons/UserCircleSolid.svelte';
-	import GroupModal from './EditGroupModal.svelte';
-	import { querystringValue } from '$lib/utils';
+	import EditGroupModal from './EditGroupModal.svelte';
 
-	export let users = [];
 	export let group = {
 		name: 'Admins',
 		user_ids: [1, 2, 3]
 	};
+	export let defaultPermissions = {};
 
 	export let setGroups = () => {};
 
@@ -47,18 +47,18 @@
 	};
 
 	onMount(() => {
-		const groupId = querystringValue('id');
+		const groupId = $page.url.searchParams.get('id');
 		if (groupId && groupId === group.id) {
 			showEdit = true;
 		}
 	});
 </script>
 
-<GroupModal
+<EditGroupModal
 	bind:show={showEdit}
 	edit
-	{users}
 	{group}
+	{defaultPermissions}
 	onSubmit={updateHandler}
 	onDelete={deleteHandler}
 />
@@ -79,7 +79,7 @@
 	</div>
 
 	<div class="flex items-center gap-1.5 w-fit font-medium text-right justify-end">
-		{group.user_ids.length}
+		{group?.member_count}
 
 		<div>
 			<User className="size-3.5" />

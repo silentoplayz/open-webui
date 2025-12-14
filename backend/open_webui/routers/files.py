@@ -22,10 +22,12 @@ from fastapi import (
 )
 
 from fastapi.responses import FileResponse, StreamingResponse
+
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.env import SRC_LOG_LEVELS
 from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
 
+from open_webui.models.channels import Channels
 from open_webui.models.users import Users
 from open_webui.models.files import (
     FileForm,
@@ -34,12 +36,18 @@ from open_webui.models.files import (
     Files,
 )
 from open_webui.models.knowledge import Knowledges
+from open_webui.models.groups import Groups
 
-from open_webui.routers.knowledge import get_knowledge, get_knowledge_list
+
 from open_webui.routers.retrieval import ProcessFileForm, process_file
 from open_webui.routers.audio import transcribe
+
 from open_webui.storage.provider import Storage
+
+
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.access_control import has_access
+from open_webui.utils.misc import strict_match_mime_type
 from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
@@ -53,31 +61,41 @@ router = APIRouter()
 ############################
 
 
+# TODO: Optimize this function to use the knowledge_file table for faster lookups.
 def has_access_to_file(
     file_id: Optional[str], access_type: str, user=Depends(get_verified_user)
 ) -> bool:
     file = Files.get_file_by_id(file_id)
     log.debug(f"Checking if user has {access_type} access to file")
-
     if not file:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
-    has_access = False
-    knowledge_base_id = file.meta.get("collection_name") if file.meta else None
+    knowledge_bases = Knowledges.get_knowledges_by_file_id(file_id)
+    user_group_ids = {group.id for group in Groups.get_groups_by_member_id(user.id)}
 
+    for knowledge_base in knowledge_bases:
+        if knowledge_base.user_id == user.id or has_access(
+            user.id, access_type, knowledge_base.access_control, user_group_ids
+        ):
+            return True
+
+    knowledge_base_id = file.meta.get("collection_name") if file.meta else None
     if knowledge_base_id:
         knowledge_bases = Knowledges.get_knowledge_bases_by_user_id(
             user.id, access_type
         )
         for knowledge_base in knowledge_bases:
             if knowledge_base.id == knowledge_base_id:
-                has_access = True
-                break
+                return True
 
-    return has_access
+    channels = Channels.get_channels_by_file_id_and_user_id(file_id, user.id)
+    if access_type == "read" and channels:
+        return True
+
+    return False
 
 
 ############################
@@ -90,19 +108,11 @@ def process_uploaded_file(request, file, file_path, file_item, file_metadata, us
         if file.content_type:
             stt_supported_content_types = getattr(
                 request.app.state.config, "STT_SUPPORTED_CONTENT_TYPES", []
-            )
+            ) or ["audio/*", "video/webm"]
 
-            if any(
-                fnmatch(file.content_type, content_type)
-                for content_type in (
-                    stt_supported_content_types
-                    if stt_supported_content_types
-                    and any(t.strip() for t in stt_supported_content_types)
-                    else ["audio/*", "video/webm"]
-                )
-            ):
+            if strict_match_mime_type(stt_supported_content_types, file.content_type):
                 file_path = Storage.get_file(file_path)
-                result = transcribe(request, file_path, file_metadata)
+                result = transcribe(request, file_path, file_metadata, user)
 
                 process_file(
                     request,
@@ -115,16 +125,16 @@ def process_uploaded_file(request, file, file_path, file_item, file_metadata, us
                 request.app.state.config.CONTENT_EXTRACTION_ENGINE == "external"
             ):
                 process_file(request, ProcessFileForm(file_id=file_item.id), user=user)
+            else:
+                raise Exception(
+                    f"File type {file.content_type} is not supported for processing"
+                )
         else:
             log.info(
                 f"File type {file.content_type} is not provided, but trying to process anyway"
             )
             process_file(request, ProcessFileForm(file_id=file_item.id), user=user)
 
-        Files.update_file_data_by_id(
-            file_item.id,
-            {"status": "completed"},
-        )
     except Exception as e:
         log.error(f"Error processing file: {file_item.id}")
         Files.update_file_data_by_id(
@@ -143,9 +153,18 @@ def upload_file(
     file: UploadFile = File(...),
     metadata: Optional[dict | str] = Form(None),
     process: bool = Query(True),
+    process_in_background: bool = Query(True),
     user=Depends(get_verified_user),
 ):
-    return upload_file_handler(request, file, metadata, process, user, background_tasks)
+    return upload_file_handler(
+        request,
+        file=file,
+        metadata=metadata,
+        process=process,
+        process_in_background=process_in_background,
+        user=user,
+        background_tasks=background_tasks,
+    )
 
 
 def upload_file_handler(
@@ -153,10 +172,11 @@ def upload_file_handler(
     file: UploadFile = File(...),
     metadata: Optional[dict | str] = Form(None),
     process: bool = Query(True),
+    process_in_background: bool = Query(True),
     user=Depends(get_verified_user),
     background_tasks: Optional[BackgroundTasks] = None,
 ):
-    log.info(f"file.content_type: {file.content_type}")
+    log.info(f"file.content_type: {file.content_type} {process}")
 
     if isinstance(metadata, str):
         try:
@@ -224,8 +244,15 @@ def upload_file_handler(
             ),
         )
 
+        if "channel_id" in file_metadata:
+            channel = Channels.get_channel_by_id_and_user_id(
+                file_metadata["channel_id"], user.id
+            )
+            if channel:
+                Channels.add_file_to_channel_by_id(channel.id, file_item.id, user.id)
+
         if process:
-            if background_tasks:
+            if background_tasks and process_in_background:
                 background_tasks.add_task(
                     process_uploaded_file,
                     request,
@@ -401,25 +428,28 @@ async def get_file_process_status(
             MAX_FILE_PROCESSING_DURATION = 3600 * 2
 
             async def event_stream(file_item):
-                for _ in range(MAX_FILE_PROCESSING_DURATION):
-                    file_item = Files.get_file_by_id(file_item.id)
-                    if file_item:
-                        data = file_item.model_dump().get("data", {})
-                        status = data.get("status")
+                if file_item:
+                    for _ in range(MAX_FILE_PROCESSING_DURATION):
+                        file_item = Files.get_file_by_id(file_item.id)
+                        if file_item:
+                            data = file_item.model_dump().get("data", {})
+                            status = data.get("status")
 
-                        if status:
-                            event = {"status": status}
-                            if status == "failed":
-                                event["error"] = data.get("error")
+                            if status:
+                                event = {"status": status}
+                                if status == "failed":
+                                    event["error"] = data.get("error")
 
-                            yield f"data: {json.dumps(event)}\n\n"
-                            if status in ("completed", "failed"):
+                                yield f"data: {json.dumps(event)}\n\n"
+                                if status in ("completed", "failed"):
+                                    break
+                            else:
+                                # Legacy
                                 break
-                        else:
-                            # Legacy
-                            break
 
-                    await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.5)
+                else:
+                    yield f"data: {json.dumps({'status': 'not_found'})}\n\n"
 
             return StreamingResponse(
                 event_stream(file),

@@ -12,7 +12,7 @@
 	} from '$lib/constants';
 	import { WEBUI_NAME, config, user, models, settings } from '$lib/stores';
 
-	import { chatCompletion, generateOpenAIChatCompletion } from '$lib/apis/openai';
+	import { chatCompletion } from '$lib/apis/openai';
 
 	import { splitStream } from '$lib/utils';
 	import Collapsible from '../common/Collapsible.svelte';
@@ -216,7 +216,7 @@
 				<Collapsible
 					className="w-full flex-1"
 					bind:open={showSystem}
-					buttonClassName="w-full rounded-lg text-sm border border-gray-100 dark:border-gray-850 w-full py-1 px-1.5"
+					buttonClassName="w-full rounded-lg text-sm border border-gray-100/30 dark:border-gray-850/30 w-full py-1 px-1.5"
 					grow={true}
 				>
 					<div class="flex gap-2 justify-between items-center">
@@ -224,7 +224,7 @@
 							{$i18n.t('System Instructions')}
 						</div>
 
-						{#if !showSystem}
+						{#if !showSystem && system.trim()}
 							<div class=" flex-1 text-gray-500 line-clamp-1">
 								{system}
 							</div>
@@ -271,7 +271,9 @@
 			</div>
 
 			<div class="pb-3">
-				<div class="border border-gray-100 dark:border-gray-850 w-full px-3 py-2.5 rounded-xl">
+				<div
+					class="border border-gray-100/30 dark:border-gray-850/30 w-full px-3 py-2.5 rounded-xl"
+				>
 					<div class="py-0.5">
 						<!-- $i18n.t('a user') -->
 						<!-- $i18n.t('an assistant') -->
@@ -296,7 +298,7 @@
 					<div
 						class="flex justify-between flex-col sm:flex-row items-start sm:items-center gap-2 mt-2"
 					>
-						<div class="flex-1 shrink-0">
+						<div class="shrink-0">
 							<button
 								type="button"
 								class="px-3.5 py-1.5 text-sm font-medium bg-gray-50 hover:bg-gray-100 text-gray-900 dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-gray-200 transition rounded-lg shrink-0 {($settings?.highContrastMode ??
@@ -322,7 +324,7 @@
 						<div class="flex items-center justify-between gap-2 w-full sm:w-auto">
 							<div class="flex-1">
 								<select
-									class=" bg-transparent border border-gray-100 dark:border-gray-850 rounded-lg py-1 px-2 -mx-0.5 text-sm outline-hidden w-full"
+									class=" bg-transparent border border-gray-100/30 dark:border-gray-850/30 rounded-lg py-1 px-2 -mx-0.5 text-sm outline-hidden w-full"
 									bind:value={selectedModelId}
 								>
 									{#each $models as model}

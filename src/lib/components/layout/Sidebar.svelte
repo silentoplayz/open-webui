@@ -25,7 +25,8 @@
 		isApp,
 		models,
 		selectedFolder,
-		WEBUI_NAME
+		WEBUI_NAME,
+		sidebarWidth
 	} from '$lib/stores';
 	import { onMount, getContext, tick, onDestroy } from 'svelte';
 
@@ -38,10 +39,10 @@
 		toggleChatPinnedStatusById,
 		getChatById,
 		updateChatFolderIdById,
-		importChat
+		importChats
 	} from '$lib/apis/chats';
 	import { createNewFolder, getFolders, updateFolderParentIdById } from '$lib/apis/folders';
-	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import ArchivedChatsModal from './ArchivedChatsModal.svelte';
 	import UserMenu from './Sidebar/UserMenu.svelte';
@@ -62,15 +63,17 @@
 	import PinnedModelList from './Sidebar/PinnedModelList.svelte';
 	import Note from '../icons/Note.svelte';
 	import { slide } from 'svelte/transition';
+	import HotkeyHint from '../common/HotkeyHint.svelte';
+	import { key } from 'vega';
 
 	const BREAKPOINT = 768;
+
+	let scrollTop = 0;
 
 	let navElement;
 	let shiftKey = false;
 
 	let selectedChatId = null;
-	let showPinnedChat = true;
-
 	let showCreateChannel = false;
 
 	// Pagination variables
@@ -78,15 +81,25 @@
 	let allChatsLoaded = false;
 
 	let showCreateFolderModal = false;
+
 	let folders = {};
+	let folderRegistry = {};
+
 	let newFolderId = null;
 
+	$: if ($selectedFolder) {
+		initFolders();
+	}
+
 	const initFolders = async () => {
+		if ($config?.features?.enable_folders === false) {
+			return;
+		}
+
 		const folderList = await getFolders(localStorage.token).catch((error) => {
-			toast.error(`${error}`);
 			return [];
 		});
-		_folders.set(folderList);
+		_folders.set(folderList.sort((a, b) => b.updated_at - a.updated_at));
 
 		folders = {};
 
@@ -123,7 +136,8 @@
 	};
 
 	const createFolder = async ({ name, data }) => {
-		if (name === '') {
+		name = name?.trim();
+		if (!name) {
 			toast.error($i18n.t('Folder name cannot be empty.'));
 			return;
 		}
@@ -168,19 +182,46 @@
 	};
 
 	const initChannels = async () => {
-		await channels.set(await getChannels(localStorage.token));
+		// default (none), group, dm type
+		const res = await getChannels(localStorage.token).catch((error) => {
+			return null;
+		});
+
+		if (res) {
+			await channels.set(
+				res.sort(
+					(a, b) =>
+						['', null, 'group', 'dm'].indexOf(a.type) - ['', null, 'group', 'dm'].indexOf(b.type)
+				)
+			);
+		}
 	};
 
 	const initChatList = async () => {
 		// Reset pagination variables
-		tags.set(await getAllTags(localStorage.token));
-		pinnedChats.set(await getPinnedChatList(localStorage.token));
-		initFolders();
-
+		console.log('initChatList');
 		currentChatPage.set(1);
 		allChatsLoaded = false;
+		scrollPaginationEnabled.set(false);
 
-		await chats.set(await getChatList(localStorage.token, $currentChatPage));
+		initFolders();
+		await Promise.all([
+			await (async () => {
+				console.log('Init tags');
+				const _tags = await getAllTags(localStorage.token);
+				tags.set(_tags);
+			})(),
+			await (async () => {
+				console.log('Init pinned chats');
+				const _pinnedChats = await getPinnedChatList(localStorage.token);
+				pinnedChats.set(_pinnedChats);
+			})(),
+			await (async () => {
+				console.log('Init chat list');
+				const _chats = await getChatList(localStorage.token, $currentChatPage);
+				await chats.set(_chats);
+			})()
+		]);
 
 		// Enable pagination
 		scrollPaginationEnabled.set(true);
@@ -207,15 +248,16 @@
 		for (const item of items) {
 			console.log(item);
 			if (item.chat) {
-				await importChat(
-					localStorage.token,
-					item.chat,
-					item?.meta ?? {},
-					pinned,
-					folderId,
-					item?.created_at ?? null,
-					item?.updated_at ?? null
-				);
+				await importChats(localStorage.token, [
+					{
+						chat: item.chat,
+						meta: item?.meta ?? {},
+						pinned: pinned,
+						folder_id: folderId,
+						created_at: item?.created_at ?? null,
+						updated_at: item?.updated_at ?? null
+					}
+				]);
 			}
 		}
 
@@ -330,57 +372,94 @@
 		selectedChatId = null;
 	};
 
+	const MIN_WIDTH = 220;
+	const MAX_WIDTH = 480;
+
+	let isResizing = false;
+
+	let startWidth = 0;
+	let startClientX = 0;
+
+	const resizeStartHandler = (e: MouseEvent) => {
+		if ($mobile) return;
+		isResizing = true;
+
+		startClientX = e.clientX;
+		startWidth = $sidebarWidth ?? 260;
+
+		document.body.style.userSelect = 'none';
+	};
+
+	const resizeEndHandler = () => {
+		if (!isResizing) return;
+		isResizing = false;
+
+		document.body.style.userSelect = '';
+		localStorage.setItem('sidebarWidth', String($sidebarWidth));
+	};
+
+	const resizeSidebarHandler = (endClientX) => {
+		const dx = endClientX - startClientX;
+		const newSidebarWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + dx));
+
+		sidebarWidth.set(newSidebarWidth);
+		document.documentElement.style.setProperty('--sidebar-width', `${newSidebarWidth}px`);
+	};
+
+	let unsubscribers = [];
+
 	onMount(async () => {
-		showPinnedChat = localStorage?.showPinnedChat ? localStorage.showPinnedChat === 'true' : true;
-
-		mobile.subscribe((value) => {
-			if ($showSidebar && value) {
-				showSidebar.set(false);
+		try {
+			const width = Number(localStorage.getItem('sidebarWidth'));
+			if (!Number.isNaN(width) && width >= MIN_WIDTH && width <= MAX_WIDTH) {
+				sidebarWidth.set(width);
 			}
+		} catch {}
 
-			if ($showSidebar && !value) {
-				const navElement = document.getElementsByTagName('nav')[0];
-				if (navElement) {
-					navElement.style['-webkit-app-region'] = 'drag';
-				}
-			}
-
-			if (!$showSidebar && !value) {
-				showSidebar.set(true);
-			}
+		document.documentElement.style.setProperty('--sidebar-width', `${$sidebarWidth}px`);
+		sidebarWidth.subscribe((w) => {
+			document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
 		});
 
-		showSidebar.set(!$mobile ? localStorage.sidebar === 'true' : false);
-		showSidebar.subscribe(async (value) => {
-			localStorage.sidebar = value;
+		await showSidebar.set(!$mobile ? localStorage.sidebar === 'true' : false);
 
-			// nav element is not available on the first render
-			const navElement = document.getElementsByTagName('nav')[0];
+		unsubscribers = [
+			mobile.subscribe((value) => {
+				if ($showSidebar && value) {
+					showSidebar.set(false);
+				}
 
-			if (navElement) {
-				if ($mobile) {
-					if (!value) {
+				if ($showSidebar && !value) {
+					const navElement = document.getElementsByTagName('nav')[0];
+					if (navElement) {
 						navElement.style['-webkit-app-region'] = 'drag';
-					} else {
-						navElement.style['-webkit-app-region'] = 'no-drag';
 					}
-				} else {
-					navElement.style['-webkit-app-region'] = 'drag';
 				}
-			}
+			}),
+			showSidebar.subscribe(async (value) => {
+				localStorage.sidebar = value;
 
-			if (!value) {
-				await initChannels();
-				await initChatList();
-			}
-		});
+				// nav element is not available on the first render
+				const navElement = document.getElementsByTagName('nav')[0];
 
-		chats.subscribe((value) => {
-			initFolders();
-		});
+				if (navElement) {
+					if ($mobile) {
+						if (!value) {
+							navElement.style['-webkit-app-region'] = 'drag';
+						} else {
+							navElement.style['-webkit-app-region'] = 'no-drag';
+						}
+					} else {
+						navElement.style['-webkit-app-region'] = 'drag';
+					}
+				}
 
-		await initChannels();
-		await initChatList();
+				if (value) {
+					await initChannels();
+					await initChatList();
+				}
+			})
+		];
 
 		window.addEventListener('keydown', onKeyDown);
 		window.addEventListener('keyup', onKeyUp);
@@ -399,6 +478,14 @@
 	});
 
 	onDestroy(() => {
+		if (unsubscribers && unsubscribers.length > 0) {
+			unsubscribers.forEach((unsubscriber) => {
+				if (unsubscriber) {
+					unsubscriber();
+				}
+			});
+		}
+
 		window.removeEventListener('keydown', onKeyDown);
 		window.removeEventListener('keyup', onKeyUp);
 
@@ -442,6 +529,8 @@
 
 		await tick();
 	};
+
+	const isWindows = /Windows/i.test(navigator.userAgent);
 </script>
 
 <ArchivedChatsModal
@@ -453,10 +542,28 @@
 
 <ChannelModal
 	bind:show={showCreateChannel}
-	onSubmit={async ({ name, access_control }) => {
+	onSubmit={async ({ type, name, is_private, access_control, group_ids, user_ids }) => {
+		name = name?.trim();
+
+		if (type === 'dm') {
+			if (!user_ids || user_ids.length === 0) {
+				toast.error($i18n.t('Please select at least one user for Direct Message channel.'));
+				return;
+			}
+		} else {
+			if (!name) {
+				toast.error($i18n.t('Channel name cannot be empty.'));
+				return;
+			}
+		}
+
 		const res = await createNewChannel(localStorage.token, {
+			type: type,
 			name: name,
-			access_control: access_control
+			is_private: is_private,
+			access_control: access_control,
+			group_ids: group_ids,
+			user_ids: user_ids
 		}).catch((error) => {
 			toast.error(`${error}`);
 			return null;
@@ -466,6 +573,8 @@
 			$socket.emit('join-channels', { auth: { token: $user?.token } });
 			await initChannels();
 			showCreateChannel = false;
+
+			goto(`/channels/${res.id}`);
 		}
 	}}
 />
@@ -509,13 +618,23 @@
 	}}
 />
 
+<svelte:window
+	on:mousemove={(e) => {
+		if (!isResizing) return;
+		resizeSidebarHandler(e.clientX);
+	}}
+	on:mouseup={() => {
+		resizeEndHandler();
+	}}
+/>
+
 {#if !$mobile && !$showSidebar}
 	<div
-		class=" py-2 px-1.5 flex flex-col justify-between text-black dark:text-white h-full border-e border-gray-50 dark:border-gray-850 z-10"
+		class=" pt-[7px] pb-2 px-2 flex flex-col justify-between text-black dark:text-white hover:bg-gray-50/30 dark:hover:bg-gray-950/30 h-full z-10 transition-all border-e-[0.5px] border-gray-50 dark:border-gray-850/30"
 		id="sidebar"
 	>
 		<button
-			class="flex flex-col flex-1 cursor-[e-resize]"
+			class="flex flex-col flex-1 {isWindows ? 'cursor-pointer' : 'cursor-[e-resize]'}"
 			on:click={async () => {
 				showSidebar.set(!$showSidebar);
 			}}
@@ -526,11 +645,13 @@
 					placement="right"
 				>
 					<button
-						class=" flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition group cursor-[e-resize]"
+						class="flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group {isWindows
+							? 'cursor-pointer'
+							: 'cursor-[e-resize]'}"
+						aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 					>
 						<div class=" self-center flex items-center justify-center size-9">
 							<img
-								crossorigin="anonymous"
 								src="{WEBUI_BASE_URL}/static/favicon.png"
 								class="sidebar-new-chat-icon size-6 rounded-full group-hover:hidden"
 								alt=""
@@ -542,11 +663,11 @@
 				</Tooltip>
 			</div>
 
-			<div>
+			<div class="-mt-[0.5px]">
 				<div class="">
 					<Tooltip content={$i18n.t('New Chat')} placement="right">
 						<a
-							class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+							class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
 							href="/"
 							draggable="false"
 							on:click={async (e) => {
@@ -556,6 +677,7 @@
 								goto('/');
 								newChatHandler();
 							}}
+							aria-label={$i18n.t('New Chat')}
 						>
 							<div class=" self-center flex items-center justify-center size-9">
 								<PencilSquare className="size-4.5" />
@@ -564,10 +686,10 @@
 					</Tooltip>
 				</div>
 
-				<div class="">
+				<div>
 					<Tooltip content={$i18n.t('Search')} placement="right">
 						<button
-							class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+							class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
 							on:click={(e) => {
 								e.stopImmediatePropagation();
 								e.preventDefault();
@@ -575,6 +697,7 @@
 								showSearch.set(true);
 							}}
 							draggable="false"
+							aria-label={$i18n.t('Search')}
 						>
 							<div class=" self-center flex items-center justify-center size-9">
 								<Search className="size-4.5" />
@@ -587,7 +710,7 @@
 					<div class="">
 						<Tooltip content={$i18n.t('Notes')} placement="right">
 							<a
-								class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+								class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
 								href="/notes"
 								on:click={async (e) => {
 									e.stopImmediatePropagation();
@@ -597,6 +720,7 @@
 									itemClickHandler();
 								}}
 								draggable="false"
+								aria-label={$i18n.t('Notes')}
 							>
 								<div class=" self-center flex items-center justify-center size-9">
 									<Note className="size-4.5" />
@@ -610,7 +734,7 @@
 					<div class="">
 						<Tooltip content={$i18n.t('Workspace')} placement="right">
 							<a
-								class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+								class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
 								href="/workspace"
 								on:click={async (e) => {
 									e.stopImmediatePropagation();
@@ -619,6 +743,7 @@
 									goto('/workspace');
 									itemClickHandler();
 								}}
+								aria-label={$i18n.t('Workspace')}
 								draggable="false"
 							>
 								<div class=" self-center flex items-center justify-center size-9">
@@ -646,10 +771,12 @@
 
 		<div>
 			<div>
-				<div class=" py-0.5">
+				<div class=" py-2 flex justify-center items-center">
 					{#if $user !== undefined && $user !== null}
 						<UserMenu
 							role={$user?.role}
+							profile={true}
+							showActiveUsers={false}
 							on:show={(e) => {
 								if (e.detail === 'archived-chat') {
 									showArchivedChats.set(true);
@@ -657,15 +784,28 @@
 							}}
 						>
 							<div
-								class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+								class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
 							>
-								<div class=" self-center flex items-center justify-center size-9">
+								<div class="self-center relative">
 									<img
-										src={$user?.profile_image_url}
-										class=" size-6 object-cover rounded-full"
+										src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+										class=" size-7 object-cover rounded-full"
 										alt={$i18n.t('Open User Profile Menu')}
 										aria-label={$i18n.t('Open User Profile Menu')}
 									/>
+
+									<div class="absolute -bottom-0.5 -right-0.5">
+										<span class="relative flex size-2.5">
+											<span
+												class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"
+											></span>
+											<span
+												class="relative inline-flex size-2.5 rounded-full {true
+													? 'bg-green-500'
+													: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
+											></span>
+										</span>
+									</div>
 								</div>
 							</div>
 						</UserMenu>
@@ -676,29 +816,32 @@
 	</div>
 {/if}
 
+<!-- {$i18n.t('New Folder')} -->
+<!-- {$i18n.t('Pinned')} -->
+
 {#if $showSidebar}
 	<div
 		bind:this={navElement}
 		id="sidebar"
 		class="h-screen max-h-[100dvh] min-h-screen select-none {$showSidebar
-			? 'bg-gray-50 dark:bg-gray-950 z-50'
+			? `${$mobile ? 'bg-gray-50 dark:bg-gray-950' : 'bg-gray-50/70 dark:bg-gray-950/70'} z-50`
 			: ' bg-transparent z-0 '} {$isApp
 			? `ml-[4.5rem] md:ml-0 `
 			: ' transition-all duration-300 '} shrink-0 text-gray-900 dark:text-gray-200 text-sm fixed top-0 left-0 overflow-x-hidden
         "
-		transition:slide={{ duration: 200, axis: 'x' }}
+		transition:slide={{ duration: 250, axis: 'x' }}
 		data-state={$showSidebar}
 	>
 		<div
-			class=" my-auto flex flex-col justify-between h-screen max-h-[100dvh] w-[260px] overflow-x-hidden scrollbar-hidden z-50 {$showSidebar
+			class=" my-auto flex flex-col justify-between h-screen max-h-[100dvh] w-[var(--sidebar-width)] overflow-x-hidden scrollbar-hidden z-50 {$showSidebar
 				? ''
 				: 'invisible'}"
 		>
 			<div
-				class="sidebar px-1.5 pt-2 pb-1.5 flex justify-between space-x-1 text-gray-600 dark:text-gray-400 sticky top-0 z-10 bg-gray-50 dark:bg-gray-950"
+				class="sidebar px-[0.5625rem] pt-2 pb-1.5 flex justify-between space-x-1 text-gray-600 dark:text-gray-400 sticky top-0 z-10 -mb-3"
 			>
 				<a
-					class="flex items-center rounded-lg p-1.5 h-full justify-center hover:bg-gray-100 dark:hover:bg-gray-850 transition no-drag-region"
+					class="flex items-center rounded-xl size-8.5 h-full justify-center hover:bg-gray-100/50 dark:hover:bg-gray-850/50 transition no-drag-region"
 					href="/"
 					draggable="false"
 					on:click={newChatHandler}
@@ -712,7 +855,10 @@
 				</a>
 
 				<a href="/" class="flex flex-1 px-1.5" on:click={newChatHandler}>
-					<div class=" self-center font-medium text-gray-850 dark:text-white font-primary">
+					<div
+						id="sidebar-webui-name"
+						class=" self-center font-medium text-gray-850 dark:text-white font-primary"
+					>
 						{$WEBUI_NAME}
 					</div>
 				</a>
@@ -721,149 +867,242 @@
 					placement="bottom"
 				>
 					<button
-						class=" flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition cursor-[w-resize]"
+						class="flex rounded-xl size-8.5 justify-center items-center hover:bg-gray-100/50 dark:hover:bg-gray-850/50 transition {isWindows
+							? 'cursor-pointer'
+							: 'cursor-[w-resize]'}"
 						on:click={() => {
 							showSidebar.set(!$showSidebar);
 						}}
+						aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 					>
 						<div class=" self-center p-1.5">
 							<Sidebar />
 						</div>
 					</button>
 				</Tooltip>
+
+				<div
+					class="{scrollTop > 0
+						? 'visible'
+						: 'invisible'} sidebar-bg-gradient-to-b bg-linear-to-b from-gray-50 dark:from-gray-950 to-transparent from-50% pointer-events-none absolute inset-0 -z-10 -mb-6"
+				></div>
 			</div>
 
-			<div class="pb-1.5">
-				<div class="px-[7px] flex justify-center text-gray-800 dark:text-gray-200">
-					<a
-						id="sidebar-new-chat-button"
-						class="grow flex items-center space-x-3 rounded-lg px-2 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition outline-none"
-						href="/"
-						draggable="false"
-						on:click={newChatHandler}
-					>
-						<div class="self-center">
-							<PencilSquare className=" size-4.5" strokeWidth="2" />
-						</div>
-
-						<div class="flex self-center translate-y-[0.5px]">
-							<div class=" self-center text-sm font-primary">{$i18n.t('New Chat')}</div>
-						</div>
-					</a>
-				</div>
-
-				<div class="px-[7px] flex justify-center text-gray-800 dark:text-gray-200">
-					<button
-						class="grow flex items-center space-x-3 rounded-lg px-2 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition outline-none"
-						on:click={() => {
-							showSearch.set(true);
-						}}
-						draggable="false"
-					>
-						<div class="self-center">
-							<Search strokeWidth="2" className="size-4.5" />
-						</div>
-
-						<div class="flex self-center translate-y-[0.5px]">
-							<div class=" self-center text-sm font-primary">{$i18n.t('Search')}</div>
-						</div>
-					</button>
-				</div>
-
-				{#if ($config?.features?.enable_notes ?? false) && ($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true))}
-					<div class="px-[7px] flex justify-center text-gray-800 dark:text-gray-200">
+			<div
+				class="relative flex flex-col flex-1 overflow-y-auto scrollbar-hidden pt-3 pb-3"
+				on:scroll={(e) => {
+					if (e.target.scrollTop === 0) {
+						scrollTop = 0;
+					} else {
+						scrollTop = e.target.scrollTop;
+					}
+				}}
+			>
+				<div class="pb-1.5">
+					<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
 						<a
-							class="grow flex items-center space-x-3 rounded-lg px-2 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition"
-							href="/notes"
-							on:click={itemClickHandler}
+							id="sidebar-new-chat-button"
+							class="group grow flex items-center space-x-3 rounded-2xl px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition outline-none"
+							href="/"
 							draggable="false"
+							on:click={newChatHandler}
+							aria-label={$i18n.t('New Chat')}
 						>
 							<div class="self-center">
-								<Note className="size-4.5" strokeWidth="2" />
+								<PencilSquare className=" size-4.5" strokeWidth="2" />
 							</div>
 
-							<div class="flex self-center translate-y-[0.5px]">
-								<div class=" self-center text-sm font-primary">{$i18n.t('Notes')}</div>
+							<div class="flex flex-1 self-center translate-y-[0.5px]">
+								<div class=" self-center text-sm font-primary">{$i18n.t('New Chat')}</div>
 							</div>
+
+							<HotkeyHint name="newChat" className=" group-hover:visible invisible" />
 						</a>
 					</div>
-				{/if}
 
-				{#if $user?.role === 'admin' || $user?.permissions?.workspace?.models || $user?.permissions?.workspace?.knowledge || $user?.permissions?.workspace?.prompts || $user?.permissions?.workspace?.tools}
-					<div class="px-[7px] flex justify-center text-gray-800 dark:text-gray-200">
-						<a
-							class="grow flex items-center space-x-3 rounded-lg px-2 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition"
-							href="/workspace"
-							on:click={itemClickHandler}
+					<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
+						<button
+							id="sidebar-search-button"
+							class="group grow flex items-center space-x-3 rounded-2xl px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition outline-none"
+							on:click={() => {
+								showSearch.set(true);
+							}}
 							draggable="false"
+							aria-label={$i18n.t('Search')}
 						>
 							<div class="self-center">
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke-width="2"
-									stroke="currentColor"
-									class="size-4.5"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v2.25A2.25 2.25 0 0 0 6 10.5Zm0 9.75h2.25A2.25 2.25 0 0 0 10.5 18v-2.25a2.25 2.25 0 0 0-2.25-2.25H6a2.25 2.25 0 0 0-2.25 2.25V18A2.25 2.25 0 0 0 6 20.25Zm9.75-9.75H18a2.25 2.25 0 0 0 2.25-2.25V6A2.25 2.25 0 0 0 18 3.75h-2.25A2.25 2.25 0 0 0 13.5 6v2.25a2.25 2.25 0 0 0 2.25 2.25Z"
-									/>
-								</svg>
+								<Search strokeWidth="2" className="size-4.5" />
 							</div>
 
-							<div class="flex self-center translate-y-[0.5px]">
-								<div class=" self-center text-sm font-primary">{$i18n.t('Workspace')}</div>
+							<div class="flex flex-1 self-center translate-y-[0.5px]">
+								<div class=" self-center text-sm font-primary">{$i18n.t('Search')}</div>
 							</div>
-						</a>
+							<HotkeyHint name="search" className=" group-hover:visible invisible" />
+						</button>
 					</div>
-				{/if}
-			</div>
 
-			<div class="relative flex flex-col flex-1">
-				{#if ($models ?? []).length > 0 && ($settings?.pinnedModels ?? []).length > 0}
-					<PinnedModelList bind:selectedChatId {shiftKey} />
-				{/if}
+					{#if ($config?.features?.enable_notes ?? false) && ($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true))}
+						<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
+							<a
+								id="sidebar-notes-button"
+								class="grow flex items-center space-x-3 rounded-2xl px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition"
+								href="/notes"
+								on:click={itemClickHandler}
+								draggable="false"
+								aria-label={$i18n.t('Notes')}
+							>
+								<div class="self-center">
+									<Note className="size-4.5" strokeWidth="2" />
+								</div>
 
-				{#if $config?.features?.enable_channels && ($user?.role === 'admin' || $channels.length > 0)}
+								<div class="flex self-center translate-y-[0.5px]">
+									<div class=" self-center text-sm font-primary">{$i18n.t('Notes')}</div>
+								</div>
+							</a>
+						</div>
+					{/if}
+
+					{#if $user?.role === 'admin' || $user?.permissions?.workspace?.models || $user?.permissions?.workspace?.knowledge || $user?.permissions?.workspace?.prompts || $user?.permissions?.workspace?.tools}
+						<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
+							<a
+								id="sidebar-workspace-button"
+								class="grow flex items-center space-x-3 rounded-2xl px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition"
+								href="/workspace"
+								on:click={itemClickHandler}
+								draggable="false"
+								aria-label={$i18n.t('Workspace')}
+							>
+								<div class="self-center">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke-width="2"
+										stroke="currentColor"
+										class="size-4.5"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v2.25A2.25 2.25 0 0 0 6 10.5Zm0 9.75h2.25A2.25 2.25 0 0 0 10.5 18v-2.25a2.25 2.25 0 0 0-2.25-2.25H6a2.25 2.25 0 0 0-2.25 2.25V18A2.25 2.25 0 0 0 6 20.25Zm9.75-9.75H18a2.25 2.25 0 0 0 2.25-2.25V6A2.25 2.25 0 0 0 18 3.75h-2.25A2.25 2.25 0 0 0 13.5 6v2.25a2.25 2.25 0 0 0 2.25 2.25Z"
+										/>
+									</svg>
+								</div>
+
+								<div class="flex self-center translate-y-[0.5px]">
+									<div class=" self-center text-sm font-primary">{$i18n.t('Workspace')}</div>
+								</div>
+							</a>
+						</div>
+					{/if}
+				</div>
+
+				{#if ($models ?? []).length > 0 && (($settings?.pinnedModels ?? []).length > 0 || $config?.default_pinned_models)}
 					<Folder
+						id="sidebar-models"
+						className="px-2 mt-0.5"
+						name={$i18n.t('Models')}
+						chevron={false}
+						dragAndDrop={false}
+					>
+						<PinnedModelList bind:selectedChatId {shiftKey} />
+					</Folder>
+				{/if}
+
+				{#if $config?.features?.enable_channels && ($user?.role === 'admin' || ($user?.permissions?.features?.channels ?? true))}
+					<Folder
+						id="sidebar-channels"
 						className="px-2 mt-0.5"
 						name={$i18n.t('Channels')}
+						chevron={false}
 						dragAndDrop={false}
-						onAdd={async () => {
-							if ($user?.role === 'admin') {
-								await tick();
+						onAdd={$user?.role === 'admin' || ($user?.permissions?.features?.channels ?? true)
+							? async () => {
+									await tick();
 
-								setTimeout(() => {
-									showCreateChannel = true;
-								}, 0);
-							}
-						}}
+									setTimeout(() => {
+										showCreateChannel = true;
+									}, 0);
+								}
+							: null}
 						onAddLabel={$i18n.t('Create Channel')}
 					>
-						{#each $channels as channel}
+						{#each $channels as channel, channelIdx (`${channel?.id}`)}
 							<ChannelItem
 								{channel}
 								onUpdate={async () => {
 									await initChannels();
 								}}
 							/>
+
+							{#if channelIdx < $channels.length - 1 && channel.type !== $channels[channelIdx + 1]?.type}<hr
+									class=" border-gray-100/40 dark:border-gray-800/10 my-1.5 w-full"
+								/>
+							{/if}
 						{/each}
 					</Folder>
 				{/if}
 
+				{#if $config?.features?.enable_folders && ($user?.role === 'admin' || ($user?.permissions?.features?.folders ?? true))}
+					<Folder
+						id="sidebar-folders"
+						className="px-2 mt-0.5"
+						name={$i18n.t('Folders')}
+						chevron={false}
+						onAdd={() => {
+							showCreateFolderModal = true;
+						}}
+						onAddLabel={$i18n.t('New Folder')}
+						on:drop={async (e) => {
+							const { type, id, item } = e.detail;
+
+							if (type === 'folder') {
+								if (folders[id].parent_id === null) {
+									return;
+								}
+
+								const res = await updateFolderParentIdById(localStorage.token, id, null).catch(
+									(error) => {
+										toast.error(`${error}`);
+										return null;
+									}
+								);
+
+								if (res) {
+									await initFolders();
+								}
+							}
+						}}
+					>
+						<Folders
+							bind:folderRegistry
+							{folders}
+							{shiftKey}
+							onDelete={(folderId) => {
+								selectedFolder.set(null);
+								initChatList();
+							}}
+							on:update={() => {
+								initChatList();
+							}}
+							on:import={(e) => {
+								const { folderId, items } = e.detail;
+								importChatHandler(items, false, folderId);
+							}}
+							on:change={async () => {
+								initChatList();
+							}}
+						/>
+					</Folder>
+				{/if}
+
 				<Folder
+					id="sidebar-chats"
 					className="px-2 mt-0.5"
 					name={$i18n.t('Chats')}
-					onAdd={() => {
-						showCreateFolderModal = true;
-					}}
-					onAddLabel={$i18n.t('New Folder')}
+					chevron={false}
 					on:change={async (e) => {
 						selectedFolder.set(null);
-						await goto('/');
 					}}
 					on:import={(e) => {
 						importChatHandler(e.detail);
@@ -876,15 +1115,16 @@
 								return null;
 							});
 							if (!chat && item) {
-								chat = await importChat(
-									localStorage.token,
-									item.chat,
-									item?.meta ?? {},
-									false,
-									null,
-									item?.created_at ?? null,
-									item?.updated_at ?? null
-								);
+								chat = await importChats(localStorage.token, [
+									{
+										chat: item.chat,
+										meta: item?.meta ?? {},
+										pinned: false,
+										folder_id: null,
+										created_at: item?.created_at ?? null,
+										updated_at: item?.updated_at ?? null
+									}
+								]);
 							}
 
 							if (chat) {
@@ -896,6 +1136,8 @@
 											return null;
 										}
 									);
+
+									folderRegistry[chat.folder_id]?.setFolderItems();
 								}
 
 								if (chat.pinned) {
@@ -923,108 +1165,86 @@
 					}}
 				>
 					{#if $pinnedChats.length > 0}
-						<div class="flex flex-col space-y-1 rounded-xl">
-							<Folder
-								className=""
-								bind:open={showPinnedChat}
-								on:change={(e) => {
-									localStorage.setItem('showPinnedChat', e.detail);
-									console.log(e.detail);
-								}}
-								on:import={(e) => {
-									importChatHandler(e.detail, true);
-								}}
-								on:drop={async (e) => {
-									const { type, id, item } = e.detail;
+						<div class="mb-1">
+							<div class="flex flex-col space-y-1 rounded-xl">
+								<Folder
+									id="sidebar-pinned-chats"
+									buttonClassName=" text-gray-500"
+									on:import={(e) => {
+										importChatHandler(e.detail, true);
+									}}
+									on:drop={async (e) => {
+										const { type, id, item } = e.detail;
 
-									if (type === 'chat') {
-										let chat = await getChatById(localStorage.token, id).catch((error) => {
-											return null;
-										});
-										if (!chat && item) {
-											chat = await importChat(
-												localStorage.token,
-												item.chat,
-												item?.meta ?? {},
-												false,
-												null,
-												item?.created_at ?? null,
-												item?.updated_at ?? null
-											);
-										}
-
-										if (chat) {
-											console.log(chat);
-											if (chat.folder_id) {
-												const res = await updateChatFolderIdById(
-													localStorage.token,
-													chat.id,
-													null
-												).catch((error) => {
-													toast.error(`${error}`);
-													return null;
-												});
+										if (type === 'chat') {
+											let chat = await getChatById(localStorage.token, id).catch((error) => {
+												return null;
+											});
+											if (!chat && item) {
+												chat = await importChats(localStorage.token, [
+													{
+														chat: item.chat,
+														meta: item?.meta ?? {},
+														pinned: false,
+														folder_id: null,
+														created_at: item?.created_at ?? null,
+														updated_at: item?.updated_at ?? null
+													}
+												]);
 											}
 
-											if (!chat.pinned) {
-												const res = await toggleChatPinnedStatusById(localStorage.token, chat.id);
-											}
+											if (chat) {
+												console.log(chat);
+												if (chat.folder_id) {
+													const res = await updateChatFolderIdById(
+														localStorage.token,
+														chat.id,
+														null
+													).catch((error) => {
+														toast.error(`${error}`);
+														return null;
+													});
+												}
 
-											initChatList();
-										}
-									}
-								}}
-								name={$i18n.t('Pinned')}
-							>
-								<div
-									class="ml-3 pl-1 mt-[1px] flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-100 dark:border-gray-900"
-								>
-									{#each $pinnedChats as chat, idx (`pinned-chat-${chat?.id ?? idx}`)}
-										<ChatItem
-											className=""
-											id={chat.id}
-											title={chat.title}
-											{shiftKey}
-											selected={selectedChatId === chat.id}
-											on:select={() => {
-												selectedChatId = chat.id;
-											}}
-											on:unselect={() => {
-												selectedChatId = null;
-											}}
-											on:change={async () => {
+												if (!chat.pinned) {
+													const res = await toggleChatPinnedStatusById(localStorage.token, chat.id);
+												}
+
 												initChatList();
-											}}
-											on:tag={(e) => {
-												const { type, name } = e.detail;
-												tagEventHandler(type, name, chat.id);
-											}}
-										/>
-									{/each}
-								</div>
-							</Folder>
+											}
+										}
+									}}
+									name={$i18n.t('Pinned')}
+								>
+									<div
+										class="ml-3 pl-1 mt-[1px] flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-100 dark:border-gray-900 text-gray-900 dark:text-gray-200"
+									>
+										{#each $pinnedChats as chat, idx (`pinned-chat-${chat?.id ?? idx}`)}
+											<ChatItem
+												className=""
+												id={chat.id}
+												title={chat.title}
+												{shiftKey}
+												selected={selectedChatId === chat.id}
+												on:select={() => {
+													selectedChatId = chat.id;
+												}}
+												on:unselect={() => {
+													selectedChatId = null;
+												}}
+												on:change={async () => {
+													initChatList();
+												}}
+												on:tag={(e) => {
+													const { type, name } = e.detail;
+													tagEventHandler(type, name, chat.id);
+												}}
+											/>
+										{/each}
+									</div>
+								</Folder>
+							</div>
 						</div>
-					{/if}
-
-					{#if folders}
-						<Folders
-							{folders}
-							{shiftKey}
-							onDelete={(folderId) => {
-								selectedFolder.set(null);
-								initChatList();
-							}}
-							on:update={() => {
-								initChatList();
-							}}
-							on:import={(e) => {
-								const { folderId, items } = e.detail;
-								importChatHandler(items, false, folderId);
-							}}
-							on:change={async () => {
-								initChatList();
-							}}
-						/>
 					{/if}
 
 					<div class=" flex-1 flex flex-col overflow-y-auto scrollbar-hidden">
@@ -1111,11 +1331,16 @@
 				</Folder>
 			</div>
 
-			<div class="px-1.5 pt-1.5 pb-2 sticky bottom-0 z-10 bg-gray-50 dark:bg-gray-950 sidebar">
+			<div class="px-1.5 pt-1.5 pb-2 sticky bottom-0 z-10 -mt-3 sidebar">
+				<div
+					class=" sidebar-bg-gradient-to-t bg-linear-to-t from-gray-50 dark:from-gray-950 to-transparent from-50% pointer-events-none absolute inset-0 -z-10 -mt-6"
+				></div>
 				<div class="flex flex-col font-primary">
 					{#if $user !== undefined && $user !== null}
 						<UserMenu
 							role={$user?.role}
+							profile={true}
+							showActiveUsers={false}
 							on:show={(e) => {
 								if (e.detail === 'archived-chat') {
 									showArchivedChats.set(true);
@@ -1123,15 +1348,28 @@
 							}}
 						>
 							<div
-								class=" flex items-center rounded-xl py-2 px-1.5 w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition"
+								class=" flex items-center rounded-2xl py-2 px-1.5 w-full hover:bg-gray-100/50 dark:hover:bg-gray-900/50 transition"
 							>
-								<div class=" self-center mr-3">
+								<div class=" self-center mr-3 relative">
 									<img
-										src={$user?.profile_image_url}
-										class=" size-6 object-cover rounded-full"
+										src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+										class=" size-7 object-cover rounded-full"
 										alt={$i18n.t('Open User Profile Menu')}
 										aria-label={$i18n.t('Open User Profile Menu')}
 									/>
+
+									<div class="absolute -bottom-0.5 -right-0.5">
+										<span class="relative flex size-2.5">
+											<span
+												class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"
+											></span>
+											<span
+												class="relative inline-flex size-2.5 rounded-full {true
+													? 'bg-green-500'
+													: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
+											></span>
+										</span>
+									</div>
 								</div>
 								<div class=" self-center font-medium">{$user?.name}</div>
 							</div>
@@ -1141,15 +1379,17 @@
 			</div>
 		</div>
 	</div>
-{/if}
 
-<style>
-	.scrollbar-hidden:active::-webkit-scrollbar-thumb,
-	.scrollbar-hidden:focus::-webkit-scrollbar-thumb,
-	.scrollbar-hidden:hover::-webkit-scrollbar-thumb {
-		visibility: visible;
-	}
-	.scrollbar-hidden::-webkit-scrollbar-thumb {
-		visibility: hidden;
-	}
-</style>
+	{#if !$mobile}
+		<div
+			class="relative flex items-center justify-center group border-l border-gray-50 dark:border-gray-850/30 hover:border-gray-200 dark:hover:border-gray-800 transition z-20"
+			id="sidebar-resizer"
+			on:mousedown={resizeStartHandler}
+			role="separator"
+		>
+			<div
+				class=" absolute -left-1.5 -right-1.5 -top-0 -bottom-0 z-20 cursor-col-resize bg-transparent"
+			/>
+		</div>
+	{/if}
+{/if}

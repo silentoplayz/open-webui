@@ -10,6 +10,7 @@
 		settings,
 		showArtifacts,
 		showControls,
+		showEmbeds,
 		showOverview
 	} from '$lib/stores';
 	import FloatingButtons from '../ContentRenderer/FloatingButtons.svelte';
@@ -30,6 +31,8 @@
 	export let save = false;
 	export let preview = false;
 	export let floatingButtons = true;
+
+	export let editCodeBlock = true;
 	export let topPadding = false;
 
 	export let onSave = (e) => {};
@@ -138,6 +141,7 @@
 		{save}
 		{preview}
 		{done}
+		{editCodeBlock}
 		{topPadding}
 		sourceIds={(sources ?? []).reduce((acc, source) => {
 			let ids = [];
@@ -172,7 +176,7 @@
 		{onSourceClick}
 		{onTaskClick}
 		{onSave}
-		onUpdate={(token) => {
+		onUpdate={async (token) => {
 			const { lang, text: code } = token;
 
 			if (
@@ -181,6 +185,7 @@
 				!$mobile &&
 				$chatId
 			) {
+				await tick();
 				showArtifacts.set(true);
 				showControls.set(true);
 			}
@@ -191,6 +196,7 @@
 			await showControls.set(true);
 			await showArtifacts.set(true);
 			await showOverview.set(false);
+			await showEmbeds.set(false);
 		}}
 	/>
 </div>
@@ -206,7 +212,7 @@
 			: (selectedModels ?? []).length > 0
 				? selectedModels.at(0)
 				: model?.id}
-		messages={createMessagesList(history, id)}
+		messages={createMessagesList(history, messageId)}
 		onAdd={({ modelId, parentId, messages }) => {
 			console.log(modelId, parentId, messages);
 			onAddMessages({ modelId, parentId, messages });

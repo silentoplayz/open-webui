@@ -3,10 +3,13 @@ import logging
 from typing import Optional
 
 
+from open_webui.utils.misc import get_message_list
 from open_webui.socket.main import get_event_emitter
 from open_webui.models.chats import (
     ChatForm,
     ChatImportForm,
+    ChatUsageStatsListResponse,
+    ChatsImportForm,
     ChatResponse,
     Chats,
     ChatTitleIdResponse,
@@ -37,7 +40,10 @@ router = APIRouter()
 @router.get("/", response_model=list[ChatTitleIdResponse])
 @router.get("/list", response_model=list[ChatTitleIdResponse])
 def get_session_user_chat_list(
-    user=Depends(get_verified_user), page: Optional[int] = None
+    user=Depends(get_verified_user),
+    page: Optional[int] = None,
+    include_pinned: Optional[bool] = False,
+    include_folders: Optional[bool] = False,
 ):
     try:
         if page is not None:
@@ -45,10 +51,142 @@ def get_session_user_chat_list(
             skip = (page - 1) * limit
 
             return Chats.get_chat_title_id_list_by_user_id(
-                user.id, skip=skip, limit=limit
+                user.id,
+                include_folders=include_folders,
+                include_pinned=include_pinned,
+                skip=skip,
+                limit=limit,
             )
         else:
-            return Chats.get_chat_title_id_list_by_user_id(user.id)
+            return Chats.get_chat_title_id_list_by_user_id(
+                user.id, include_folders=include_folders, include_pinned=include_pinned
+            )
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
+        )
+
+
+############################
+# GetChatUsageStats
+# EXPERIMENTAL: may be removed in future releases
+############################
+
+
+@router.get("/stats/usage", response_model=ChatUsageStatsListResponse)
+def get_session_user_chat_usage_stats(
+    items_per_page: Optional[int] = 50,
+    page: Optional[int] = 1,
+    user=Depends(get_verified_user),
+):
+    try:
+        limit = items_per_page
+        skip = (page - 1) * limit
+
+        result = Chats.get_chats_by_user_id(user.id, skip=skip, limit=limit)
+
+        chats = result.items
+        total = result.total
+
+        chat_stats = []
+        for chat in chats:
+            messages_map = chat.chat.get("history", {}).get("messages", {})
+            message_id = chat.chat.get("history", {}).get("currentId")
+
+            if messages_map and message_id:
+                try:
+                    history_models = {}
+                    history_message_count = len(messages_map)
+                    history_user_messages = []
+                    history_assistant_messages = []
+
+                    for message in messages_map.values():
+                        if message.get("role", "") == "user":
+                            history_user_messages.append(message)
+                        elif message.get("role", "") == "assistant":
+                            history_assistant_messages.append(message)
+                            model = message.get("model", None)
+                            if model:
+                                if model not in history_models:
+                                    history_models[model] = 0
+                                history_models[model] += 1
+
+                    average_user_message_content_length = (
+                        sum(
+                            len(message.get("content", ""))
+                            for message in history_user_messages
+                        )
+                        / len(history_user_messages)
+                        if len(history_user_messages) > 0
+                        else 0
+                    )
+                    average_assistant_message_content_length = (
+                        sum(
+                            len(message.get("content", ""))
+                            for message in history_assistant_messages
+                        )
+                        / len(history_assistant_messages)
+                        if len(history_assistant_messages) > 0
+                        else 0
+                    )
+
+                    response_times = []
+                    for message in history_assistant_messages:
+                        user_message_id = message.get("parentId", None)
+                        if user_message_id and user_message_id in messages_map:
+                            user_message = messages_map[user_message_id]
+                            response_time = message.get(
+                                "timestamp", 0
+                            ) - user_message.get("timestamp", 0)
+
+                            response_times.append(response_time)
+
+                    average_response_time = (
+                        sum(response_times) / len(response_times)
+                        if len(response_times) > 0
+                        else 0
+                    )
+
+                    message_list = get_message_list(messages_map, message_id)
+                    message_count = len(message_list)
+
+                    models = {}
+                    for message in reversed(message_list):
+                        if message.get("role") == "assistant":
+                            model = message.get("model", None)
+                            if model:
+                                if model not in models:
+                                    models[model] = 0
+                                models[model] += 1
+
+                            annotation = message.get("annotation", {})
+
+                    chat_stats.append(
+                        {
+                            "id": chat.id,
+                            "models": models,
+                            "message_count": message_count,
+                            "history_models": history_models,
+                            "history_message_count": history_message_count,
+                            "history_user_message_count": len(history_user_messages),
+                            "history_assistant_message_count": len(
+                                history_assistant_messages
+                            ),
+                            "average_response_time": average_response_time,
+                            "average_user_message_content_length": average_user_message_content_length,
+                            "average_assistant_message_content_length": average_assistant_message_content_length,
+                            "tags": chat.meta.get("tags", []),
+                            "last_message_at": message_list[-1].get("timestamp", None),
+                            "updated_at": chat.updated_at,
+                            "created_at": chat.created_at,
+                        }
+                    )
+                except Exception as e:
+                    pass
+
+        return ChatUsageStatsListResponse(items=chat_stats, total=total)
+
     except Exception as e:
         log.exception(e)
         raise HTTPException(
@@ -133,26 +271,15 @@ async def create_new_chat(form_data: ChatForm, user=Depends(get_verified_user)):
 
 
 ############################
-# ImportChat
+# ImportChats
 ############################
 
 
-@router.post("/import", response_model=Optional[ChatResponse])
-async def import_chat(form_data: ChatImportForm, user=Depends(get_verified_user)):
+@router.post("/import", response_model=list[ChatResponse])
+async def import_chats(form_data: ChatsImportForm, user=Depends(get_verified_user)):
     try:
-        chat = Chats.import_chat(user.id, form_data)
-        if chat:
-            tags = chat.meta.get("tags", [])
-            for tag_id in tags:
-                tag_id = tag_id.replace(" ", "_").lower()
-                tag_name = " ".join([word.capitalize() for word in tag_id.split("_")])
-                if (
-                    tag_id != "none"
-                    and Tags.get_tag_by_name_and_user_id(tag_name, user.id) is None
-                ):
-                    Tags.insert_new_tag(tag_name, user.id)
-
-        return ChatResponse(**chat.model_dump())
+        chats = Chats.import_chats(user.id, form_data.chats)
+        return chats
     except Exception as e:
         log.exception(e)
         raise HTTPException(
@@ -166,7 +293,7 @@ async def import_chat(form_data: ChatImportForm, user=Depends(get_verified_user)
 
 
 @router.get("/search", response_model=list[ChatTitleIdResponse])
-async def search_user_chats(
+def search_user_chats(
     text: str, page: Optional[int] = None, user=Depends(get_verified_user)
 ):
     if page is None:
@@ -212,6 +339,28 @@ async def get_chats_by_folder_id(folder_id: str, user=Depends(get_verified_user)
         ChatResponse(**chat.model_dump())
         for chat in Chats.get_chats_by_folder_ids_and_user_id(folder_ids, user.id)
     ]
+
+
+@router.get("/folder/{folder_id}/list")
+async def get_chat_list_by_folder_id(
+    folder_id: str, page: Optional[int] = 1, user=Depends(get_verified_user)
+):
+    try:
+        limit = 10
+        skip = (page - 1) * limit
+
+        return [
+            {"title": chat.title, "id": chat.id, "updated_at": chat.updated_at}
+            for chat in Chats.get_chats_by_folder_id_and_user_id(
+                folder_id, user.id, skip=skip, limit=limit
+            )
+        ]
+
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
+        )
 
 
 ############################
@@ -333,6 +482,16 @@ async def get_archived_session_user_chat_list(
 @router.post("/archive/all", response_model=bool)
 async def archive_all_chats(user=Depends(get_verified_user)):
     return Chats.archive_all_chats_by_user_id(user.id)
+
+
+############################
+# UnarchiveAllChats
+############################
+
+
+@router.post("/unarchive/all", response_model=bool)
+async def unarchive_all_chats(user=Depends(get_verified_user)):
+    return Chats.unarchive_all_chats_by_user_id(user.id)
 
 
 ############################
@@ -617,19 +776,28 @@ async def clone_chat_by_id(
             "title": form_data.title if form_data.title else f"Clone of {chat.title}",
         }
 
-        chat = Chats.import_chat(
+        chats = Chats.import_chats(
             user.id,
-            ChatImportForm(
-                **{
-                    "chat": updated_chat,
-                    "meta": chat.meta,
-                    "pinned": chat.pinned,
-                    "folder_id": chat.folder_id,
-                }
-            ),
+            [
+                ChatImportForm(
+                    **{
+                        "chat": updated_chat,
+                        "meta": chat.meta,
+                        "pinned": chat.pinned,
+                        "folder_id": chat.folder_id,
+                    }
+                )
+            ],
         )
 
-        return ChatResponse(**chat.model_dump())
+        if chats:
+            chat = chats[0]
+            return ChatResponse(**chat.model_dump())
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=ERROR_MESSAGES.DEFAULT(),
+            )
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()
@@ -657,18 +825,28 @@ async def clone_shared_chat_by_id(id: str, user=Depends(get_verified_user)):
             "title": f"Clone of {chat.title}",
         }
 
-        chat = Chats.import_chat(
+        chats = Chats.import_chats(
             user.id,
-            ChatImportForm(
-                **{
-                    "chat": updated_chat,
-                    "meta": chat.meta,
-                    "pinned": chat.pinned,
-                    "folder_id": chat.folder_id,
-                }
-            ),
+            [
+                ChatImportForm(
+                    **{
+                        "chat": updated_chat,
+                        "meta": chat.meta,
+                        "pinned": chat.pinned,
+                        "folder_id": chat.folder_id,
+                    }
+                )
+            ],
         )
-        return ChatResponse(**chat.model_dump())
+
+        if chats:
+            chat = chats[0]
+            return ChatResponse(**chat.model_dump())
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=ERROR_MESSAGES.DEFAULT(),
+            )
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()

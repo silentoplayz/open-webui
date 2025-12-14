@@ -6,33 +6,37 @@ import io
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse, FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 from open_webui.models.auths import Auths
+from open_webui.models.oauth_sessions import OAuthSessions
+
 from open_webui.models.groups import Groups
 from open_webui.models.chats import Chats
 from open_webui.models.users import (
     UserModel,
-    UserListResponse,
+    UserGroupIdsModel,
+    UserGroupIdsListResponse,
+    UserInfoListResponse,
     UserInfoListResponse,
     UserRoleUpdateForm,
+    UserStatus,
     Users,
     UserSettings,
     UserUpdateForm,
 )
 
-
-from open_webui.socket.main import (
-    get_active_status_by_user_id,
-    get_active_user_ids,
-    get_user_active_status,
-)
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.env import SRC_LOG_LEVELS, STATIC_DIR
 
 
-from open_webui.utils.auth import get_admin_user, get_password_hash, get_verified_user
+from open_webui.utils.auth import (
+    get_admin_user,
+    get_password_hash,
+    get_verified_user,
+    validate_password,
+)
 from open_webui.utils.access_control import get_permissions, has_permission
 
 
@@ -43,23 +47,6 @@ router = APIRouter()
 
 
 ############################
-# GetActiveUsers
-############################
-
-
-@router.get("/active")
-async def get_active_users(
-    user=Depends(get_verified_user),
-):
-    """
-    Get a list of active users.
-    """
-    return {
-        "user_ids": get_active_user_ids(),
-    }
-
-
-############################
 # GetUsers
 ############################
 
@@ -67,7 +54,7 @@ async def get_active_users(
 PAGE_ITEM_COUNT = 30
 
 
-@router.get("/", response_model=UserListResponse)
+@router.get("/", response_model=UserGroupIdsListResponse)
 async def get_users(
     query: Optional[str] = None,
     order_by: Optional[str] = None,
@@ -88,7 +75,25 @@ async def get_users(
     if direction:
         filter["direction"] = direction
 
-    return Users.get_users(filter=filter, skip=skip, limit=limit)
+    result = Users.get_users(filter=filter, skip=skip, limit=limit)
+
+    users = result["users"]
+    total = result["total"]
+
+    return {
+        "users": [
+            UserGroupIdsModel(
+                **{
+                    **user.model_dump(),
+                    "group_ids": [
+                        group.id for group in Groups.get_groups_by_member_id(user.id)
+                    ],
+                }
+            )
+            for user in users
+        ],
+        "total": total,
+    }
 
 
 @router.get("/all", response_model=UserInfoListResponse)
@@ -96,6 +101,34 @@ async def get_all_users(
     user=Depends(get_admin_user),
 ):
     return Users.get_users()
+
+
+@router.get("/search", response_model=UserInfoListResponse)
+async def search_users(
+    query: Optional[str] = None,
+    order_by: Optional[str] = None,
+    direction: Optional[str] = None,
+    page: Optional[int] = 1,
+    user=Depends(get_verified_user),
+):
+    limit = PAGE_ITEM_COUNT
+
+    page = max(1, page)
+    skip = (page - 1) * limit
+
+    filter = {}
+    if query:
+        filter["query"] = query
+
+    filter = {}
+    if query:
+        filter["query"] = query
+    if order_by:
+        filter["order_by"] = order_by
+    if direction:
+        filter["direction"] = direction
+
+    return Users.get_users(filter=filter, skip=skip, limit=limit)
 
 
 ############################
@@ -130,13 +163,25 @@ class WorkspacePermissions(BaseModel):
     knowledge: bool = False
     prompts: bool = False
     tools: bool = False
+    models_import: bool = False
+    models_export: bool = False
+    prompts_import: bool = False
+    prompts_export: bool = False
+    tools_import: bool = False
+    tools_export: bool = False
 
 
 class SharingPermissions(BaseModel):
-    public_models: bool = True
-    public_knowledge: bool = True
-    public_prompts: bool = True
+    models: bool = False
+    public_models: bool = False
+    knowledge: bool = False
+    public_knowledge: bool = False
+    prompts: bool = False
+    public_prompts: bool = False
+    tools: bool = False
     public_tools: bool = True
+    notes: bool = False
+    public_notes: bool = True
 
 
 class ChatPermissions(BaseModel):
@@ -146,6 +191,10 @@ class ChatPermissions(BaseModel):
     params: bool = True
     file_upload: bool = True
     delete: bool = True
+    delete_message: bool = True
+    continue_response: bool = True
+    regenerate_response: bool = True
+    rate_response: bool = True
     edit: bool = True
     share: bool = True
     export: bool = True
@@ -158,11 +207,15 @@ class ChatPermissions(BaseModel):
 
 
 class FeaturesPermissions(BaseModel):
+    api_keys: bool = False
+    notes: bool = True
+    channels: bool = True
+    folders: bool = True
     direct_tool_servers: bool = False
+
     web_search: bool = True
     image_generation: bool = True
     code_interpreter: bool = True
-    notes: bool = True
 
 
 class UserPermissions(BaseModel):
@@ -248,6 +301,43 @@ async def update_user_settings_by_session_user(
 
 
 ############################
+# GetUserStatusBySessionUser
+############################
+
+
+@router.get("/user/status")
+async def get_user_status_by_session_user(user=Depends(get_verified_user)):
+    user = Users.get_user_by_id(user.id)
+    if user:
+        return user
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.USER_NOT_FOUND,
+        )
+
+
+############################
+# UpdateUserStatusBySessionUser
+############################
+
+
+@router.post("/user/status/update")
+async def update_user_status_by_session_user(
+    form_data: UserStatus, user=Depends(get_verified_user)
+):
+    user = Users.get_user_by_id(user.id)
+    if user:
+        user = Users.update_user_status_by_id(user.id, form_data)
+        return user
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.USER_NOT_FOUND,
+        )
+
+
+############################
 # GetUserInfoBySessionUser
 ############################
 
@@ -298,13 +388,16 @@ async def update_user_info_by_session_user(
 ############################
 
 
-class UserResponse(BaseModel):
+class UserActiveResponse(UserStatus):
     name: str
-    profile_image_url: str
-    active: Optional[bool] = None
+    profile_image_url: Optional[str] = None
+    groups: Optional[list] = []
+
+    is_active: bool
+    model_config = ConfigDict(extra="allow")
 
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}", response_model=UserActiveResponse)
 async def get_user_by_id(user_id: str, user=Depends(get_verified_user)):
     # Check if user_id is a shared chat
     # If it is, get the user_id from the chat
@@ -320,15 +413,27 @@ async def get_user_by_id(user_id: str, user=Depends(get_verified_user)):
             )
 
     user = Users.get_user_by_id(user_id)
-
     if user:
-        return UserResponse(
+        groups = Groups.get_groups_by_member_id(user_id)
+        return UserActiveResponse(
             **{
-                "name": user.name,
-                "profile_image_url": user.profile_image_url,
-                "active": get_active_status_by_user_id(user_id),
+                **user.model_dump(),
+                "groups": [{"id": group.id, "name": group.name} for group in groups],
+                "is_active": Users.is_user_active(user_id),
             }
         )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.USER_NOT_FOUND,
+        )
+
+
+@router.get("/{user_id}/oauth/sessions")
+async def get_user_oauth_sessions_by_id(user_id: str, user=Depends(get_admin_user)):
+    sessions = OAuthSessions.get_sessions_by_user_id(user_id)
+    if sessions and len(sessions) > 0:
+        return sessions
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -381,7 +486,7 @@ async def get_user_profile_image_by_id(user_id: str, user=Depends(get_verified_u
 @router.get("/{user_id}/active", response_model=dict)
 async def get_user_active_status_by_id(user_id: str, user=Depends(get_verified_user)):
     return {
-        "active": get_user_active_status(user_id),
+        "active": Users.is_user_active(user_id),
     }
 
 
@@ -434,8 +539,12 @@ async def update_user_by_id(
                 )
 
         if form_data.password:
+            try:
+                validate_password(form_data.password)
+            except Exception as e:
+                raise HTTPException(400, detail=str(e))
+
             hashed = get_password_hash(form_data.password)
-            log.debug(f"hashed: {hashed}")
             Auths.update_user_password_by_id(user_id, hashed)
 
         Auths.update_email_by_id(user_id, form_data.email.lower())

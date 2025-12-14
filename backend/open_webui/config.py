@@ -222,9 +222,10 @@ class PersistentConfig(Generic[T]):
 
 
 class AppConfig:
-    _state: dict[str, PersistentConfig]
     _redis: Union[redis.Redis, redis.cluster.RedisCluster] = None
     _redis_key_prefix: str
+
+    _state: dict[str, PersistentConfig]
 
     def __init__(
         self,
@@ -233,9 +234,8 @@ class AppConfig:
         redis_cluster: Optional[bool] = False,
         redis_key_prefix: str = "open-webui",
     ):
-        super().__setattr__("_state", {})
-        super().__setattr__("_redis_key_prefix", redis_key_prefix)
         if redis_url:
+            super().__setattr__("_redis_key_prefix", redis_key_prefix)
             super().__setattr__(
                 "_redis",
                 get_redis_connection(
@@ -245,6 +245,8 @@ class AppConfig:
                     decode_responses=True,
                 ),
             )
+
+        super().__setattr__("_state", {})
 
     def __setattr__(self, key, value):
         if isinstance(value, PersistentConfig):
@@ -285,35 +287,46 @@ class AppConfig:
 # WEBUI_AUTH (Required for security)
 ####################################
 
-ENABLE_API_KEY = PersistentConfig(
-    "ENABLE_API_KEY",
-    "auth.api_key.enable",
-    os.environ.get("ENABLE_API_KEY", "True").lower() == "true",
+ENABLE_API_KEYS = PersistentConfig(
+    "ENABLE_API_KEYS",
+    "auth.enable_api_keys",
+    os.environ.get("ENABLE_API_KEYS", "False").lower() == "true",
 )
 
-ENABLE_API_KEY_ENDPOINT_RESTRICTIONS = PersistentConfig(
-    "ENABLE_API_KEY_ENDPOINT_RESTRICTIONS",
+ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS = PersistentConfig(
+    "ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS",
     "auth.api_key.endpoint_restrictions",
-    os.environ.get("ENABLE_API_KEY_ENDPOINT_RESTRICTIONS", "False").lower() == "true",
+    os.environ.get(
+        "ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS",
+        os.environ.get("ENABLE_API_KEY_ENDPOINT_RESTRICTIONS", "False"),
+    ).lower()
+    == "true",
 )
 
-API_KEY_ALLOWED_ENDPOINTS = PersistentConfig(
-    "API_KEY_ALLOWED_ENDPOINTS",
+API_KEYS_ALLOWED_ENDPOINTS = PersistentConfig(
+    "API_KEYS_ALLOWED_ENDPOINTS",
     "auth.api_key.allowed_endpoints",
-    os.environ.get("API_KEY_ALLOWED_ENDPOINTS", ""),
+    os.environ.get(
+        "API_KEYS_ALLOWED_ENDPOINTS", os.environ.get("API_KEY_ALLOWED_ENDPOINTS", "")
+    ),
 )
-
 
 JWT_EXPIRES_IN = PersistentConfig(
-    "JWT_EXPIRES_IN", "auth.jwt_expiry", os.environ.get("JWT_EXPIRES_IN", "-1")
+    "JWT_EXPIRES_IN", "auth.jwt_expiry", os.environ.get("JWT_EXPIRES_IN", "4w")
 )
+
+if JWT_EXPIRES_IN.value == "-1":
+    log.warning(
+        "⚠️  SECURITY WARNING: JWT_EXPIRES_IN is set to '-1'\n"
+        "    See: https://docs.openwebui.com/getting-started/env-configuration\n"
+    )
 
 ####################################
 # OAuth config
 ####################################
 
 ENABLE_OAUTH_PERSISTENT_CONFIG = (
-    os.environ.get("ENABLE_OAUTH_PERSISTENT_CONFIG", "True").lower() == "true"
+    os.environ.get("ENABLE_OAUTH_PERSISTENT_CONFIG", "False").lower() == "true"
 )
 
 ENABLE_OAUTH_SIGNUP = PersistentConfig(
@@ -513,6 +526,30 @@ OAUTH_GROUPS_CLAIM = PersistentConfig(
     os.environ.get("OAUTH_GROUPS_CLAIM", os.environ.get("OAUTH_GROUP_CLAIM", "groups")),
 )
 
+FEISHU_CLIENT_ID = PersistentConfig(
+    "FEISHU_CLIENT_ID",
+    "oauth.feishu.client_id",
+    os.environ.get("FEISHU_CLIENT_ID", ""),
+)
+
+FEISHU_CLIENT_SECRET = PersistentConfig(
+    "FEISHU_CLIENT_SECRET",
+    "oauth.feishu.client_secret",
+    os.environ.get("FEISHU_CLIENT_SECRET", ""),
+)
+
+FEISHU_OAUTH_SCOPE = PersistentConfig(
+    "FEISHU_OAUTH_SCOPE",
+    "oauth.feishu.scope",
+    os.environ.get("FEISHU_OAUTH_SCOPE", "contact:user.base:readonly"),
+)
+
+FEISHU_REDIRECT_URI = PersistentConfig(
+    "FEISHU_REDIRECT_URI",
+    "oauth.feishu.redirect_uri",
+    os.environ.get("FEISHU_REDIRECT_URI", ""),
+)
+
 ENABLE_OAUTH_ROLE_MANAGEMENT = PersistentConfig(
     "ENABLE_OAUTH_ROLE_MANAGEMENT",
     "oauth.enable_role_mapping",
@@ -538,25 +575,38 @@ OAUTH_BLOCKED_GROUPS = PersistentConfig(
     os.environ.get("OAUTH_BLOCKED_GROUPS", "[]"),
 )
 
+OAUTH_GROUPS_SEPARATOR = os.environ.get("OAUTH_GROUPS_SEPARATOR", ";")
+
 OAUTH_ROLES_CLAIM = PersistentConfig(
     "OAUTH_ROLES_CLAIM",
     "oauth.roles_claim",
     os.environ.get("OAUTH_ROLES_CLAIM", "roles"),
 )
 
+OAUTH_ROLES_SEPARATOR = os.environ.get("OAUTH_ROLES_SEPARATOR", ",")
+
 OAUTH_ALLOWED_ROLES = PersistentConfig(
     "OAUTH_ALLOWED_ROLES",
     "oauth.allowed_roles",
     [
         role.strip()
-        for role in os.environ.get("OAUTH_ALLOWED_ROLES", "user,admin").split(",")
+        for role in os.environ.get(
+            "OAUTH_ALLOWED_ROLES", f"user{OAUTH_ROLES_SEPARATOR}admin"
+        ).split(OAUTH_ROLES_SEPARATOR)
+        if role
     ],
 )
 
 OAUTH_ADMIN_ROLES = PersistentConfig(
     "OAUTH_ADMIN_ROLES",
     "oauth.admin_roles",
-    [role.strip() for role in os.environ.get("OAUTH_ADMIN_ROLES", "admin").split(",")],
+    [
+        role.strip()
+        for role in os.environ.get("OAUTH_ADMIN_ROLES", "admin").split(
+            OAUTH_ROLES_SEPARATOR
+        )
+        if role
+    ],
 )
 
 OAUTH_ALLOWED_DOMAINS = PersistentConfig(
@@ -574,13 +624,24 @@ OAUTH_UPDATE_PICTURE_ON_LOGIN = PersistentConfig(
     os.environ.get("OAUTH_UPDATE_PICTURE_ON_LOGIN", "False").lower() == "true",
 )
 
+OAUTH_ACCESS_TOKEN_REQUEST_INCLUDE_CLIENT_ID = (
+    os.environ.get("OAUTH_ACCESS_TOKEN_REQUEST_INCLUDE_CLIENT_ID", "False").lower()
+    == "true"
+)
+
+OAUTH_AUDIENCE = PersistentConfig(
+    "OAUTH_AUDIENCE",
+    "oauth.audience",
+    os.environ.get("OAUTH_AUDIENCE", ""),
+)
+
 
 def load_oauth_providers():
     OAUTH_PROVIDERS.clear()
     if GOOGLE_CLIENT_ID.value and GOOGLE_CLIENT_SECRET.value:
 
-        def google_oauth_register(client: OAuth):
-            client.register(
+        def google_oauth_register(oauth: OAuth):
+            client = oauth.register(
                 name="google",
                 client_id=GOOGLE_CLIENT_ID.value,
                 client_secret=GOOGLE_CLIENT_SECRET.value,
@@ -595,6 +656,7 @@ def load_oauth_providers():
                 },
                 redirect_uri=GOOGLE_REDIRECT_URI.value,
             )
+            return client
 
         OAUTH_PROVIDERS["google"] = {
             "redirect_uri": GOOGLE_REDIRECT_URI.value,
@@ -607,8 +669,8 @@ def load_oauth_providers():
         and MICROSOFT_CLIENT_TENANT_ID.value
     ):
 
-        def microsoft_oauth_register(client: OAuth):
-            client.register(
+        def microsoft_oauth_register(oauth: OAuth):
+            client = oauth.register(
                 name="microsoft",
                 client_id=MICROSOFT_CLIENT_ID.value,
                 client_secret=MICROSOFT_CLIENT_SECRET.value,
@@ -623,6 +685,7 @@ def load_oauth_providers():
                 },
                 redirect_uri=MICROSOFT_REDIRECT_URI.value,
             )
+            return client
 
         OAUTH_PROVIDERS["microsoft"] = {
             "redirect_uri": MICROSOFT_REDIRECT_URI.value,
@@ -632,8 +695,8 @@ def load_oauth_providers():
 
     if GITHUB_CLIENT_ID.value and GITHUB_CLIENT_SECRET.value:
 
-        def github_oauth_register(client: OAuth):
-            client.register(
+        def github_oauth_register(oauth: OAuth):
+            client = oauth.register(
                 name="github",
                 client_id=GITHUB_CLIENT_ID.value,
                 client_secret=GITHUB_CLIENT_SECRET.value,
@@ -651,6 +714,7 @@ def load_oauth_providers():
                 },
                 redirect_uri=GITHUB_CLIENT_REDIRECT_URI.value,
             )
+            return client
 
         OAUTH_PROVIDERS["github"] = {
             "redirect_uri": GITHUB_CLIENT_REDIRECT_URI.value,
@@ -660,11 +724,11 @@ def load_oauth_providers():
 
     if (
         OAUTH_CLIENT_ID.value
-        and OAUTH_CLIENT_SECRET.value
+        and (OAUTH_CLIENT_SECRET.value or OAUTH_CODE_CHALLENGE_METHOD.value)
         and OPENID_PROVIDER_URL.value
     ):
 
-        def oidc_oauth_register(client: OAuth):
+        def oidc_oauth_register(oauth: OAuth):
             client_kwargs = {
                 "scope": OAUTH_SCOPES.value,
                 **(
@@ -690,7 +754,7 @@ def load_oauth_providers():
                     % ("S256", OAUTH_CODE_CHALLENGE_METHOD.value)
                 )
 
-            client.register(
+            client = oauth.register(
                 name="oidc",
                 client_id=OAUTH_CLIENT_ID.value,
                 client_secret=OAUTH_CLIENT_SECRET.value,
@@ -698,11 +762,40 @@ def load_oauth_providers():
                 client_kwargs=client_kwargs,
                 redirect_uri=OPENID_REDIRECT_URI.value,
             )
+            return client
 
         OAUTH_PROVIDERS["oidc"] = {
             "name": OAUTH_PROVIDER_NAME.value,
             "redirect_uri": OPENID_REDIRECT_URI.value,
             "register": oidc_oauth_register,
+        }
+
+    if FEISHU_CLIENT_ID.value and FEISHU_CLIENT_SECRET.value:
+
+        def feishu_oauth_register(oauth: OAuth):
+            client = oauth.register(
+                name="feishu",
+                client_id=FEISHU_CLIENT_ID.value,
+                client_secret=FEISHU_CLIENT_SECRET.value,
+                access_token_url="https://open.feishu.cn/open-apis/authen/v2/oauth/token",
+                authorize_url="https://accounts.feishu.cn/open-apis/authen/v1/authorize",
+                api_base_url="https://open.feishu.cn/open-apis",
+                userinfo_endpoint="https://open.feishu.cn/open-apis/authen/v1/user_info",
+                client_kwargs={
+                    "scope": FEISHU_OAUTH_SCOPE.value,
+                    **(
+                        {"timeout": int(OAUTH_TIMEOUT.value)}
+                        if OAUTH_TIMEOUT.value
+                        else {}
+                    ),
+                },
+                redirect_uri=FEISHU_REDIRECT_URI.value,
+            )
+            return client
+
+        OAUTH_PROVIDERS["feishu"] = {
+            "register": feishu_oauth_register,
+            "sub_claim": "user_id",
         }
 
     configured_providers = []
@@ -712,6 +805,8 @@ def load_oauth_providers():
         configured_providers.append("Microsoft")
     if GITHUB_CLIENT_ID.value:
         configured_providers.append("GitHub")
+    if FEISHU_CLIENT_ID.value:
+        configured_providers.append("Feishu")
 
     if configured_providers and not OPENID_PROVIDER_URL.value:
         provider_list = ", ".join(configured_providers)
@@ -1049,6 +1144,7 @@ ENABLE_LOGIN_FORM = PersistentConfig(
     os.environ.get("ENABLE_LOGIN_FORM", "True").lower() == "true",
 )
 
+ENABLE_PASSWORD_AUTH = os.environ.get("ENABLE_PASSWORD_AUTH", "True").lower() == "true"
 
 DEFAULT_LOCALE = PersistentConfig(
     "DEFAULT_LOCALE",
@@ -1058,6 +1154,12 @@ DEFAULT_LOCALE = PersistentConfig(
 
 DEFAULT_MODELS = PersistentConfig(
     "DEFAULT_MODELS", "ui.default_models", os.environ.get("DEFAULT_MODELS", None)
+)
+
+DEFAULT_PINNED_MODELS = PersistentConfig(
+    "DEFAULT_PINNED_MODELS",
+    "ui.default_pinned_models",
+    os.environ.get("DEFAULT_PINNED_MODELS", None),
 )
 
 try:
@@ -1116,6 +1218,12 @@ DEFAULT_USER_ROLE = PersistentConfig(
     os.getenv("DEFAULT_USER_ROLE", "pending"),
 )
 
+DEFAULT_GROUP_ID = PersistentConfig(
+    "DEFAULT_GROUP_ID",
+    "ui.default_group_id",
+    os.environ.get("DEFAULT_GROUP_ID", ""),
+)
+
 PENDING_USER_OVERLAY_TITLE = PersistentConfig(
     "PENDING_USER_OVERLAY_TITLE",
     "ui.pending_user_overlay_title",
@@ -1155,9 +1263,50 @@ USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS = (
     os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS", "False").lower() == "true"
 )
 
+USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT", "False").lower()
+    == "true"
+)
+
+USER_PERMISSIONS_WORKSPACE_MODELS_EXPORT = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_MODELS_EXPORT", "False").lower()
+    == "true"
+)
+
+USER_PERMISSIONS_WORKSPACE_PROMPTS_IMPORT = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_PROMPTS_IMPORT", "False").lower()
+    == "true"
+)
+
+USER_PERMISSIONS_WORKSPACE_PROMPTS_EXPORT = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_PROMPTS_EXPORT", "False").lower()
+    == "true"
+)
+
+USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT", "False").lower() == "true"
+)
+
+USER_PERMISSIONS_WORKSPACE_TOOLS_EXPORT = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_EXPORT", "False").lower() == "true"
+)
+
+
+USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_SHARING = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_SHARING", "False").lower()
+    == "true"
+)
+
 USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING = (
     os.environ.get(
         "USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING", "False"
+    ).lower()
+    == "true"
+)
+
+USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_SHARING = (
+    os.environ.get(
+        "USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_SHARING", "False"
     ).lower()
     == "true"
 )
@@ -1169,6 +1318,11 @@ USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_PUBLIC_SHARING = (
     == "true"
 )
 
+USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_SHARING = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_SHARING", "False").lower()
+    == "true"
+)
+
 USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_PUBLIC_SHARING = (
     os.environ.get(
         "USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_PUBLIC_SHARING", "False"
@@ -1176,10 +1330,27 @@ USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_PUBLIC_SHARING = (
     == "true"
 )
 
+
+USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_SHARING = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_SHARING", "False").lower()
+    == "true"
+)
+
 USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_PUBLIC_SHARING = (
     os.environ.get(
         "USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_PUBLIC_SHARING", "False"
     ).lower()
+    == "true"
+)
+
+
+USER_PERMISSIONS_NOTES_ALLOW_SHARING = (
+    os.environ.get("USER_PERMISSIONS_NOTES_ALLOW_SHARING", "False").lower()
+    == "true"
+)
+
+USER_PERMISSIONS_NOTES_ALLOW_PUBLIC_SHARING = (
+    os.environ.get("USER_PERMISSIONS_NOTES_ALLOW_PUBLIC_SHARING", "False").lower()
     == "true"
 )
 
@@ -1206,6 +1377,23 @@ USER_PERMISSIONS_CHAT_FILE_UPLOAD = (
 
 USER_PERMISSIONS_CHAT_DELETE = (
     os.environ.get("USER_PERMISSIONS_CHAT_DELETE", "True").lower() == "true"
+)
+
+USER_PERMISSIONS_CHAT_DELETE_MESSAGE = (
+    os.environ.get("USER_PERMISSIONS_CHAT_DELETE_MESSAGE", "True").lower() == "true"
+)
+
+USER_PERMISSIONS_CHAT_CONTINUE_RESPONSE = (
+    os.environ.get("USER_PERMISSIONS_CHAT_CONTINUE_RESPONSE", "True").lower() == "true"
+)
+
+USER_PERMISSIONS_CHAT_REGENERATE_RESPONSE = (
+    os.environ.get("USER_PERMISSIONS_CHAT_REGENERATE_RESPONSE", "True").lower()
+    == "true"
+)
+
+USER_PERMISSIONS_CHAT_RATE_RESPONSE = (
+    os.environ.get("USER_PERMISSIONS_CHAT_RATE_RESPONSE", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_EDIT = (
@@ -1265,8 +1453,20 @@ USER_PERMISSIONS_FEATURES_CODE_INTERPRETER = (
     == "true"
 )
 
+USER_PERMISSIONS_FEATURES_FOLDERS = (
+    os.environ.get("USER_PERMISSIONS_FEATURES_FOLDERS", "True").lower() == "true"
+)
+
 USER_PERMISSIONS_FEATURES_NOTES = (
     os.environ.get("USER_PERMISSIONS_FEATURES_NOTES", "True").lower() == "true"
+)
+
+USER_PERMISSIONS_FEATURES_CHANNELS = (
+    os.environ.get("USER_PERMISSIONS_FEATURES_CHANNELS", "True").lower() == "true"
+)
+
+USER_PERMISSIONS_FEATURES_API_KEYS = (
+    os.environ.get("USER_PERMISSIONS_FEATURES_API_KEYS", "False").lower() == "true"
 )
 
 
@@ -1276,12 +1476,24 @@ DEFAULT_USER_PERMISSIONS = {
         "knowledge": USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS,
         "prompts": USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS,
         "tools": USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS,
+        "models_import": USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT,
+        "models_export": USER_PERMISSIONS_WORKSPACE_MODELS_EXPORT,
+        "prompts_import": USER_PERMISSIONS_WORKSPACE_PROMPTS_IMPORT,
+        "prompts_export": USER_PERMISSIONS_WORKSPACE_PROMPTS_EXPORT,
+        "tools_import": USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT,
+        "tools_export": USER_PERMISSIONS_WORKSPACE_TOOLS_EXPORT,
     },
     "sharing": {
+        "models": USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_SHARING,
         "public_models": USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING,
+        "knowledge": USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_SHARING,
         "public_knowledge": USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_PUBLIC_SHARING,
+        "prompts": USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_SHARING,
         "public_prompts": USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_PUBLIC_SHARING,
+        "tools": USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_SHARING,
         "public_tools": USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_PUBLIC_SHARING,
+        "notes": USER_PERMISSIONS_NOTES_ALLOW_SHARING,
+        "public_notes": USER_PERMISSIONS_NOTES_ALLOW_PUBLIC_SHARING,
     },
     "chat": {
         "controls": USER_PERMISSIONS_CHAT_CONTROLS,
@@ -1290,6 +1502,10 @@ DEFAULT_USER_PERMISSIONS = {
         "params": USER_PERMISSIONS_CHAT_PARAMS,
         "file_upload": USER_PERMISSIONS_CHAT_FILE_UPLOAD,
         "delete": USER_PERMISSIONS_CHAT_DELETE,
+        "delete_message": USER_PERMISSIONS_CHAT_DELETE_MESSAGE,
+        "continue_response": USER_PERMISSIONS_CHAT_CONTINUE_RESPONSE,
+        "regenerate_response": USER_PERMISSIONS_CHAT_REGENERATE_RESPONSE,
+        "rate_response": USER_PERMISSIONS_CHAT_RATE_RESPONSE,
         "edit": USER_PERMISSIONS_CHAT_EDIT,
         "share": USER_PERMISSIONS_CHAT_SHARE,
         "export": USER_PERMISSIONS_CHAT_EXPORT,
@@ -1301,11 +1517,16 @@ DEFAULT_USER_PERMISSIONS = {
         "temporary_enforced": USER_PERMISSIONS_CHAT_TEMPORARY_ENFORCED,
     },
     "features": {
+        # General features
+        "api_keys": USER_PERMISSIONS_FEATURES_API_KEYS,
+        "notes": USER_PERMISSIONS_FEATURES_NOTES,
+        "folders": USER_PERMISSIONS_FEATURES_FOLDERS,
+        "channels": USER_PERMISSIONS_FEATURES_CHANNELS,
         "direct_tool_servers": USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS,
+        # Chat features
         "web_search": USER_PERMISSIONS_FEATURES_WEB_SEARCH,
         "image_generation": USER_PERMISSIONS_FEATURES_IMAGE_GENERATION,
         "code_interpreter": USER_PERMISSIONS_FEATURES_CODE_INTERPRETER,
-        "notes": USER_PERMISSIONS_FEATURES_NOTES,
     },
 }
 
@@ -1313,6 +1534,12 @@ USER_PERMISSIONS = PersistentConfig(
     "USER_PERMISSIONS",
     "user.permissions",
     DEFAULT_USER_PERMISSIONS,
+)
+
+ENABLE_FOLDERS = PersistentConfig(
+    "ENABLE_FOLDERS",
+    "folders.enable",
+    os.environ.get("ENABLE_FOLDERS", "True").lower() == "true",
 )
 
 ENABLE_CHANNELS = PersistentConfig(
@@ -1576,7 +1803,7 @@ FOLLOW_UP_GENERATION_PROMPT_TEMPLATE = PersistentConfig(
 )
 
 DEFAULT_FOLLOW_UP_GENERATION_PROMPT_TEMPLATE = """### Task:
-Suggest 3-5 relevant follow-up questions or prompts in the chat's primary language that the user might naturally ask next in this conversation as a **user**, based on the chat history, to help continue or deepen the discussion.
+Suggest 3-5 relevant follow-up questions or prompts that the user might naturally ask next in this conversation as a **user**, based on the chat history, to help continue or deepen the discussion.
 ### Guidelines:
 - Write all follow-up questions from the user’s point of view, directed to the assistant.
 - Make questions concise, clear, and directly related to the discussed topic(s).
@@ -1713,6 +1940,38 @@ Output:
 <text>{{PROMPT}}</text>  
 #### Output:
 """
+
+
+VOICE_MODE_PROMPT_TEMPLATE = PersistentConfig(
+    "VOICE_MODE_PROMPT_TEMPLATE",
+    "task.voice.prompt_template",
+    os.environ.get("VOICE_MODE_PROMPT_TEMPLATE", ""),
+)
+
+DEFAULT_VOICE_MODE_PROMPT_TEMPLATE = """You are a friendly, concise voice assistant.
+
+Everything you say will be spoken aloud.
+Keep responses short, clear, and natural.
+
+STYLE:
+- Use simple words and short sentences.
+- Sound warm and conversational.
+- Avoid long explanations, lists, or complex phrasing.
+
+BEHAVIOR:
+- Give the quickest helpful answer first.
+- Offer extra detail only if needed.
+- Ask for clarification only when necessary.
+
+VOICE OPTIMIZATION:
+- Break information into small, easy-to-hear chunks.
+- Avoid dense wording or anything that sounds like reading text.
+
+ERROR HANDLING:
+- If unsure, say so briefly and offer options.
+- If something is unsafe or impossible, decline kindly and suggest a safe alternative.
+
+Stay consistent, helpful, and easy to listen to."""
 
 TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE = PersistentConfig(
     "TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE",
@@ -1923,16 +2182,23 @@ if VECTOR_DB == "chroma":
 # this uses the model defined in the Dockerfile ENV variable. If you dont use docker or docker based deployments such as k8s, the default embedding model will be used (sentence-transformers/all-MiniLM-L6-v2)
 
 # Milvus
-
 MILVUS_URI = os.environ.get("MILVUS_URI", f"{DATA_DIR}/vector_db/milvus.db")
 MILVUS_DB = os.environ.get("MILVUS_DB", "default")
 MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN", None)
-
 MILVUS_INDEX_TYPE = os.environ.get("MILVUS_INDEX_TYPE", "HNSW")
 MILVUS_METRIC_TYPE = os.environ.get("MILVUS_METRIC_TYPE", "COSINE")
 MILVUS_HNSW_M = int(os.environ.get("MILVUS_HNSW_M", "16"))
 MILVUS_HNSW_EFCONSTRUCTION = int(os.environ.get("MILVUS_HNSW_EFCONSTRUCTION", "100"))
 MILVUS_IVF_FLAT_NLIST = int(os.environ.get("MILVUS_IVF_FLAT_NLIST", "128"))
+MILVUS_DISKANN_MAX_DEGREE = int(os.environ.get("MILVUS_DISKANN_MAX_DEGREE", "56"))
+MILVUS_DISKANN_SEARCH_LIST_SIZE = int(
+    os.environ.get("MILVUS_DISKANN_SEARCH_LIST_SIZE", "100")
+)
+ENABLE_MILVUS_MULTITENANCY_MODE = (
+    os.environ.get("ENABLE_MILVUS_MULTITENANCY_MODE", "false").lower() == "true"
+)
+# Hyphens not allowed, need to use underscores in collection names
+MILVUS_COLLECTION_PREFIX = os.environ.get("MILVUS_COLLECTION_PREFIX", "open_webui")
 
 # Qdrant
 QDRANT_URI = os.environ.get("QDRANT_URI", None)
@@ -1946,6 +2212,11 @@ ENABLE_QDRANT_MULTITENANCY_MODE = (
     os.environ.get("ENABLE_QDRANT_MULTITENANCY_MODE", "true").lower() == "true"
 )
 QDRANT_COLLECTION_PREFIX = os.environ.get("QDRANT_COLLECTION_PREFIX", "open-webui")
+
+WEAVIATE_HTTP_HOST = os.environ.get("WEAVIATE_HTTP_HOST", "")
+WEAVIATE_HTTP_PORT = int(os.environ.get("WEAVIATE_HTTP_PORT", "8080"))
+WEAVIATE_GRPC_PORT = int(os.environ.get("WEAVIATE_GRPC_PORT", "50051"))
+WEAVIATE_API_KEY = os.environ.get("WEAVIATE_API_KEY")
 
 # OpenSearch
 OPENSEARCH_URI = os.environ.get("OPENSEARCH_URI", "https://localhost:9200")
@@ -1977,6 +2248,19 @@ PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH = int(
     os.environ.get("PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH", "1536")
 )
 
+PGVECTOR_USE_HALFVEC = os.getenv("PGVECTOR_USE_HALFVEC", "false").lower() == "true"
+
+if PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH > 2000 and not PGVECTOR_USE_HALFVEC:
+    raise ValueError(
+        "PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH is set to "
+        f"{PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH}, which exceeds the 2000 dimension limit of the "
+        "'vector' type. Set PGVECTOR_USE_HALFVEC=true to enable the 'halfvec' "
+        "type required for high-dimensional embeddings."
+    )
+
+PGVECTOR_CREATE_EXTENSION = (
+    os.getenv("PGVECTOR_CREATE_EXTENSION", "true").lower() == "true"
+)
 PGVECTOR_PGCRYPTO = os.getenv("PGVECTOR_PGCRYPTO", "false").lower() == "true"
 PGVECTOR_PGCRYPTO_KEY = os.getenv("PGVECTOR_PGCRYPTO_KEY", None)
 if PGVECTOR_PGCRYPTO and not PGVECTOR_PGCRYPTO_KEY:
@@ -2022,6 +2306,40 @@ else:
         PGVECTOR_POOL_RECYCLE = int(PGVECTOR_POOL_RECYCLE)
     except Exception:
         PGVECTOR_POOL_RECYCLE = 3600
+
+PGVECTOR_INDEX_METHOD = os.getenv("PGVECTOR_INDEX_METHOD", "").strip().lower()
+if PGVECTOR_INDEX_METHOD not in ("ivfflat", "hnsw", ""):
+    PGVECTOR_INDEX_METHOD = ""
+
+PGVECTOR_HNSW_M = os.environ.get("PGVECTOR_HNSW_M", 16)
+
+if PGVECTOR_HNSW_M == "":
+    PGVECTOR_HNSW_M = 16
+else:
+    try:
+        PGVECTOR_HNSW_M = int(PGVECTOR_HNSW_M)
+    except Exception:
+        PGVECTOR_HNSW_M = 16
+
+PGVECTOR_HNSW_EF_CONSTRUCTION = os.environ.get("PGVECTOR_HNSW_EF_CONSTRUCTION", 64)
+
+if PGVECTOR_HNSW_EF_CONSTRUCTION == "":
+    PGVECTOR_HNSW_EF_CONSTRUCTION = 64
+else:
+    try:
+        PGVECTOR_HNSW_EF_CONSTRUCTION = int(PGVECTOR_HNSW_EF_CONSTRUCTION)
+    except Exception:
+        PGVECTOR_HNSW_EF_CONSTRUCTION = 64
+
+PGVECTOR_IVFFLAT_LISTS = os.environ.get("PGVECTOR_IVFFLAT_LISTS", 100)
+
+if PGVECTOR_IVFFLAT_LISTS == "":
+    PGVECTOR_IVFFLAT_LISTS = 100
+else:
+    try:
+        PGVECTOR_IVFFLAT_LISTS = int(PGVECTOR_IVFFLAT_LISTS)
+    except Exception:
+        PGVECTOR_IVFFLAT_LISTS = 100
 
 # Pinecone
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY", None)
@@ -2092,10 +2410,20 @@ ENABLE_ONEDRIVE_INTEGRATION = PersistentConfig(
     os.getenv("ENABLE_ONEDRIVE_INTEGRATION", "False").lower() == "true",
 )
 
-ONEDRIVE_CLIENT_ID = PersistentConfig(
-    "ONEDRIVE_CLIENT_ID",
-    "onedrive.client_id",
-    os.environ.get("ONEDRIVE_CLIENT_ID", ""),
+
+ENABLE_ONEDRIVE_PERSONAL = (
+    os.environ.get("ENABLE_ONEDRIVE_PERSONAL", "True").lower() == "true"
+)
+ENABLE_ONEDRIVE_BUSINESS = (
+    os.environ.get("ENABLE_ONEDRIVE_BUSINESS", "True").lower() == "true"
+)
+
+ONEDRIVE_CLIENT_ID = os.environ.get("ONEDRIVE_CLIENT_ID", "")
+ONEDRIVE_CLIENT_ID_PERSONAL = os.environ.get(
+    "ONEDRIVE_CLIENT_ID_PERSONAL", ONEDRIVE_CLIENT_ID
+)
+ONEDRIVE_CLIENT_ID_BUSINESS = os.environ.get(
+    "ONEDRIVE_CLIENT_ID_BUSINESS", ONEDRIVE_CLIENT_ID
 )
 
 ONEDRIVE_SHAREPOINT_URL = PersistentConfig(
@@ -2184,6 +2512,36 @@ DATALAB_MARKER_OUTPUT_FORMAT = PersistentConfig(
     os.environ.get("DATALAB_MARKER_OUTPUT_FORMAT", "markdown"),
 )
 
+MINERU_API_MODE = PersistentConfig(
+    "MINERU_API_MODE",
+    "rag.mineru_api_mode",
+    os.environ.get("MINERU_API_MODE", "local"),  # "local" or "cloud"
+)
+
+MINERU_API_URL = PersistentConfig(
+    "MINERU_API_URL",
+    "rag.mineru_api_url",
+    os.environ.get("MINERU_API_URL", "http://localhost:8000"),
+)
+
+MINERU_API_KEY = PersistentConfig(
+    "MINERU_API_KEY",
+    "rag.mineru_api_key",
+    os.environ.get("MINERU_API_KEY", ""),
+)
+
+mineru_params = os.getenv("MINERU_PARAMS", "")
+try:
+    mineru_params = json.loads(mineru_params)
+except json.JSONDecodeError:
+    mineru_params = {}
+
+MINERU_PARAMS = PersistentConfig(
+    "MINERU_PARAMS",
+    "rag.mineru_params",
+    mineru_params,
+)
+
 EXTERNAL_DOCUMENT_LOADER_URL = PersistentConfig(
     "EXTERNAL_DOCUMENT_LOADER_URL",
     "rag.external_document_loader_url",
@@ -2208,57 +2566,23 @@ DOCLING_SERVER_URL = PersistentConfig(
     os.getenv("DOCLING_SERVER_URL", "http://docling:5001"),
 )
 
-DOCLING_OCR_ENGINE = PersistentConfig(
-    "DOCLING_OCR_ENGINE",
-    "rag.docling_ocr_engine",
-    os.getenv("DOCLING_OCR_ENGINE", "tesseract"),
+DOCLING_API_KEY = PersistentConfig(
+    "DOCLING_API_KEY",
+    "rag.docling_api_key",
+    os.getenv("DOCLING_API_KEY", ""),
 )
 
-DOCLING_OCR_LANG = PersistentConfig(
-    "DOCLING_OCR_LANG",
-    "rag.docling_ocr_lang",
-    os.getenv("DOCLING_OCR_LANG", "eng,fra,deu,spa"),
-)
-
-DOCLING_DO_PICTURE_DESCRIPTION = PersistentConfig(
-    "DOCLING_DO_PICTURE_DESCRIPTION",
-    "rag.docling_do_picture_description",
-    os.getenv("DOCLING_DO_PICTURE_DESCRIPTION", "False").lower() == "true",
-)
-
-DOCLING_PICTURE_DESCRIPTION_MODE = PersistentConfig(
-    "DOCLING_PICTURE_DESCRIPTION_MODE",
-    "rag.docling_picture_description_mode",
-    os.getenv("DOCLING_PICTURE_DESCRIPTION_MODE", ""),
-)
-
-
-docling_picture_description_local = os.getenv("DOCLING_PICTURE_DESCRIPTION_LOCAL", "")
+docling_params = os.getenv("DOCLING_PARAMS", "")
 try:
-    docling_picture_description_local = json.loads(docling_picture_description_local)
+    docling_params = json.loads(docling_params)
 except json.JSONDecodeError:
-    docling_picture_description_local = {}
+    docling_params = {}
 
-
-DOCLING_PICTURE_DESCRIPTION_LOCAL = PersistentConfig(
-    "DOCLING_PICTURE_DESCRIPTION_LOCAL",
-    "rag.docling_picture_description_local",
-    docling_picture_description_local,
+DOCLING_PARAMS = PersistentConfig(
+    "DOCLING_PARAMS",
+    "rag.docling_params",
+    docling_params,
 )
-
-docling_picture_description_api = os.getenv("DOCLING_PICTURE_DESCRIPTION_API", "")
-try:
-    docling_picture_description_api = json.loads(docling_picture_description_api)
-except json.JSONDecodeError:
-    docling_picture_description_api = {}
-
-
-DOCLING_PICTURE_DESCRIPTION_API = PersistentConfig(
-    "DOCLING_PICTURE_DESCRIPTION_API",
-    "rag.docling_picture_description_api",
-    docling_picture_description_api,
-)
-
 
 DOCUMENT_INTELLIGENCE_ENDPOINT = PersistentConfig(
     "DOCUMENT_INTELLIGENCE_ENDPOINT",
@@ -2270,6 +2594,18 @@ DOCUMENT_INTELLIGENCE_KEY = PersistentConfig(
     "DOCUMENT_INTELLIGENCE_KEY",
     "rag.document_intelligence_key",
     os.getenv("DOCUMENT_INTELLIGENCE_KEY", ""),
+)
+
+DOCUMENT_INTELLIGENCE_MODEL = PersistentConfig(
+    "DOCUMENT_INTELLIGENCE_MODEL",
+    "rag.document_intelligence_model",
+    os.getenv("DOCUMENT_INTELLIGENCE_MODEL", "prebuilt-layout"),
+)
+
+MISTRAL_OCR_API_BASE_URL = PersistentConfig(
+    "MISTRAL_OCR_API_BASE_URL",
+    "rag.MISTRAL_OCR_API_BASE_URL",
+    os.getenv("MISTRAL_OCR_API_BASE_URL", "https://api.mistral.ai/v1"),
 )
 
 MISTRAL_OCR_API_KEY = PersistentConfig(
@@ -2308,6 +2644,13 @@ ENABLE_RAG_HYBRID_SEARCH = PersistentConfig(
     "ENABLE_RAG_HYBRID_SEARCH",
     "rag.enable_hybrid_search",
     os.environ.get("ENABLE_RAG_HYBRID_SEARCH", "").lower() == "true",
+)
+
+ENABLE_RAG_HYBRID_SEARCH_ENRICHED_TEXTS = PersistentConfig(
+    "ENABLE_RAG_HYBRID_SEARCH_ENRICHED_TEXTS",
+    "rag.enable_hybrid_search_enriched_texts",
+    os.environ.get("ENABLE_RAG_HYBRID_SEARCH_ENRICHED_TEXTS", "False").lower()
+    == "true",
 )
 
 RAG_FULL_CONTEXT = PersistentConfig(
@@ -2404,6 +2747,12 @@ RAG_EMBEDDING_BATCH_SIZE = PersistentConfig(
     ),
 )
 
+ENABLE_ASYNC_EMBEDDING = PersistentConfig(
+    "ENABLE_ASYNC_EMBEDDING",
+    "rag.enable_async_embedding",
+    os.environ.get("ENABLE_ASYNC_EMBEDDING", "True").lower() == "true",
+)
+
 RAG_EMBEDDING_QUERY_PREFIX = os.environ.get("RAG_EMBEDDING_QUERY_PREFIX", None)
 
 RAG_EMBEDDING_CONTENT_PREFIX = os.environ.get("RAG_EMBEDDING_CONTENT_PREFIX", None)
@@ -2497,10 +2846,6 @@ Provide a clear and direct response to the user's query, including inline citati
 <context>
 {{CONTEXT}}
 </context>
-
-<user_query>
-{{QUERY}}
-</user_query>
 """
 
 RAG_TEMPLATE = PersistentConfig(
@@ -2552,6 +2897,26 @@ RAG_OLLAMA_API_KEY = PersistentConfig(
 ENABLE_RAG_LOCAL_WEB_FETCH = (
     os.getenv("ENABLE_RAG_LOCAL_WEB_FETCH", "False").lower() == "true"
 )
+
+
+DEFAULT_WEB_FETCH_FILTER_LIST = [
+    "!169.254.169.254",
+    "!fd00:ec2::254",
+    "!metadata.google.internal",
+    "!metadata.azure.com",
+    "!100.100.100.200",
+]
+
+web_fetch_filter_list = os.getenv("WEB_FETCH_FILTER_LIST", "")
+if web_fetch_filter_list == "":
+    web_fetch_filter_list = []
+else:
+    web_fetch_filter_list = [
+        item.strip() for item in web_fetch_filter_list.split(",") if item.strip()
+    ]
+
+WEB_FETCH_FILTER_LIST = list(set(DEFAULT_WEB_FETCH_FILTER_LIST + web_fetch_filter_list))
+
 
 YOUTUBE_LOADER_LANGUAGE = PersistentConfig(
     "YOUTUBE_LOADER_LANGUAGE",
@@ -2611,6 +2976,7 @@ WEB_SEARCH_DOMAIN_FILTER_LIST = PersistentConfig(
         # "wikipedia.com",
         # "wikimedia.org",
         # "wikidata.org",
+        # "!stackoverflow.com",
     ],
 )
 
@@ -2634,6 +3000,12 @@ WEB_LOADER_CONCURRENT_REQUESTS = PersistentConfig(
     int(os.getenv("WEB_LOADER_CONCURRENT_REQUESTS", "10")),
 )
 
+WEB_LOADER_TIMEOUT = PersistentConfig(
+    "WEB_LOADER_TIMEOUT",
+    "rag.web.loader.timeout",
+    os.getenv("WEB_LOADER_TIMEOUT", ""),
+)
+
 
 ENABLE_WEB_LOADER_SSL_VERIFICATION = PersistentConfig(
     "ENABLE_WEB_LOADER_SSL_VERIFICATION",
@@ -2647,6 +3019,12 @@ WEB_SEARCH_TRUST_ENV = PersistentConfig(
     os.getenv("WEB_SEARCH_TRUST_ENV", "False").lower() == "true",
 )
 
+
+OLLAMA_CLOUD_WEB_SEARCH_API_KEY = PersistentConfig(
+    "OLLAMA_CLOUD_WEB_SEARCH_API_KEY",
+    "rag.web.search.ollama_cloud_api_key",
+    os.getenv("OLLAMA_CLOUD_API_KEY", ""),
+)
 
 SEARXNG_QUERY_URL = PersistentConfig(
     "SEARXNG_QUERY_URL",
@@ -2776,6 +3154,24 @@ BING_SEARCH_V7_SUBSCRIPTION_KEY = PersistentConfig(
     os.environ.get("BING_SEARCH_V7_SUBSCRIPTION_KEY", ""),
 )
 
+AZURE_AI_SEARCH_API_KEY = PersistentConfig(
+    "AZURE_AI_SEARCH_API_KEY",
+    "rag.web.search.azure_ai_search_api_key",
+    os.environ.get("AZURE_AI_SEARCH_API_KEY", ""),
+)
+
+AZURE_AI_SEARCH_ENDPOINT = PersistentConfig(
+    "AZURE_AI_SEARCH_ENDPOINT",
+    "rag.web.search.azure_ai_search_endpoint",
+    os.environ.get("AZURE_AI_SEARCH_ENDPOINT", ""),
+)
+
+AZURE_AI_SEARCH_INDEX_NAME = PersistentConfig(
+    "AZURE_AI_SEARCH_INDEX_NAME",
+    "rag.web.search.azure_ai_search_index_name",
+    os.environ.get("AZURE_AI_SEARCH_INDEX_NAME", ""),
+)
+
 EXA_API_KEY = PersistentConfig(
     "EXA_API_KEY",
     "rag.web.search.exa_api_key",
@@ -2798,6 +3194,12 @@ PERPLEXITY_SEARCH_CONTEXT_USAGE = PersistentConfig(
     "PERPLEXITY_SEARCH_CONTEXT_USAGE",
     "rag.web.search.perplexity_search_context_usage",
     os.getenv("PERPLEXITY_SEARCH_CONTEXT_USAGE", "medium"),
+)
+
+PERPLEXITY_SEARCH_API_URL = PersistentConfig(
+    "PERPLEXITY_SEARCH_API_URL",
+    "rag.web.search.perplexity_search_api_url",
+    os.getenv("PERPLEXITY_SEARCH_API_URL", "https://api.perplexity.ai/search"),
 )
 
 SOUGOU_API_SID = PersistentConfig(
@@ -2876,16 +3278,30 @@ EXTERNAL_WEB_LOADER_API_KEY = PersistentConfig(
 # Images
 ####################################
 
+ENABLE_IMAGE_GENERATION = PersistentConfig(
+    "ENABLE_IMAGE_GENERATION",
+    "image_generation.enable",
+    os.environ.get("ENABLE_IMAGE_GENERATION", "").lower() == "true",
+)
+
 IMAGE_GENERATION_ENGINE = PersistentConfig(
     "IMAGE_GENERATION_ENGINE",
     "image_generation.engine",
     os.getenv("IMAGE_GENERATION_ENGINE", "openai"),
 )
 
-ENABLE_IMAGE_GENERATION = PersistentConfig(
-    "ENABLE_IMAGE_GENERATION",
-    "image_generation.enable",
-    os.environ.get("ENABLE_IMAGE_GENERATION", "").lower() == "true",
+IMAGE_GENERATION_MODEL = PersistentConfig(
+    "IMAGE_GENERATION_MODEL",
+    "image_generation.model",
+    os.getenv("IMAGE_GENERATION_MODEL", ""),
+)
+
+IMAGE_SIZE = PersistentConfig(
+    "IMAGE_SIZE", "image_generation.size", os.getenv("IMAGE_SIZE", "512x512")
+)
+
+IMAGE_STEPS = PersistentConfig(
+    "IMAGE_STEPS", "image_generation.steps", int(os.getenv("IMAGE_STEPS", 50))
 )
 
 ENABLE_IMAGE_PROMPT_GENERATION = PersistentConfig(
@@ -2905,35 +3321,16 @@ AUTOMATIC1111_API_AUTH = PersistentConfig(
     os.getenv("AUTOMATIC1111_API_AUTH", ""),
 )
 
-AUTOMATIC1111_CFG_SCALE = PersistentConfig(
-    "AUTOMATIC1111_CFG_SCALE",
-    "image_generation.automatic1111.cfg_scale",
-    (
-        float(os.environ.get("AUTOMATIC1111_CFG_SCALE"))
-        if os.environ.get("AUTOMATIC1111_CFG_SCALE")
-        else None
-    ),
-)
+automatic1111_params = os.getenv("AUTOMATIC1111_PARAMS", "")
+try:
+    automatic1111_params = json.loads(automatic1111_params)
+except json.JSONDecodeError:
+    automatic1111_params = {}
 
-
-AUTOMATIC1111_SAMPLER = PersistentConfig(
-    "AUTOMATIC1111_SAMPLER",
-    "image_generation.automatic1111.sampler",
-    (
-        os.environ.get("AUTOMATIC1111_SAMPLER")
-        if os.environ.get("AUTOMATIC1111_SAMPLER")
-        else None
-    ),
-)
-
-AUTOMATIC1111_SCHEDULER = PersistentConfig(
-    "AUTOMATIC1111_SCHEDULER",
-    "image_generation.automatic1111.scheduler",
-    (
-        os.environ.get("AUTOMATIC1111_SCHEDULER")
-        if os.environ.get("AUTOMATIC1111_SCHEDULER")
-        else None
-    ),
+AUTOMATIC1111_PARAMS = PersistentConfig(
+    "AUTOMATIC1111_PARAMS",
+    "image_generation.automatic1111.api_params",
+    automatic1111_params,
 )
 
 COMFYUI_BASE_URL = PersistentConfig(
@@ -3076,11 +3473,29 @@ IMAGES_OPENAI_API_BASE_URL = PersistentConfig(
     "image_generation.openai.api_base_url",
     os.getenv("IMAGES_OPENAI_API_BASE_URL", OPENAI_API_BASE_URL),
 )
+IMAGES_OPENAI_API_VERSION = PersistentConfig(
+    "IMAGES_OPENAI_API_VERSION",
+    "image_generation.openai.api_version",
+    os.getenv("IMAGES_OPENAI_API_VERSION", ""),
+)
+
 IMAGES_OPENAI_API_KEY = PersistentConfig(
     "IMAGES_OPENAI_API_KEY",
     "image_generation.openai.api_key",
     os.getenv("IMAGES_OPENAI_API_KEY", OPENAI_API_KEY),
 )
+
+images_openai_params = os.getenv("IMAGES_OPENAI_PARAMS", "")
+try:
+    images_openai_params = json.loads(images_openai_params)
+except json.JSONDecodeError:
+    images_openai_params = {}
+
+
+IMAGES_OPENAI_API_PARAMS = PersistentConfig(
+    "IMAGES_OPENAI_API_PARAMS", "image_generation.openai.params", images_openai_params
+)
+
 
 IMAGES_GEMINI_API_BASE_URL = PersistentConfig(
     "IMAGES_GEMINI_API_BASE_URL",
@@ -3093,18 +3508,84 @@ IMAGES_GEMINI_API_KEY = PersistentConfig(
     os.getenv("IMAGES_GEMINI_API_KEY", GEMINI_API_KEY),
 )
 
-IMAGE_SIZE = PersistentConfig(
-    "IMAGE_SIZE", "image_generation.size", os.getenv("IMAGE_SIZE", "512x512")
+IMAGES_GEMINI_ENDPOINT_METHOD = PersistentConfig(
+    "IMAGES_GEMINI_ENDPOINT_METHOD",
+    "image_generation.gemini.endpoint_method",
+    os.getenv("IMAGES_GEMINI_ENDPOINT_METHOD", ""),
 )
 
-IMAGE_STEPS = PersistentConfig(
-    "IMAGE_STEPS", "image_generation.steps", int(os.getenv("IMAGE_STEPS", 50))
+ENABLE_IMAGE_EDIT = PersistentConfig(
+    "ENABLE_IMAGE_EDIT",
+    "images.edit.enable",
+    os.environ.get("ENABLE_IMAGE_EDIT", "").lower() == "true",
 )
 
-IMAGE_GENERATION_MODEL = PersistentConfig(
-    "IMAGE_GENERATION_MODEL",
-    "image_generation.model",
-    os.getenv("IMAGE_GENERATION_MODEL", ""),
+IMAGE_EDIT_ENGINE = PersistentConfig(
+    "IMAGE_EDIT_ENGINE",
+    "images.edit.engine",
+    os.getenv("IMAGE_EDIT_ENGINE", "openai"),
+)
+
+IMAGE_EDIT_MODEL = PersistentConfig(
+    "IMAGE_EDIT_MODEL",
+    "images.edit.model",
+    os.getenv("IMAGE_EDIT_MODEL", ""),
+)
+
+IMAGE_EDIT_SIZE = PersistentConfig(
+    "IMAGE_EDIT_SIZE", "images.edit.size", os.getenv("IMAGE_EDIT_SIZE", "")
+)
+
+IMAGES_EDIT_OPENAI_API_BASE_URL = PersistentConfig(
+    "IMAGES_EDIT_OPENAI_API_BASE_URL",
+    "images.edit.openai.api_base_url",
+    os.getenv("IMAGES_EDIT_OPENAI_API_BASE_URL", OPENAI_API_BASE_URL),
+)
+IMAGES_EDIT_OPENAI_API_VERSION = PersistentConfig(
+    "IMAGES_EDIT_OPENAI_API_VERSION",
+    "images.edit.openai.api_version",
+    os.getenv("IMAGES_EDIT_OPENAI_API_VERSION", ""),
+)
+
+IMAGES_EDIT_OPENAI_API_KEY = PersistentConfig(
+    "IMAGES_EDIT_OPENAI_API_KEY",
+    "images.edit.openai.api_key",
+    os.getenv("IMAGES_EDIT_OPENAI_API_KEY", OPENAI_API_KEY),
+)
+
+IMAGES_EDIT_GEMINI_API_BASE_URL = PersistentConfig(
+    "IMAGES_EDIT_GEMINI_API_BASE_URL",
+    "images.edit.gemini.api_base_url",
+    os.getenv("IMAGES_EDIT_GEMINI_API_BASE_URL", GEMINI_API_BASE_URL),
+)
+IMAGES_EDIT_GEMINI_API_KEY = PersistentConfig(
+    "IMAGES_EDIT_GEMINI_API_KEY",
+    "images.edit.gemini.api_key",
+    os.getenv("IMAGES_EDIT_GEMINI_API_KEY", GEMINI_API_KEY),
+)
+
+
+IMAGES_EDIT_COMFYUI_BASE_URL = PersistentConfig(
+    "IMAGES_EDIT_COMFYUI_BASE_URL",
+    "images.edit.comfyui.base_url",
+    os.getenv("IMAGES_EDIT_COMFYUI_BASE_URL", ""),
+)
+IMAGES_EDIT_COMFYUI_API_KEY = PersistentConfig(
+    "IMAGES_EDIT_COMFYUI_API_KEY",
+    "images.edit.comfyui.api_key",
+    os.getenv("IMAGES_EDIT_COMFYUI_API_KEY", ""),
+)
+
+IMAGES_EDIT_COMFYUI_WORKFLOW = PersistentConfig(
+    "IMAGES_EDIT_COMFYUI_WORKFLOW",
+    "images.edit.comfyui.workflow",
+    os.getenv("IMAGES_EDIT_COMFYUI_WORKFLOW", ""),
+)
+
+IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = PersistentConfig(
+    "IMAGES_EDIT_COMFYUI_WORKFLOW_NODES",
+    "images.edit.comfyui.nodes",
+    [],
 )
 
 ####################################
@@ -3139,6 +3620,10 @@ DEEPGRAM_API_KEY = PersistentConfig(
     os.getenv("DEEPGRAM_API_KEY", ""),
 )
 
+# ElevenLabs configuration
+ELEVENLABS_API_BASE_URL = os.getenv(
+    "ELEVENLABS_API_BASE_URL", "https://api.elevenlabs.io"
+)
 
 AUDIO_STT_OPENAI_API_BASE_URL = PersistentConfig(
     "AUDIO_STT_OPENAI_API_BASE_URL",
@@ -3206,6 +3691,24 @@ AUDIO_STT_AZURE_MAX_SPEAKERS = PersistentConfig(
     os.getenv("AUDIO_STT_AZURE_MAX_SPEAKERS", ""),
 )
 
+AUDIO_STT_MISTRAL_API_KEY = PersistentConfig(
+    "AUDIO_STT_MISTRAL_API_KEY",
+    "audio.stt.mistral.api_key",
+    os.getenv("AUDIO_STT_MISTRAL_API_KEY", ""),
+)
+
+AUDIO_STT_MISTRAL_API_BASE_URL = PersistentConfig(
+    "AUDIO_STT_MISTRAL_API_BASE_URL",
+    "audio.stt.mistral.api_base_url",
+    os.getenv("AUDIO_STT_MISTRAL_API_BASE_URL", "https://api.mistral.ai/v1"),
+)
+
+AUDIO_STT_MISTRAL_USE_CHAT_COMPLETIONS = PersistentConfig(
+    "AUDIO_STT_MISTRAL_USE_CHAT_COMPLETIONS",
+    "audio.stt.mistral.use_chat_completions",
+    os.getenv("AUDIO_STT_MISTRAL_USE_CHAT_COMPLETIONS", "false").lower() == "true",
+)
+
 AUDIO_TTS_OPENAI_API_BASE_URL = PersistentConfig(
     "AUDIO_TTS_OPENAI_API_BASE_URL",
     "audio.tts.openai.api_base_url",
@@ -3216,6 +3719,19 @@ AUDIO_TTS_OPENAI_API_KEY = PersistentConfig(
     "audio.tts.openai.api_key",
     os.getenv("AUDIO_TTS_OPENAI_API_KEY", OPENAI_API_KEY),
 )
+
+audio_tts_openai_params = os.getenv("AUDIO_TTS_OPENAI_PARAMS", "")
+try:
+    audio_tts_openai_params = json.loads(audio_tts_openai_params)
+except json.JSONDecodeError:
+    audio_tts_openai_params = {}
+
+AUDIO_TTS_OPENAI_PARAMS = PersistentConfig(
+    "AUDIO_TTS_OPENAI_PARAMS",
+    "audio.tts.openai.params",
+    audio_tts_openai_params,
+)
+
 
 AUDIO_TTS_API_KEY = PersistentConfig(
     "AUDIO_TTS_API_KEY",

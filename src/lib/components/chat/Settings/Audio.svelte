@@ -6,7 +6,6 @@
 	import { getVoices as _getVoices } from '$lib/apis/audio';
 
 	import Switch from '$lib/components/common/Switch.svelte';
-	import { round } from '@huggingface/transformers';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	const dispatch = createEventDispatcher();
@@ -176,7 +175,7 @@
 		dispatch('save');
 	}}
 >
-	<div class=" space-y-3 overflow-y-scroll max-h-[28rem] lg:max-h-full">
+	<div class=" space-y-3 overflow-y-scroll max-h-[28rem] md:max-h-full">
 		<div>
 			<div class=" mb-1 text-sm font-medium">{$i18n.t('STT Settings')}</div>
 
@@ -307,7 +306,7 @@
 			</div>
 		</div>
 
-		<hr class=" border-gray-100 dark:border-gray-850" />
+		<hr class=" border-gray-100/30 dark:border-gray-850/30" />
 
 		{#if TTSEngine === 'browser-kokoro'}
 			{#if TTSModel}
@@ -354,7 +353,7 @@
 				<div class="flex w-full">
 					<div class="flex-1">
 						<select
-							class="w-full text-sm bg-transparent dark:text-gray-300 outline-hidden"
+							class="dark:bg-gray-900 w-full text-sm bg-transparent dark:text-gray-300 outline-hidden"
 							bind:value={voice}
 						>
 							<option value="" selected={voice !== ''}>{$i18n.t('Default')}</option>
