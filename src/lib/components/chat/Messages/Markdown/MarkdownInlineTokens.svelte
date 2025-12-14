@@ -17,14 +17,16 @@
 	import TextToken from './MarkdownInlineTokens/TextToken.svelte';
 	import CodespanToken from './MarkdownInlineTokens/CodespanToken.svelte';
 	import MentionToken from './MarkdownInlineTokens/MentionToken.svelte';
+	import SourceToken from './SourceToken.svelte';
 
 	export let id: string;
 	export let done = true;
 	export let tokens: Token[];
+	export let sourceIds = [];
 	export let onSourceClick: Function = () => {};
 </script>
 
-{#each tokens as token}
+{#each tokens as token, tokenIdx (tokenIdx)}
 	{#if token.type === 'escape'}
 		{unescapeHtml(token.text)}
 	{:else if token.type === 'html'}
@@ -59,10 +61,25 @@
 			title={token.fileId}
 			width="100%"
 			frameborder="0"
-			onload="this.style.height=(this.contentWindow.document.body.scrollHeight+20)+'px';"
+			on:load={(e) => {
+				try {
+					e.currentTarget.style.height =
+						e.currentTarget.contentWindow.document.body.scrollHeight + 20 + 'px';
+				} catch {}
+			}}
 		></iframe>
 	{:else if token.type === 'mention'}
 		<MentionToken {token} />
+	{:else if token.type === 'footnote'}
+		{@html DOMPurify.sanitize(
+			`<sup class="footnote-ref footnote-ref-text">${token.escapedText}</sup>`
+		) || ''}
+	{:else if token.type === 'citation'}
+		{#if (sourceIds ?? []).length > 0}
+			<SourceToken {id} {token} {sourceIds} onClick={onSourceClick} />
+		{:else}
+			<TextToken {token} {done} />
+		{/if}
 	{:else if token.type === 'text'}
 		<TextToken {token} {done} />
 	{/if}

@@ -158,6 +158,7 @@
 
 		if (res) {
 			toast.success($i18n.t('Function deleted successfully'));
+			functions = functions.filter((f) => f.id !== func.id);
 
 			_functions.set(await getFunctions(localStorage.token));
 			models.set(
@@ -342,7 +343,7 @@
 		</div>
 
 		<div
-			class="py-2 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-850"
+			class="py-2 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100/30 dark:border-gray-850/30"
 		>
 			<div class="px-3.5 flex flex-1 items-center w-full space-x-2 py-0.5 pb-2">
 				<div class="flex flex-1">
