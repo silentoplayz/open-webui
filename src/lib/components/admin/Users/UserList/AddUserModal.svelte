@@ -10,6 +10,7 @@
 	import Modal from '$lib/components/common/Modal.svelte';
 	import { generateInitialsImage } from '$lib/utils';
 	import XMark from '$lib/components/icons/XMark.svelte';
+	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 
 	const i18n = getContext('i18n');
 	const dispatch = createEventDispatcher();
@@ -103,7 +104,9 @@
 						}
 					}
 
-					toast.success(`Successfully imported ${userCount} users.`);
+					toast.success(
+						$i18n.t('Successfully imported {{userCount}} users.', { userCount: userCount })
+					);
 					inputFiles = null;
 					const uploadInputElement = document.getElementById('upload-user-csv-input');
 
@@ -177,7 +180,7 @@
 
 								<div class="flex-1">
 									<select
-										class="w-full capitalize rounded-lg text-sm bg-transparent dark:disabled:text-gray-500 outline-hidden"
+										class="dark:bg-gray-900 w-full capitalize rounded-lg text-sm bg-transparent dark:disabled:text-gray-500 outline-hidden"
 										bind:value={_user.role}
 										placeholder={$i18n.t('Enter Your Role')}
 										required
@@ -204,7 +207,7 @@
 								</div>
 							</div>
 
-							<hr class=" border-gray-100 dark:border-gray-850 my-2.5 w-full" />
+							<hr class=" border-gray-100/30 dark:border-gray-850/30 my-2.5 w-full" />
 
 							<div class="flex flex-col w-full">
 								<div class=" mb-1 text-xs text-gray-500">{$i18n.t('Email')}</div>
@@ -224,12 +227,13 @@
 								<div class=" mb-1 text-xs text-gray-500">{$i18n.t('Password')}</div>
 
 								<div class="flex-1">
-									<input
+									<SensitiveInput
 										class="w-full text-sm bg-transparent disabled:text-gray-500 dark:disabled:text-gray-500 outline-hidden"
 										type="password"
 										bind:value={_user.password}
 										placeholder={$i18n.t('Enter Your Password')}
 										autocomplete="off"
+										required
 									/>
 								</div>
 							</div>

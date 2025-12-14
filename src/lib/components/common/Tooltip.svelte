@@ -7,14 +7,19 @@
 
 	export let elementId = '';
 
+	export let as = 'div';
+	export let className = 'flex';
+
 	export let placement = 'top';
 	export let content = `I'm a tooltip!`;
 	export let touch = true;
-	export let className = 'flex';
 	export let theme = '';
 	export let offset = [0, 4];
 	export let allowHTML = true;
 	export let tippyOptions = {};
+	export let interactive = false;
+
+	export let onClick = () => {};
 
 	let tooltipElement;
 	let tooltipInstance;
@@ -40,6 +45,7 @@
 					...(theme !== '' ? { theme } : { theme: 'dark' }),
 					arrow: false,
 					offset: offset,
+					...(interactive ? { interactive: true } : {}),
 					...tippyOptions
 				});
 			}
@@ -57,8 +63,9 @@
 	});
 </script>
 
-<div bind:this={tooltipElement} class={className}>
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<svelte:element this={as} bind:this={tooltipElement} class={className} on:click={onClick}>
 	<slot />
-</div>
+</svelte:element>
 
 <slot name="tooltip"></slot>

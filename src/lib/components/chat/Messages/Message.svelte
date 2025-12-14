@@ -41,9 +41,12 @@
 	export let addMessages;
 	export let triggerScroll;
 	export let readOnly = false;
+	export let editCodeBlock = true;
+	export let topPadding = false;
 </script>
 
 <div
+	role="listitem"
 	class="flex flex-col justify-between px-5 mb-3 w-full {($settings?.widescreenMode ?? null)
 		? 'max-w-full'
 		: 'max-w-5xl'} mx-auto rounded-lg group"
@@ -52,6 +55,7 @@
 		{#if history.messages[messageId].role === 'user'}
 			<UserMessage
 				{user}
+				{chatId}
 				{history}
 				{messageId}
 				isFirstMessage={idx === 0}
@@ -66,6 +70,8 @@
 				{editMessage}
 				{deleteMessage}
 				{readOnly}
+				{editCodeBlock}
+				{topPadding}
 			/>
 		{:else if (history.messages[history.messages[messageId].parentId]?.models?.length ?? 1) === 1}
 			<ResponseMessage
@@ -90,6 +96,8 @@
 				{regenerateResponse}
 				{addMessages}
 				{readOnly}
+				{editCodeBlock}
+				{topPadding}
 			/>
 		{:else}
 			<MultiResponseMessages
@@ -112,6 +120,8 @@
 				{triggerScroll}
 				{addMessages}
 				{readOnly}
+				{editCodeBlock}
+				{topPadding}
 			/>
 		{/if}
 	{/if}

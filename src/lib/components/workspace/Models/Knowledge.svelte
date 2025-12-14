@@ -2,7 +2,7 @@
 	import { getContext, onMount } from 'svelte';
 	import { config, knowledge, settings, user } from '$lib/stores';
 
-	import Selector from './Knowledge/Selector.svelte';
+	import KnowledgeSelector from './Knowledge/KnowledgeSelector.svelte';
 	import FileItem from '$lib/components/common/FileItem.svelte';
 
 	import { getKnowledgeBases } from '$lib/apis/knowledge';
@@ -18,7 +18,7 @@
 	let loaded = false;
 
 	let filesInputElement = null;
-	let inputFiles = [];
+	let inputFiles = null;
 
 	const uploadFileHandler = async (file, fullContext: boolean = false) => {
 		if ($user?.role !== 'admin' && !($user?.permissions?.chat?.file_upload ?? true)) {
@@ -95,8 +95,6 @@
 	const inputFilesHandler = async (inputFiles) => {
 		console.log('Input files handler called with:', inputFiles);
 
-		
-
 		inputFiles.forEach(async (file) => {
 			console.log('Processing file:', {
 				name: file.name,
@@ -130,9 +128,6 @@
 	};
 
 	onMount(async () => {
-		if (!$knowledge) {
-			knowledge.set(await getKnowledgeBases(localStorage.token));
-		}
 		loaded = true;
 	});
 </script>
@@ -159,30 +154,28 @@
 	<slot name="label">
 		<div class="mb-2">
 			<div class="flex w-full justify-between mb-1">
-				<div class=" self-center text-sm font-semibold">
+				<div class=" self-center text-xs font-medium text-gray-500">
 					{$i18n.t('Knowledge')}
 				</div>
-			</div>
-
-			<div class=" text-xs dark:text-gray-500">
-				{$i18n.t('To attach knowledge base here, add them to the "Knowledge" workspace first.')}
 			</div>
 		</div>
 	</slot>
 
-	<div class="flex flex-col">
+	<div class="flex flex-col mb-1">
 		{#if selectedItems?.length > 0}
 			<div class=" flex flex-wrap items-center gap-2 mb-2.5">
 				{#each selectedItems as file, fileIdx}
 					<FileItem
 						{file}
+						small={true}
 						item={file}
 						name={file.name}
 						modal={true}
 						edit={true}
+						loading={file.status === 'uploading'}
 						type={file?.legacy
 							? `Legacy${file.type ? ` ${file.type}` : ''}`
-							: (file?.type ?? 'Collection')}
+							: (file?.type ?? 'collection')}
 						dismissible
 						on:dismiss={(e) => {
 							selectedItems = selectedItems.filter((_, idx) => idx !== fileIdx);
@@ -194,8 +187,7 @@
 
 		{#if loaded}
 			<div class="flex flex-wrap flex-row text-sm gap-1">
-				<Selector
-					knowledgeItems={$knowledge || []}
+				<KnowledgeSelector
 					on:select={(e) => {
 						const item = e.detail;
 
@@ -214,7 +206,7 @@
 					>
 						{$i18n.t('Select Knowledge')}
 					</div>
-				</Selector>
+				</KnowledgeSelector>
 
 				{#if $user?.role === 'admin' || $user?.permissions?.chat?.file_upload}
 					<button
@@ -228,5 +220,9 @@
 			</div>
 		{/if}
 		<!-- {knowledge} -->
+	</div>
+
+	<div class=" text-xs dark:text-gray-700">
+		{$i18n.t('To attach knowledge base here, add them to the "Knowledge" workspace first.')}
 	</div>
 </div>

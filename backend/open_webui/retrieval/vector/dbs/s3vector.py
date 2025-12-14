@@ -1,3 +1,4 @@
+from open_webui.retrieval.vector.utils import process_metadata
 from open_webui.retrieval.vector.main import (
     VectorDBBase,
     VectorItem,
@@ -116,15 +117,16 @@ class S3VectorClient(VectorDBBase):
 
     def has_collection(self, collection_name: str) -> bool:
         """
-        Check if a vector index (collection) exists in the S3 vector bucket.
+        Check if a vector index exists using direct lookup.
+        This avoids pagination issues with list_indexes() and is significantly faster.
         """
-
         try:
-            response = self.client.list_indexes(vectorBucketName=self.bucket_name)
-            indexes = response.get("indexes", [])
-            return any(idx.get("indexName") == collection_name for idx in indexes)
+            self.client.get_index(
+                vectorBucketName=self.bucket_name, indexName=collection_name
+            )
+            return True
         except Exception as e:
-            log.error(f"Error listing indexes: {e}")
+            log.error(f"Error checking if index '{collection_name}' exists: {e}")
             return False
 
     def delete_collection(self, collection_name: str) -> None:
@@ -183,6 +185,9 @@ class S3VectorClient(VectorDBBase):
                 # Add the text field to metadata so it's available for retrieval
                 metadata["text"] = item["text"]
 
+                # Convert metadata to string format for consistency
+                metadata = process_metadata(metadata)
+
                 # Filter metadata to comply with S3 Vector API limit of 10 keys
                 metadata = self._filter_metadata(metadata, item["id"])
 
@@ -193,13 +198,23 @@ class S3VectorClient(VectorDBBase):
                         "metadata": metadata,
                     }
                 )
-            # Insert vectors
-            self.client.put_vectors(
-                vectorBucketName=self.bucket_name,
-                indexName=collection_name,
-                vectors=vectors,
+
+            # Insert vectors in batches of 500 (S3 Vector API limit)
+            batch_size = 500
+            for i in range(0, len(vectors), batch_size):
+                batch = vectors[i : i + batch_size]
+                self.client.put_vectors(
+                    vectorBucketName=self.bucket_name,
+                    indexName=collection_name,
+                    vectors=batch,
+                )
+                log.info(
+                    f"Inserted batch {i//batch_size + 1}: {len(batch)} vectors into index '{collection_name}'."
+                )
+
+            log.info(
+                f"Completed insertion of {len(vectors)} vectors into index '{collection_name}'."
             )
-            log.info(f"Inserted {len(vectors)} vectors into index '{collection_name}'.")
         except Exception as e:
             log.error(f"Error inserting vectors: {e}")
             raise
@@ -241,6 +256,9 @@ class S3VectorClient(VectorDBBase):
                 # Add the text field to metadata so it's available for retrieval
                 metadata["text"] = item["text"]
 
+                # Convert metadata to string format for consistency
+                metadata = process_metadata(metadata)
+
                 # Filter metadata to comply with S3 Vector API limit of 10 keys
                 metadata = self._filter_metadata(metadata, item["id"])
 
@@ -251,16 +269,29 @@ class S3VectorClient(VectorDBBase):
                         "metadata": metadata,
                     }
                 )
-            # Upsert vectors (using put_vectors for upsert semantics)
+
+            # Upsert vectors in batches of 500 (S3 Vector API limit)
+            batch_size = 500
+            for i in range(0, len(vectors), batch_size):
+                batch = vectors[i : i + batch_size]
+                if i == 0:  # Log sample info for first batch only
+                    log.info(
+                        f"Upserting batch 1: {len(batch)} vectors. First vector sample: key={batch[0]['key']}, data_type={type(batch[0]['data']['float32'])}, data_len={len(batch[0]['data']['float32'])}"
+                    )
+                else:
+                    log.info(
+                        f"Upserting batch {i//batch_size + 1}: {len(batch)} vectors."
+                    )
+
+                self.client.put_vectors(
+                    vectorBucketName=self.bucket_name,
+                    indexName=collection_name,
+                    vectors=batch,
+                )
+
             log.info(
-                f"Upserting {len(vectors)} vectors. First vector sample: key={vectors[0]['key']}, data_type={type(vectors[0]['data']['float32'])}, data_len={len(vectors[0]['data']['float32'])}"
+                f"Completed upsert of {len(vectors)} vectors into index '{collection_name}'."
             )
-            self.client.put_vectors(
-                vectorBucketName=self.bucket_name,
-                indexName=collection_name,
-                vectors=vectors,
-            )
-            log.info(f"Upserted {len(vectors)} vectors into index '{collection_name}'.")
         except Exception as e:
             log.error(f"Error upserting vectors: {e}")
             raise

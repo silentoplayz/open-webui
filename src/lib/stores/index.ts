@@ -8,6 +8,10 @@ import emojiShortCodes from '$lib/emoji-shortcodes.json';
 
 // Backend
 export const WEBUI_NAME = writable(APP_NAME);
+
+export const WEBUI_VERSION = writable(null);
+export const WEBUI_DEPLOYMENT_ID = writable(null);
+
 export const config: Writable<Config | undefined> = writable(undefined);
 export const user: Writable<SessionUser | undefined> = writable(undefined);
 
@@ -47,9 +51,12 @@ export const chatId = writable('');
 export const chatTitle = writable('');
 
 export const channels = writable([]);
+export const channelId = writable(null);
+
 export const chats = writable(null);
 export const pinnedChats = writable([]);
 export const tags = writable([]);
+export const folders = writable([]);
 
 export const selectedFolder = writable(null);
 
@@ -66,6 +73,10 @@ export const banners: Writable<Banner[]> = writable([]);
 
 export const settings: Writable<Settings> = writable({});
 
+export const audioQueue = writable(null);
+
+export const sidebarWidth = writable(260);
+
 export const showSidebar = writable(false);
 export const showSearch = writable(false);
 export const showSettings = writable(false);
@@ -74,11 +85,15 @@ export const showArchivedChats = writable(false);
 export const showChangelog = writable(false);
 
 export const showControls = writable(false);
+export const showEmbeds = writable(false);
 export const showOverview = writable(false);
 export const showArtifacts = writable(false);
 export const showCallOverlay = writable(false);
 
 export const artifactCode = writable(null);
+export const artifactContents = writable(null);
+
+export const embed = writable(null);
 
 export const temporaryChatEnabled = writable(false);
 export const scrollPaginationEnabled = writable(false);
@@ -153,6 +168,7 @@ type Settings = {
 	notifications?: any;
 	imageCompression?: boolean;
 	imageCompressionSize?: any;
+	textScale?: number;
 	widescreenMode?: null;
 	largeTextAsFile?: boolean;
 	promptAutocomplete?: boolean;
@@ -161,7 +177,7 @@ type Settings = {
 	richTextInput?: boolean;
 	params?: any;
 	userLocation?: any;
-	webSearch?: boolean;
+	webSearch?: any;
 	memory?: boolean;
 	autoTags?: boolean;
 	autoFollowUps?: boolean;
@@ -183,6 +199,7 @@ type Settings = {
 	notificationEnabled?: boolean;
 	highContrastMode?: boolean;
 	title?: TitleSettings;
+	showChatTitleInTab?: boolean;
 	splitLargeDeltas?: boolean;
 	chatDirection?: 'LTR' | 'RTL' | 'auto';
 	ctrlEnterToSend?: boolean;
@@ -246,7 +263,7 @@ type Config = {
 	features: {
 		auth: boolean;
 		auth_trusted_header: boolean;
-		enable_api_key: boolean;
+		enable_api_keys: boolean;
 		enable_signup: boolean;
 		enable_login_form: boolean;
 		enable_web_search?: boolean;
@@ -276,7 +293,7 @@ type PromptSuggestion = {
 	title: [string, string];
 };
 
-type SessionUser = {
+export type SessionUser = {
 	permissions: any;
 	id: string;
 	email: string;

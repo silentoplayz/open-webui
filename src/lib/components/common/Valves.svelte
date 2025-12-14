@@ -5,7 +5,6 @@
 
 	import Switch from './Switch.svelte';
 	import MapSelector from './Valves/MapSelector.svelte';
-	import { split } from 'postcss/lib/list';
 
 	export let valvesSpec = null;
 	export let valves = {};
@@ -27,10 +26,19 @@
 					class="p-1 px-3 text-xs flex rounded-sm transition"
 					type="button"
 					on:click={() => {
-						valves[property] =
-							(valves[property] ?? null) === null
-								? (valvesSpec.properties[property]?.default ?? '')
-								: null;
+						const propertySpec = valvesSpec.properties[property] ?? {};
+
+						if ((valves[property] ?? null) === null) {
+							// Initialize to custom value
+							if ((propertySpec?.type ?? null) === 'array') {
+								const defaultArray = propertySpec?.default ?? [];
+								valves[property] = Array.isArray(defaultArray) ? defaultArray.join(', ') : '';
+							} else {
+								valves[property] = propertySpec?.default ?? '';
+							}
+						} else {
+							valves[property] = null;
+						}
 
 						dispatch('change');
 					}}
@@ -55,7 +63,7 @@
 					<div class=" flex-1">
 						{#if valvesSpec.properties[property]?.enum ?? null}
 							<select
-								class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100 dark:border-gray-850"
+								class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
 								bind:value={valves[property]}
 								on:change={() => {
 									dispatch('change');
@@ -70,7 +78,7 @@
 						{:else if (valvesSpec.properties[property]?.type ?? null) === 'boolean'}
 							<div class="flex justify-between items-center">
 								<div class="text-xs text-gray-500">
-									{valves[property] ? 'Enabled' : 'Disabled'}
+									{valves[property] ? $i18n.t('Enabled') : $i18n.t('Disabled')}
 								</div>
 
 								<div class=" pr-2">
@@ -84,7 +92,7 @@
 							</div>
 						{:else if (valvesSpec.properties[property]?.type ?? null) !== 'string'}
 							<input
-								class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100 dark:border-gray-850"
+								class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
 								type="text"
 								placeholder={valvesSpec.properties[property].title}
 								bind:value={valves[property]}
@@ -112,8 +120,8 @@
 
 									<input
 										type="text"
-										class="flex-1 rounded-lg py-2 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100 dark:border-gray-850"
-										placeholder="Enter hex color (e.g. #FF0000)"
+										class="flex-1 rounded-lg py-2 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
+										placeholder={$i18n.t('Enter hex color (e.g. #FF0000)')}
 										bind:value={valves[property]}
 										autocomplete="off"
 										disabled
@@ -138,8 +146,8 @@
 									{#if valves[property]}
 										<input
 											type="text"
-											class=" w-full rounded-lg py-1 text-left text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100 dark:border-gray-850"
-											placeholder="Enter coordinates (e.g. 51.505, -0.09)"
+											class=" w-full rounded-lg py-1 text-left text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
+											placeholder={$i18n.t('Enter coordinates (e.g. 51.505, -0.09)')}
 											bind:value={valves[property]}
 											autocomplete="off"
 											on:change={() => {
@@ -151,7 +159,7 @@
 							{/if}
 						{:else}
 							<textarea
-								class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100 dark:border-gray-850"
+								class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
 								placeholder={valvesSpec.properties[property].title}
 								bind:value={valves[property]}
 								autocomplete="off"
@@ -159,7 +167,7 @@
 								on:change={() => {
 									dispatch('change');
 								}}
-							/>
+							></textarea>
 						{/if}
 					</div>
 				</div>
@@ -173,5 +181,5 @@
 		</div>
 	{/each}
 {:else}
-	<div class="text-xs">No valves</div>
+	<div class="text-xs">{$i18n.t('No valves')}</div>
 {/if}

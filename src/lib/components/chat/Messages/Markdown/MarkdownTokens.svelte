@@ -1,5 +1,5 @@
 <script lang="ts">
-	import DOMPurify from 'dompurify';
+	import { decode } from 'html-entities';
 	import { onMount, getContext } from 'svelte';
 	const i18n = getContext('i18n');
 
@@ -7,9 +7,10 @@
 	const { saveAs } = fileSaver;
 
 	import { marked, type Token } from 'marked';
-	import { unescapeHtml } from '$lib/utils';
+	import { copyToClipboard, unescapeHtml } from '$lib/utils';
 
 	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { settings } from '$lib/stores';
 
 	import CodeBlock from '$lib/components/chat/Messages/CodeBlock.svelte';
 	import MarkdownInlineTokens from '$lib/components/chat/Messages/Markdown/MarkdownInlineTokens.svelte';
@@ -17,21 +18,26 @@
 	import AlertRenderer, { alertComponent } from './AlertRenderer.svelte';
 	import Collapsible from '$lib/components/common/Collapsible.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import ArrowDownTray from '$lib/components/icons/ArrowDownTray.svelte';
+	import Download from '$lib/components/icons/Download.svelte';
 
-	import Source from './Source.svelte';
-	import { settings } from '$lib/stores';
 	import HtmlToken from './HTMLToken.svelte';
+	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 
 	export let id: string;
 	export let tokens: Token[];
 	export let top = true;
 	export let attributes = {};
+	export let sourceIds = [];
 
 	export let done = true;
 
 	export let save = false;
 	export let preview = false;
+
+	export let paragraphTag = 'p';
+
+	export let editCodeBlock = true;
+	export let topPadding = false;
 
 	export let onSave: Function = () => {};
 	export let onUpdate: Function = () => {};
@@ -84,13 +90,14 @@
 <!-- {JSON.stringify(tokens)} -->
 {#each tokens as token, tokenIdx (tokenIdx)}
 	{#if token.type === 'hr'}
-		<hr class=" border-gray-100 dark:border-gray-850" />
+		<hr class=" border-gray-100/30 dark:border-gray-850/30" />
 	{:else if token.type === 'heading'}
 		<svelte:element this={headerComponent(token.depth)} dir="auto">
 			<MarkdownInlineTokens
 				id={`${id}-${tokenIdx}-h`}
 				tokens={token.tokens}
 				{done}
+				{sourceIds}
 				{onSourceClick}
 			/>
 		</svelte:element>
@@ -105,6 +112,8 @@
 				{attributes}
 				{save}
 				{preview}
+				edit={editCodeBlock}
+				stickyButtonsClassName={topPadding ? 'top-10' : 'top-0'}
 				onSave={(value) => {
 					onSave({
 						raw: token.raw,
@@ -119,19 +128,19 @@
 			{token.text}
 		{/if}
 	{:else if token.type === 'table'}
-		<div class="relative w-full group">
-			<div class="scrollbar-hidden relative overflow-x-auto max-w-full rounded-lg">
+		<div class="relative w-full group mb-2">
+			<div class="scrollbar-hidden relative overflow-x-auto max-w-full">
 				<table
 					class=" w-full text-sm text-left text-gray-500 dark:text-gray-400 max-w-full rounded-xl"
 				>
 					<thead
-						class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-850 dark:text-gray-400 border-none"
+						class="text-xs text-gray-700 uppercase bg-white dark:bg-gray-900 dark:text-gray-400 border-none"
 					>
 						<tr class="">
 							{#each token.header as header, headerIdx}
 								<th
 									scope="col"
-									class="px-3! py-1.5! cursor-pointer border border-gray-100 dark:border-gray-850"
+									class="px-2.5! py-2! cursor-pointer border-b border-gray-100! dark:border-gray-800!"
 									style={token.align[headerIdx] ? '' : `text-align: ${token.align[headerIdx]}`}
 								>
 									<div class="gap-1.5 text-left">
@@ -140,6 +149,7 @@
 												id={`${id}-${tokenIdx}-header-${headerIdx}`}
 												tokens={header.tokens}
 												{done}
+												{sourceIds}
 												{onSourceClick}
 											/>
 										</div>
@@ -150,10 +160,14 @@
 					</thead>
 					<tbody>
 						{#each token.rows as row, rowIdx}
-							<tr class="bg-white dark:bg-gray-900 dark:border-gray-850 text-xs">
+							<tr class="bg-white dark:bg-gray-900 text-xs">
 								{#each row ?? [] as cell, cellIdx}
 									<td
-										class="px-3! py-1.5! text-gray-900 dark:text-white w-max border border-gray-100 dark:border-gray-850"
+										class="px-3! py-2! text-gray-900 dark:text-white w-max {token.rows.length -
+											1 ===
+										rowIdx
+											? ''
+											: 'border-b border-gray-50! dark:border-gray-850!'}"
 										style={token.align[cellIdx] ? `text-align: ${token.align[cellIdx]}` : ''}
 									>
 										<div class="break-normal">
@@ -161,6 +175,7 @@
 												id={`${id}-${tokenIdx}-row-${rowIdx}-${cellIdx}`}
 												tokens={cell.tokens}
 												{done}
+												{sourceIds}
 												{onSourceClick}
 											/>
 										</div>
@@ -172,7 +187,19 @@
 				</table>
 			</div>
 
-			<div class=" absolute top-1 right-1.5 z-20 invisible group-hover:visible">
+			<div class=" absolute top-1 right-1.5 z-20 invisible group-hover:visible flex gap-0.5">
+				<Tooltip content={$i18n.t('Copy')}>
+					<button
+						class="p-1 rounded-lg bg-transparent transition"
+						on:click={(e) => {
+							e.stopPropagation();
+							copyToClipboard(token.raw.trim(), null, $settings?.copyFormatted ?? false);
+						}}
+					>
+						<Clipboard className=" size-3.5" strokeWidth="1.5" />
+					</button>
+				</Tooltip>
+
 				<Tooltip content={$i18n.t('Export to CSV')}>
 					<button
 						class="p-1 rounded-lg bg-transparent transition"
@@ -181,7 +208,7 @@
 							exportTableToCSVHandler(token, tokenIdx);
 						}}
 					>
-						<ArrowDownTray className=" size-3.5" strokeWidth="1.5" />
+						<Download className=" size-3.5" strokeWidth="1.5" />
 					</button>
 				</Tooltip>
 			</div>
@@ -196,7 +223,9 @@
 					id={`${id}-${tokenIdx}`}
 					tokens={token.tokens}
 					{done}
+					{editCodeBlock}
 					{onTaskClick}
+					{sourceIds}
 					{onSourceClick}
 				/>
 			</blockquote>
@@ -229,7 +258,9 @@
 							tokens={item.tokens}
 							top={token.loose}
 							{done}
+							{editCodeBlock}
 							{onTaskClick}
+							{sourceIds}
 							{onSourceClick}
 						/>
 					</li>
@@ -262,7 +293,9 @@
 									tokens={item.tokens}
 									top={token.loose}
 									{done}
+									{editCodeBlock}
 									{onTaskClick}
+									{sourceIds}
 									{onSourceClick}
 								/>
 							</div>
@@ -272,7 +305,9 @@
 								tokens={item.tokens}
 								top={token.loose}
 								{done}
+								{editCodeBlock}
 								{onTaskClick}
+								{sourceIds}
 								{onSourceClick}
 							/>
 						{/if}
@@ -291,10 +326,12 @@
 			<div class=" mb-1.5" slot="content">
 				<svelte:self
 					id={`${id}-${tokenIdx}-d`}
-					tokens={marked.lexer(token.text)}
+					tokens={marked.lexer(decode(token.text))}
 					attributes={token?.attributes}
 					{done}
+					{editCodeBlock}
 					{onTaskClick}
+					{sourceIds}
 					{onSourceClick}
 				/>
 			</div>
@@ -307,17 +344,35 @@
 			title={token.fileId}
 			width="100%"
 			frameborder="0"
-			onload="this.style.height=(this.contentWindow.document.body.scrollHeight+20)+'px';"
+			on:load={(e) => {
+				try {
+					e.currentTarget.style.height =
+						e.currentTarget.contentWindow.document.body.scrollHeight + 20 + 'px';
+				} catch {}
+			}}
 		></iframe>
 	{:else if token.type === 'paragraph'}
-		<p dir="auto">
-			<MarkdownInlineTokens
-				id={`${id}-${tokenIdx}-p`}
-				tokens={token.tokens ?? []}
-				{done}
-				{onSourceClick}
-			/>
-		</p>
+		{#if paragraphTag == 'span'}
+			<span dir="auto">
+				<MarkdownInlineTokens
+					id={`${id}-${tokenIdx}-p`}
+					tokens={token.tokens ?? []}
+					{done}
+					{sourceIds}
+					{onSourceClick}
+				/>
+			</span>
+		{:else}
+			<p dir="auto">
+				<MarkdownInlineTokens
+					id={`${id}-${tokenIdx}-p`}
+					tokens={token.tokens ?? []}
+					{done}
+					{sourceIds}
+					{onSourceClick}
+				/>
+			</p>
+		{/if}
 	{:else if token.type === 'text'}
 		{#if top}
 			<p>
@@ -326,6 +381,7 @@
 						id={`${id}-${tokenIdx}-t`}
 						tokens={token.tokens}
 						{done}
+						{sourceIds}
 						{onSourceClick}
 					/>
 				{:else}
@@ -337,6 +393,7 @@
 				id={`${id}-${tokenIdx}-p`}
 				tokens={token.tokens ?? []}
 				{done}
+				{sourceIds}
 				{onSourceClick}
 			/>
 		{:else}

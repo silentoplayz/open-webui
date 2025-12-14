@@ -7,13 +7,24 @@ import pycrdt as Y
 
 
 class RedisLock:
-    def __init__(self, redis_url, lock_name, timeout_secs, redis_sentinels=[]):
+    def __init__(
+        self,
+        redis_url,
+        lock_name,
+        timeout_secs,
+        redis_sentinels=[],
+        redis_cluster=False,
+    ):
+
         self.lock_name = lock_name
         self.lock_id = str(uuid.uuid4())
         self.timeout_secs = timeout_secs
         self.lock_obtained = False
         self.redis = get_redis_connection(
-            redis_url, redis_sentinels, decode_responses=True
+            redis_url,
+            redis_sentinels,
+            redis_cluster=redis_cluster,
+            decode_responses=True,
         )
 
     def aquire_lock(self):
@@ -36,10 +47,13 @@ class RedisLock:
 
 
 class RedisDict:
-    def __init__(self, name, redis_url, redis_sentinels=[]):
+    def __init__(self, name, redis_url, redis_sentinels=[], redis_cluster=False):
         self.name = name
         self.redis = get_redis_connection(
-            redis_url, redis_sentinels, decode_responses=True
+            redis_url,
+            redis_sentinels,
+            redis_cluster=redis_cluster,
+            decode_responses=True,
         )
 
     def __setitem__(self, key, value):
@@ -71,6 +85,15 @@ class RedisDict:
 
     def items(self):
         return [(k, json.loads(v)) for k, v in self.redis.hgetall(self.name).items()]
+
+    def set(self, mapping: dict):
+        pipe = self.redis.pipeline()
+
+        pipe.delete(self.name)
+        if mapping:
+            pipe.hset(self.name, mapping={k: json.dumps(v) for k, v in mapping.items()})
+
+        pipe.execute()
 
     def get(self, key, default=None):
         try:
@@ -167,7 +190,9 @@ class YdocManager:
 
     async def remove_user_from_all_documents(self, user_id: str):
         if self._redis:
-            keys = await self._redis.keys(f"{self._redis_key_prefix}:*")
+            keys = []
+            async for key in self._redis.scan_iter(match=f"{self._redis_key_prefix}:*", count=100):
+                keys.append(key)
             for key in keys:
                 if key.endswith(":users"):
                     await self._redis.srem(key, user_id)

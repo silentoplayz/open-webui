@@ -11,7 +11,7 @@
 
 	import { selectedFolder } from '$lib/stores';
 
-	import { deleteFolderById, updateFolderById } from '$lib/apis/folders';
+	import { deleteFolderById, getFolderById, updateFolderById } from '$lib/apis/folders';
 	import { getChatsByFolderId } from '$lib/apis/chats';
 
 	import FolderModal from '$lib/components/layout/Sidebar/Folders/FolderModal.svelte';
@@ -21,6 +21,8 @@
 	import FolderMenu from '$lib/components/layout/Sidebar/Folders/FolderMenu.svelte';
 	import EllipsisHorizontal from '$lib/components/icons/EllipsisHorizontal.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import Emoji from '$lib/components/common/Emoji.svelte';
+	import EmojiPicker from '$lib/components/common/EmojiPicker.svelte';
 
 	export let folder = null;
 
@@ -29,8 +31,9 @@
 
 	let showFolderModal = false;
 	let showDeleteConfirm = false;
+	let deleteFolderContents = true;
 
-	const updateHandler = async ({ name, data }) => {
+	const updateHandler = async ({ name, meta, data }) => {
 		if (name === '') {
 			toast.error($i18n.t('Folder name cannot be empty.'));
 			return;
@@ -43,6 +46,7 @@
 
 		const res = await updateFolderById(localStorage.token, folder.id, {
 			name,
+			...(meta ? { meta } : {}),
 			...(data ? { data } : {})
 		}).catch((error) => {
 			toast.error(`${error}`);
@@ -58,16 +62,49 @@
 			}
 
 			toast.success($i18n.t('Folder updated successfully'));
-			selectedFolder.set(folder);
-			onUpdate(folder);
+
+			const _folder = await getFolderById(localStorage.token, folder.id).catch((error) => {
+				toast.error(`${error}`);
+				return null;
+			});
+
+			await selectedFolder.set(_folder);
+			onUpdate(_folder);
+		}
+	};
+
+	const updateIconHandler = async (iconName) => {
+		const res = await updateFolderById(localStorage.token, folder.id, {
+			meta: {
+				icon: iconName
+			}
+		}).catch((error) => {
+			toast.error(`${error}`);
+			return null;
+		});
+
+		if (res) {
+			folder.meta = { ...folder.meta, icon: iconName };
+
+			toast.success($i18n.t('Folder updated successfully'));
+
+			const _folder = await getFolderById(localStorage.token, folder.id).catch((error) => {
+				toast.error(`${error}`);
+				return null;
+			});
+
+			await selectedFolder.set(_folder);
+			onUpdate(_folder);
 		}
 	};
 
 	const deleteHandler = async () => {
-		const res = await deleteFolderById(localStorage.token, folder.id).catch((error) => {
-			toast.error(`${error}`);
-			return null;
-		});
+		const res = await deleteFolderById(localStorage.token, folder.id, deleteFolderContents).catch(
+			(error) => {
+				toast.error(`${error}`);
+				return null;
+			}
+		);
 
 		if (res) {
 			toast.success($i18n.t('Folder deleted successfully'));
@@ -93,7 +130,12 @@
 </script>
 
 {#if folder}
-	<FolderModal bind:show={showFolderModal} edit={true} {folder} onSubmit={updateHandler} />
+	<FolderModal
+		bind:show={showFolderModal}
+		edit={true}
+		folderId={folder.id}
+		onSubmit={updateHandler}
+	/>
 
 	<DeleteConfirmDialog
 		bind:show={showDeleteConfirm}
@@ -102,25 +144,46 @@
 			deleteHandler();
 		}}
 	>
-		<div class=" text-sm text-gray-700 dark:text-gray-300 flex-1 line-clamp-3">
-			{@html DOMPurify.sanitize(
-				$i18n.t(
-					'This will delete <strong>{{NAME}}</strong> and <strong>all its contents</strong>.',
-					{
-						NAME: folder.name
-					}
-				)
-			)}
+		<div class=" text-sm text-gray-700 dark:text-gray-300 flex-1 line-clamp-3 mb-2">
+			<!-- {$i18n.t('This will delete <strong>{{NAME}}</strong> and <strong>all its contents</strong>.', {
+				NAME: folders[folderId].name
+			})} -->
+
+			{$i18n.t(`Are you sure you want to delete "{{NAME}}"?`, {
+				NAME: folders[folderId].name
+			})}
+		</div>
+
+		<div class="flex items-center gap-1.5">
+			<input type="checkbox" bind:checked={deleteFolderContents} />
+
+			<div class="text-xs text-gray-500">
+				{$i18n.t('Delete all contents inside this folder')}
+			</div>
 		</div>
 	</DeleteConfirmDialog>
 
 	<div class="mb-3 px-6 @md:max-w-3xl justify-between w-full flex relative group items-center">
 		<div class="text-center flex gap-3.5 items-center">
-			<div class=" rounded-full bg-gray-50 dark:bg-gray-800 p-3 w-fit">
-				<Folder className="size-4.5" strokeWidth="2" />
-			</div>
+			<EmojiPicker
+				onClose={() => {}}
+				onSubmit={(name) => {
+					console.log(name);
+					updateIconHandler(name);
+				}}
+			>
+				<button
+					class=" rounded-full bg-gray-50 dark:bg-gray-800 size-11 flex justify-center items-center"
+				>
+					{#if folder?.meta?.icon}
+						<Emoji className="size-6" shortCode={folder.meta.icon} />
+					{:else}
+						<Folder className="size-4.5" strokeWidth="2" />
+					{/if}
+				</button>
+			</EmojiPicker>
 
-			<div class="text-3xl">
+			<div class="text-3xl line-clamp-1">
 				{folder.name}
 			</div>
 		</div>

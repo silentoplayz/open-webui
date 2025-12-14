@@ -8,11 +8,21 @@ from pydantic import BaseModel
 
 from open_webui.socket.main import sio
 
-
+from open_webui.models.groups import Groups
 from open_webui.models.users import Users, UserResponse
-from open_webui.models.notes import Notes, NoteModel, NoteForm, NoteUserResponse
+from open_webui.models.notes import (
+    NoteListResponse,
+    Notes,
+    NoteModel,
+    NoteForm,
+    NoteUserResponse,
+)
 
-from open_webui.config import ENABLE_ADMIN_CHAT_ACCESS, ENABLE_ADMIN_EXPORT
+from open_webui.config import (
+    BYPASS_ADMIN_ACCESS_CONTROL,
+    ENABLE_ADMIN_CHAT_ACCESS,
+    ENABLE_ADMIN_EXPORT,
+)
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.env import SRC_LOG_LEVELS
 
@@ -30,9 +40,19 @@ router = APIRouter()
 ############################
 
 
-@router.get("/", response_model=list[NoteUserResponse])
-async def get_notes(request: Request, user=Depends(get_verified_user)):
+class NoteItemResponse(BaseModel):
+    id: str
+    title: str
+    data: Optional[dict]
+    updated_at: int
+    created_at: int
+    user: Optional[UserResponse] = None
 
+
+@router.get("/", response_model=list[NoteItemResponse])
+async def get_notes(
+    request: Request, page: Optional[int] = None, user=Depends(get_verified_user)
+):
     if user.role != "admin" and not has_permission(
         user.id, "features.notes", request.app.state.config.USER_PERMISSIONS
     ):
@@ -40,6 +60,12 @@ async def get_notes(request: Request, user=Depends(get_verified_user)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.UNAUTHORIZED,
         )
+
+    limit = None
+    skip = None
+    if page is not None:
+        limit = 60
+        skip = (page - 1) * limit
 
     notes = [
         NoteUserResponse(
@@ -48,22 +74,22 @@ async def get_notes(request: Request, user=Depends(get_verified_user)):
                 "user": UserResponse(**Users.get_user_by_id(note.user_id).model_dump()),
             }
         )
-        for note in Notes.get_notes_by_user_id(user.id, "write")
+        for note in Notes.get_notes_by_user_id(user.id, "read", skip=skip, limit=limit)
     ]
-
     return notes
 
 
-class NoteTitleIdResponse(BaseModel):
-    id: str
-    title: str
-    updated_at: int
-    created_at: int
-
-
-@router.get("/list", response_model=list[NoteTitleIdResponse])
-async def get_note_list(request: Request, user=Depends(get_verified_user)):
-
+@router.get("/search", response_model=NoteListResponse)
+async def search_notes(
+    request: Request,
+    query: Optional[str] = None,
+    view_option: Optional[str] = None,
+    permission: Optional[str] = None,
+    order_by: Optional[str] = None,
+    direction: Optional[str] = None,
+    page: Optional[int] = 1,
+    user=Depends(get_verified_user),
+):
     if user.role != "admin" and not has_permission(
         user.id, "features.notes", request.app.state.config.USER_PERMISSIONS
     ):
@@ -72,12 +98,32 @@ async def get_note_list(request: Request, user=Depends(get_verified_user)):
             detail=ERROR_MESSAGES.UNAUTHORIZED,
         )
 
-    notes = [
-        NoteTitleIdResponse(**note.model_dump())
-        for note in Notes.get_notes_by_user_id(user.id, "write")
-    ]
+    limit = None
+    skip = None
+    if page is not None:
+        limit = 60
+        skip = (page - 1) * limit
 
-    return notes
+    filter = {}
+    if query:
+        filter["query"] = query
+    if view_option:
+        filter["view_option"] = view_option
+    if permission:
+        filter["permission"] = permission
+    if order_by:
+        filter["order_by"] = order_by
+    if direction:
+        filter["direction"] = direction
+
+    if not user.role == "admin" or not BYPASS_ADMIN_ACCESS_CONTROL:
+        groups = Groups.get_groups_by_member_id(user.id)
+        if groups:
+            filter["group_ids"] = [group.id for group in groups]
+
+        filter["user_id"] = user.id
+
+    return Notes.search_notes(user.id, filter, skip=skip, limit=limit)
 
 
 ############################
@@ -89,7 +135,6 @@ async def get_note_list(request: Request, user=Depends(get_verified_user)):
 async def create_new_note(
     request: Request, form_data: NoteForm, user=Depends(get_verified_user)
 ):
-
     if user.role != "admin" and not has_permission(
         user.id, "features.notes", request.app.state.config.USER_PERMISSIONS
     ):
@@ -113,7 +158,11 @@ async def create_new_note(
 ############################
 
 
-@router.get("/{id}", response_model=Optional[NoteModel])
+class NoteResponse(NoteModel):
+    write_access: bool = False
+
+
+@router.get("/{id}", response_model=Optional[NoteResponse])
 async def get_note_by_id(request: Request, id: str, user=Depends(get_verified_user)):
     if user.role != "admin" and not has_permission(
         user.id, "features.notes", request.app.state.config.USER_PERMISSIONS
@@ -137,7 +186,15 @@ async def get_note_by_id(request: Request, id: str, user=Depends(get_verified_us
             status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.DEFAULT()
         )
 
-    return note
+    write_access = (
+        user.role == "admin"
+        or (user.id == note.user_id)
+        or has_access(
+            user.id, type="write", access_control=note.access_control, strict=False
+        )
+    )
+
+    return NoteResponse(**note.model_dump(), write_access=write_access)
 
 
 ############################
@@ -170,6 +227,18 @@ async def update_note_by_id(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.DEFAULT()
         )
+
+    # Check if user can share publicly
+    if (
+        user.role != "admin"
+        and form_data.access_control == None
+        and not has_permission(
+            user.id,
+            "sharing.public_notes",
+            request.app.state.config.USER_PERMISSIONS,
+        )
+    ):
+        form_data.access_control = {}
 
     try:
         note = Notes.update_note_by_id(id, form_data)
