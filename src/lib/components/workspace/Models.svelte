@@ -476,14 +476,46 @@
 									<div class="flex h-full w-full flex-1 flex-col justify-start self-center group">
 										<div class="flex-1 w-full">
 											<div class="flex items-center justify-between w-full">
-												<Tooltip content={model.name} className=" w-fit" placement="top-start">
-													<a
-														class=" font-medium line-clamp-1 hover:underline capitalize"
-														href={`/?models=${encodeURIComponent(model.id)}`}
+												<div class="flex items-center gap-2">
+													<Tooltip
+														content={model.name}
+														className=" w-fit"
+														placement="top-start"
 													>
-														{model.name}
-													</a>
-												</Tooltip>
+														<a
+															class=" font-medium line-clamp-1 hover:underline capitalize"
+															href={`/?models=${encodeURIComponent(model.id)}`}
+														>
+															{model.name}
+														</a>
+													</Tooltip>
+
+													{#if model.base_model_id && !$_models.find((m) => m.id === model.base_model_id)}
+														<Tooltip
+															content={$i18n.t('Base model "{{name}}" not found', {
+																name: model.base_model_id
+															})}
+														>
+															<div
+																class="flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 px-1.5 py-0.5 rounded-full"
+															>
+																<svg
+																	xmlns="http://www.w3.org/2000/svg"
+																	viewBox="0 0 16 16"
+																	fill="currentColor"
+																	class="size-3"
+																>
+																	<path
+																		fill-rule="evenodd"
+																		d="M6.701 2.25c.577-1 2.02-1 2.598 0l5.196 9a1.5 1.5 0 0 1-1.299 2.25H2.804a1.5 1.5 0 0 1-1.299-2.25l5.196-9ZM8 4a.75.75 0 0 1 .75.75v3a.75.75 0 1 1-1.5 0v-3A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
+																		clip-rule="evenodd"
+																	/>
+																</svg>
+																{$i18n.t('Orphan')}
+															</div>
+														</Tooltip>
+													{/if}
+												</div>
 
 												<div class=" flex items-center gap-1">
 													<div
