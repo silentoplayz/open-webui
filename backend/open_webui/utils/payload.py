@@ -6,6 +6,7 @@ from open_webui.utils.misc import (
 )
 
 from typing import Callable, Optional
+import copy
 import json
 
 
@@ -286,6 +287,7 @@ def convert_payload_openai_to_ollama(openai_payload: dict) -> dict:
     Returns:
         dict: A modified payload compatible with the Ollama API.
     """
+    openai_payload = copy.deepcopy(openai_payload)
     ollama_payload = {}
 
     # Mapping basic model and message details
@@ -296,6 +298,10 @@ def convert_payload_openai_to_ollama(openai_payload: dict) -> dict:
     ollama_payload["stream"] = openai_payload.get("stream", False)
     if "tools" in openai_payload:
         ollama_payload["tools"] = openai_payload["tools"]
+
+    if "max_tokens" in openai_payload:
+        ollama_payload["num_predict"] = openai_payload["max_tokens"]
+        del openai_payload["max_tokens"]
 
     # If there are advanced parameters in the payload, format them in Ollama's options field
     if openai_payload.get("options"):

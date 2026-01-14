@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response, StreamingResponse, JSONResponse
 
 
+from open_webui.utils.misc import is_string_allowed
 from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.models.chats import Chats
 from open_webui.models.folders import Folders
@@ -31,7 +32,6 @@ from open_webui.models.users import Users
 from open_webui.socket.main import (
     get_event_call,
     get_event_emitter,
-    get_active_status_by_user_id,
 )
 from open_webui.routers.tasks import (
     generate_queries,
@@ -44,11 +44,12 @@ from open_webui.routers.retrieval import (
     process_web_search,
     SearchForm,
 )
+from open_webui.utils.tools import get_builtin_tools
 from open_webui.routers.images import (
-    load_b64_image_data,
     image_generations,
-    GenerateImageForm,
-    upload_image,
+    CreateImageForm,
+    image_edits,
+    EditImageForm,
 )
 from open_webui.routers.pipelines import (
     process_pipeline_inlet_filter,
@@ -58,8 +59,9 @@ from open_webui.routers.memories import query_memory, QueryMemoryForm
 
 from open_webui.utils.webhook import post_webhook
 from open_webui.utils.files import (
-    get_audio_url_from_base64,
+    convert_markdown_base64_images,
     get_file_url_from_base64,
+    get_image_base64_from_url,
     get_image_url_from_base64,
 )
 
@@ -91,7 +93,11 @@ from open_webui.utils.misc import (
     convert_logit_bias_input_to_json,
     get_content_from_message,
 )
-from open_webui.utils.tools import get_tools
+from open_webui.utils.tools import (
+    get_tools,
+    get_updated_tool_function,
+    has_tool_server_access,
+)
 from open_webui.utils.plugin import load_function_module_by_id
 from open_webui.utils.filter import (
     get_sorted_filter_ids,
@@ -104,25 +110,26 @@ from open_webui.utils.mcp.client import MCPClient
 
 from open_webui.config import (
     CACHE_DIR,
+    DEFAULT_VOICE_MODE_PROMPT_TEMPLATE,
     DEFAULT_TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE,
     DEFAULT_CODE_INTERPRETER_PROMPT,
     CODE_INTERPRETER_BLOCKED_MODULES,
 )
 from open_webui.env import (
-    SRC_LOG_LEVELS,
     GLOBAL_LOG_LEVEL,
+    ENABLE_CHAT_RESPONSE_BASE64_IMAGE_URL_CONVERSION,
     CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE,
     CHAT_RESPONSE_MAX_TOOL_CALL_RETRIES,
     BYPASS_MODEL_ACCESS_CONTROL,
     ENABLE_REALTIME_CHAT_SAVE,
     ENABLE_QUERIES_CACHE,
+    RAG_SYSTEM_CONTEXT,
 )
 from open_webui.constants import TASKS
 
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
-log.setLevel(SRC_LOG_LEVELS["MAIN"])
 
 
 DEFAULT_REASONING_TAGS = [
@@ -137,6 +144,196 @@ DEFAULT_REASONING_TAGS = [
 ]
 DEFAULT_SOLUTION_TAGS = [("<|begin_of_solution|>", "<|end_of_solution|>")]
 DEFAULT_CODE_INTERPRETER_TAGS = [("<code_interpreter>", "</code_interpreter>")]
+
+
+def get_citation_source_from_tool_result(
+    tool_name: str, tool_params: dict, tool_result: str, tool_id: str = ""
+) -> list[dict]:
+    """
+    Parse a tool's result and convert it to source dicts for citation display.
+
+    Follows the source format conventions from get_sources_from_items:
+    - source: file/item info object with id, name, type
+    - document: list of document contents
+    - metadata: list of metadata objects with source, file_id, name fields
+
+    Returns a list of sources (usually one, but query_knowledge_files may return multiple).
+    """
+    try:
+        if tool_name == "search_web":
+            # Parse JSON array: [{"title": "...", "link": "...", "snippet": "..."}]
+            results = json.loads(tool_result)
+            documents = []
+            metadata = []
+
+            for result in results:
+                title = result.get("title", "")
+                link = result.get("link", "")
+                snippet = result.get("snippet", "")
+
+                documents.append(f"{title}\n{snippet}")
+                metadata.append(
+                    {
+                        "source": link,
+                        "name": title,
+                        "url": link,
+                    }
+                )
+
+            return [
+                {
+                    "source": {"name": "search_web", "id": "search_web"},
+                    "document": documents,
+                    "metadata": metadata,
+                }
+            ]
+
+        elif tool_name == "view_knowledge_file":
+            file_data = json.loads(tool_result)
+            filename = file_data.get("filename", "Unknown File")
+            file_id = file_data.get("id", "")
+            knowledge_name = file_data.get("knowledge_name", "")
+
+            return [
+                {
+                    "source": {
+                        "id": file_id,
+                        "name": filename,
+                        "type": "file",
+                    },
+                    "document": [file_data.get("content", "")],
+                    "metadata": [
+                        {
+                            "file_id": file_id,
+                            "name": filename,
+                            "source": filename,
+                            **(
+                                {"knowledge_name": knowledge_name}
+                                if knowledge_name
+                                else {}
+                            ),
+                        }
+                    ],
+                }
+            ]
+
+        elif tool_name == "query_knowledge_files":
+            chunks = json.loads(tool_result)
+
+            # Group chunks by source for better citation display
+            # Each unique source becomes a separate source entry
+            sources_by_file = {}
+
+            for chunk in chunks:
+                source_name = chunk.get("source", "Unknown")
+                file_id = chunk.get("file_id", "")
+                note_id = chunk.get("note_id", "")
+                chunk_type = chunk.get("type", "file")
+                content = chunk.get("content", "")
+
+                # Use file_id or note_id as the key
+                key = file_id or note_id or source_name
+
+                if key not in sources_by_file:
+                    sources_by_file[key] = {
+                        "source": {
+                            "id": file_id or note_id,
+                            "name": source_name,
+                            "type": chunk_type,
+                        },
+                        "document": [],
+                        "metadata": [],
+                    }
+
+                sources_by_file[key]["document"].append(content)
+                sources_by_file[key]["metadata"].append(
+                    {
+                        "file_id": file_id,
+                        "name": source_name,
+                        "source": source_name,
+                        **({"note_id": note_id} if note_id else {}),
+                    }
+                )
+
+            # Return all grouped sources as a list
+            if sources_by_file:
+                return list(sources_by_file.values())
+
+            # Empty result fallback
+            return []
+
+        else:
+            # Fallback for other tools
+            return [
+                {
+                    "source": {
+                        "name": tool_name,
+                        "type": "tool",
+                        "id": tool_id or tool_name,
+                    },
+                    "document": [str(tool_result)],
+                    "metadata": [{"source": tool_name, "name": tool_name}],
+                }
+            ]
+    except Exception as e:
+        log.exception(f"Error parsing tool result for {tool_name}: {e}")
+        return [
+            {
+                "source": {"name": tool_name, "type": "tool"},
+                "document": [str(tool_result)],
+                "metadata": [{"source": tool_name}],
+            }
+        ]
+
+
+def apply_source_context_to_messages(
+    request: Request,
+    messages: list,
+    sources: list,
+    user_message: str,
+) -> list:
+    """
+    Build source context from citation sources and apply to messages.
+    Uses RAG template to format context for model consumption.
+    """
+    if not sources or not user_message:
+        return messages
+
+    context_string = ""
+    citation_idx = {}
+
+    for source in sources:
+        for doc, meta in zip(source.get("document", []), source.get("metadata", [])):
+            src_id = meta.get("source") or source.get("source", {}).get("id") or "N/A"
+            if src_id not in citation_idx:
+                citation_idx[src_id] = len(citation_idx) + 1
+            src_name = source.get("source", {}).get("name")
+            context_string += (
+                f'<source id="{citation_idx[src_id]}"'
+                + (f' name="{src_name}"' if src_name else "")
+                + f">{doc}</source>\n"
+            )
+
+    context_string = context_string.strip()
+    if not context_string:
+        return messages
+
+    if RAG_SYSTEM_CONTEXT:
+        return add_or_update_system_message(
+            rag_template(
+                request.app.state.config.RAG_TEMPLATE, context_string, user_message
+            ),
+            messages,
+            append=True,
+        )
+    else:
+        return add_or_update_user_message(
+            rag_template(
+                request.app.state.config.RAG_TEMPLATE, context_string, user_message
+            ),
+            messages,
+            append=False,
+        )
 
 
 def process_tool_result(
@@ -302,19 +499,27 @@ async def chat_completion_tools_handler(
     def get_tools_function_calling_payload(messages, task_model_id, content):
         user_message = get_last_user_message(messages)
 
+        if user_message and messages and messages[-1]["role"] == "user":
+            # Remove the last user message to avoid duplication
+            messages = messages[:-1]
+
         recent_messages = messages[-4:] if len(messages) > 4 else messages
         chat_history = "\n".join(
             f"{message['role'].upper()}: \"\"\"{get_content_from_message(message)}\"\"\""
             for message in recent_messages
         )
 
-        prompt = f"History:\n{chat_history}\nQuery: {user_message}"
+        prompt = (
+            f"History:\n{chat_history}\nQuery: {user_message}"
+            if chat_history
+            else f"Query: {user_message}"
+        )
 
         return {
             "model": task_model_id,
             "messages": [
                 {"role": "system", "content": content},
-                {"role": "user", "content": f"Query: {prompt}"},
+                {"role": "user", "content": prompt},
             ],
             "stream": False,
             "metadata": {"task": str(TASKS.FUNCTION_CALLING)},
@@ -335,7 +540,7 @@ async def chat_completion_tools_handler(
     sources = []
 
     specs = [tool["spec"] for tool in tools.values()]
-    tools_specs = json.dumps(specs)
+    tools_specs = json.dumps(specs, ensure_ascii=False)
 
     if request.app.state.config.TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE != "":
         template = request.app.state.config.TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE
@@ -448,12 +653,6 @@ async def chat_completion_tools_handler(
                             }
                         )
 
-                print(
-                    f"Tool {tool_function_name} result: {tool_result}",
-                    tool_result_files,
-                    tool_result_embeds,
-                )
-
                 if tool_result:
                     tool = tools[tool_function_name]
                     tool_id = tool.get("tool_id", "")
@@ -479,12 +678,6 @@ async def chat_completion_tools_handler(
                             ],
                             "tool_result": True,
                         }
-                    )
-
-                    # Citation is not enabled for this tool
-                    body["messages"] = add_or_update_user_message(
-                        f"\nTool `{tool_name}` Output: {tool_result}",
-                        body["messages"],
                     )
 
                     if (
@@ -718,98 +911,276 @@ async def chat_web_search_handler(
     return form_data
 
 
+def get_images_from_messages(message_list):
+    images = []
+
+    for message in reversed(message_list):
+
+        message_images = []
+        for file in message.get("files", []):
+            if file.get("type") == "image":
+                message_images.append(file.get("url"))
+            elif file.get("content_type", "").startswith("image/"):
+                message_images.append(file.get("url"))
+
+        if message_images:
+            images.append(message_images)
+
+    return images
+
+
+def get_image_urls(delta_images, request, metadata, user) -> list[str]:
+    if not isinstance(delta_images, list):
+        return []
+
+    image_urls = []
+    for img in delta_images:
+        if not isinstance(img, dict) or img.get("type") != "image_url":
+            continue
+
+        url = img.get("image_url", {}).get("url")
+        if not url:
+            continue
+
+        if url.startswith("data:image/png;base64"):
+            url = get_image_url_from_base64(request, url, metadata, user)
+
+        image_urls.append(url)
+
+    return image_urls
+
+
+def add_file_context(messages: list, chat_id: str, user) -> list:
+    """
+    Add file URLs to messages for native function calling.
+    """
+    if not chat_id or chat_id.startswith("local:"):
+        return messages
+
+    chat = Chats.get_chat_by_id_and_user_id(chat_id, user.id)
+    if not chat:
+        return messages
+
+    history = chat.chat.get("history", {})
+    stored_messages = get_message_list(
+        history.get("messages", {}), history.get("currentId")
+    )
+
+    def format_file_tag(file):
+        attrs = f'type="{file.get("type", "file")}" url="{file["url"]}"'
+        if file.get("content_type"):
+            attrs += f' content_type="{file["content_type"]}"'
+        if file.get("name"):
+            attrs += f' name="{file["name"]}"'
+        return f"<file {attrs}/>"
+
+    for message, stored_message in zip(messages, stored_messages):
+        files_with_urls = [
+            file for file in stored_message.get("files", []) if file.get("url")
+        ]
+        if not files_with_urls:
+            continue
+
+        file_tags = [format_file_tag(file) for file in files_with_urls]
+        file_context = (
+            "<attached_files>\n" + "\n".join(file_tags) + "\n</attached_files>\n\n"
+        )
+
+        content = message.get("content", "")
+        if isinstance(content, list):
+            message["content"] = [{"type": "text", "text": file_context}] + content
+        else:
+            message["content"] = file_context + content
+
+    return messages
+
+
 async def chat_image_generation_handler(
     request: Request, form_data: dict, extra_params: dict, user
 ):
-    __event_emitter__ = extra_params["__event_emitter__"]
-    await __event_emitter__(
-        {
-            "type": "status",
-            "data": {"description": "Creating image", "done": False},
-        }
-    )
+    metadata = extra_params.get("__metadata__", {})
+    chat_id = metadata.get("chat_id", None)
+    __event_emitter__ = extra_params.get("__event_emitter__", None)
 
-    messages = form_data["messages"]
-    user_message = get_last_user_message(messages)
+    if not chat_id or not isinstance(chat_id, str) or not __event_emitter__:
+        return form_data
+
+    if chat_id.startswith("local:"):
+        message_list = form_data.get("messages", [])
+    else:
+        chat = Chats.get_chat_by_id_and_user_id(chat_id, user.id)
+        await __event_emitter__(
+            {
+                "type": "status",
+                "data": {"description": "Creating image", "done": False},
+            }
+        )
+
+        messages_map = chat.chat.get("history", {}).get("messages", {})
+        message_id = chat.chat.get("history", {}).get("currentId")
+        message_list = get_message_list(messages_map, message_id)
+
+    user_message = get_last_user_message(message_list)
 
     prompt = user_message
-    negative_prompt = ""
+    message_images = get_images_from_messages(message_list)
 
-    if request.app.state.config.ENABLE_IMAGE_PROMPT_GENERATION:
-        try:
-            res = await generate_image_prompt(
-                request,
-                {
-                    "model": form_data["model"],
-                    "messages": messages,
-                },
-                user,
-            )
-
-            response = res["choices"][0]["message"]["content"]
-
-            try:
-                bracket_start = response.find("{")
-                bracket_end = response.rfind("}") + 1
-
-                if bracket_start == -1 or bracket_end == -1:
-                    raise Exception("No JSON object found in the response")
-
-                response = response[bracket_start:bracket_end]
-                response = json.loads(response)
-                prompt = response.get("prompt", [])
-            except Exception as e:
-                prompt = user_message
-
-        except Exception as e:
-            log.exception(e)
-            prompt = user_message
+    # Limit to first 2 sets of images
+    # We may want to change this in the future to allow more images
+    input_images = []
+    for idx, images in enumerate(message_images):
+        if idx >= 2:
+            break
+        for image in images:
+            input_images.append(image)
 
     system_message_content = ""
 
-    try:
-        images = await image_generations(
-            request=request,
-            form_data=GenerateImageForm(**{"prompt": prompt}),
-            user=user,
-        )
-
-        await __event_emitter__(
-            {
-                "type": "status",
-                "data": {"description": "Image created", "done": True},
-            }
-        )
-
-        await __event_emitter__(
-            {
-                "type": "files",
-                "data": {
-                    "files": [
-                        {
-                            "type": "image",
-                            "url": image["url"],
-                        }
-                        for image in images
-                    ]
+    if len(input_images) > 0 and request.app.state.config.ENABLE_IMAGE_EDIT:
+        # Edit image(s)
+        try:
+            images = await image_edits(
+                request=request,
+                form_data=EditImageForm(**{"prompt": prompt, "image": input_images}),
+                metadata={
+                    "chat_id": metadata.get("chat_id", None),
+                    "message_id": metadata.get("message_id", None),
                 },
-            }
-        )
+                user=user,
+            )
 
-        system_message_content = "<context>User is shown the generated image, tell the user that the image has been generated</context>"
-    except Exception as e:
-        log.exception(e)
-        await __event_emitter__(
-            {
-                "type": "status",
-                "data": {
-                    "description": f"An error occurred while generating an image",
-                    "done": True,
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {"description": "Image created", "done": True},
+                }
+            )
+
+            await __event_emitter__(
+                {
+                    "type": "files",
+                    "data": {
+                        "files": [
+                            {
+                                "type": "image",
+                                "url": image["url"],
+                            }
+                            for image in images
+                        ]
+                    },
+                }
+            )
+
+            system_message_content = "<context>The requested image has been edited and created and is now being shown to the user. Let them know that it has been generated.</context>"
+        except Exception as e:
+            log.debug(e)
+
+            error_message = ""
+            if isinstance(e, HTTPException):
+                if e.detail and isinstance(e.detail, dict):
+                    error_message = e.detail.get("message", str(e.detail))
+                else:
+                    error_message = str(e.detail)
+
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {
+                        "description": f"An error occurred while generating an image",
+                        "done": True,
+                    },
+                }
+            )
+
+            system_message_content = f"<context>Image generation was attempted but failed. The system is currently unable to generate the image. Tell the user that the following error occurred: {error_message}</context>"
+
+    else:
+        # Create image(s)
+        if request.app.state.config.ENABLE_IMAGE_PROMPT_GENERATION:
+            try:
+                res = await generate_image_prompt(
+                    request,
+                    {
+                        "model": form_data["model"],
+                        "messages": form_data["messages"],
+                    },
+                    user,
+                )
+
+                response = res["choices"][0]["message"]["content"]
+
+                try:
+                    bracket_start = response.find("{")
+                    bracket_end = response.rfind("}") + 1
+
+                    if bracket_start == -1 or bracket_end == -1:
+                        raise Exception("No JSON object found in the response")
+
+                    response = response[bracket_start:bracket_end]
+                    response = json.loads(response)
+                    prompt = response.get("prompt", [])
+                except Exception as e:
+                    prompt = user_message
+
+            except Exception as e:
+                log.exception(e)
+                prompt = user_message
+
+        try:
+            images = await image_generations(
+                request=request,
+                form_data=CreateImageForm(**{"prompt": prompt}),
+                metadata={
+                    "chat_id": metadata.get("chat_id", None),
+                    "message_id": metadata.get("message_id", None),
                 },
-            }
-        )
+                user=user,
+            )
 
-        system_message_content = "<context>Unable to generate an image, tell the user that an error occurred</context>"
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {"description": "Image created", "done": True},
+                }
+            )
+
+            await __event_emitter__(
+                {
+                    "type": "files",
+                    "data": {
+                        "files": [
+                            {
+                                "type": "image",
+                                "url": image["url"],
+                            }
+                            for image in images
+                        ]
+                    },
+                }
+            )
+
+            system_message_content = "<context>The requested image has been created by the system successfully and is now being shown to the user. Let the user know that the image they requested has been generated and is now shown in the chat.</context>"
+        except Exception as e:
+            log.debug(e)
+
+            error_message = ""
+            if isinstance(e, HTTPException):
+                if e.detail and isinstance(e.detail, dict):
+                    error_message = e.detail.get("message", str(e.detail))
+                else:
+                    error_message = str(e.detail)
+
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {
+                        "description": f"An error occurred while generating an image",
+                        "done": True,
+                    },
+                }
+            )
+
+            system_message_content = f"<context>Image generation was attempted but failed because of an error. The system is currently unable to generate the image. Tell the user that the following error occurred: {error_message}</context>"
 
     if system_message_content:
         form_data["messages"] = add_or_update_system_message(
@@ -874,37 +1245,32 @@ async def chat_completion_files_handler(
             queries = [get_last_user_message(body["messages"])]
 
         try:
-            # Offload get_sources_from_items to a separate thread
-            loop = asyncio.get_running_loop()
-            with ThreadPoolExecutor() as executor:
-                sources = await loop.run_in_executor(
-                    executor,
-                    lambda: get_sources_from_items(
-                        request=request,
-                        items=files,
-                        queries=queries,
-                        embedding_function=lambda query, prefix: request.app.state.EMBEDDING_FUNCTION(
-                            query, prefix=prefix, user=user
-                        ),
-                        k=request.app.state.config.TOP_K,
-                        reranking_function=(
-                            (
-                                lambda sentences: request.app.state.RERANKING_FUNCTION(
-                                    sentences, user=user
-                                )
-                            )
-                            if request.app.state.RERANKING_FUNCTION
-                            else None
-                        ),
-                        k_reranker=request.app.state.config.TOP_K_RERANKER,
-                        r=request.app.state.config.RELEVANCE_THRESHOLD,
-                        hybrid_bm25_weight=request.app.state.config.HYBRID_BM25_WEIGHT,
-                        hybrid_search=request.app.state.config.ENABLE_RAG_HYBRID_SEARCH,
-                        full_context=all_full_context
-                        or request.app.state.config.RAG_FULL_CONTEXT,
-                        user=user,
-                    ),
-                )
+            # Directly await async get_sources_from_items (no thread needed - fully async now)
+            sources = await get_sources_from_items(
+                request=request,
+                items=files,
+                queries=queries,
+                embedding_function=lambda query, prefix: request.app.state.EMBEDDING_FUNCTION(
+                    query, prefix=prefix, user=user
+                ),
+                k=request.app.state.config.TOP_K,
+                reranking_function=(
+                    (
+                        lambda query, documents: request.app.state.RERANKING_FUNCTION(
+                            query, documents, user=user
+                        )
+                    )
+                    if request.app.state.RERANKING_FUNCTION
+                    else None
+                ),
+                k_reranker=request.app.state.config.TOP_K_RERANKER,
+                r=request.app.state.config.RELEVANCE_THRESHOLD,
+                hybrid_bm25_weight=request.app.state.config.HYBRID_BM25_WEIGHT,
+                hybrid_search=request.app.state.config.ENABLE_RAG_HYBRID_SEARCH,
+                full_context=all_full_context
+                or request.app.state.config.RAG_FULL_CONTEXT,
+                user=user,
+            )
         except Exception as e:
             log.exception(e)
 
@@ -984,11 +1350,51 @@ def apply_params_to_form_data(form_data, model):
 
         if "logit_bias" in params and params["logit_bias"] is not None:
             try:
-                form_data["logit_bias"] = json.loads(
-                    convert_logit_bias_input_to_json(params["logit_bias"])
-                )
+                logit_bias = convert_logit_bias_input_to_json(params["logit_bias"])
+
+                if logit_bias:
+                    form_data["logit_bias"] = json.loads(logit_bias)
             except Exception as e:
                 log.exception(f"Error parsing logit_bias: {e}")
+
+    return form_data
+
+
+async def convert_url_images_to_base64(form_data):
+    messages = form_data.get("messages", [])
+
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+
+        new_content = []
+
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "image_url":
+                new_content.append(item)
+                continue
+
+            image_url = item.get("image_url", {}).get("url", "")
+            if image_url.startswith("data:image/"):
+                new_content.append(item)
+                continue
+
+            try:
+                base64_data = await asyncio.to_thread(
+                    get_image_base64_from_url, image_url
+                )
+                new_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": base64_data},
+                    }
+                )
+            except Exception as e:
+                log.debug(f"Error converting image URL to base64: {e}")
+                new_content.append(item)
+
+        message["content"] = new_content
 
     return form_data
 
@@ -1010,8 +1416,10 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         except:
             pass
 
+    form_data = await convert_url_images_to_base64(form_data)
+
     event_emitter = get_event_emitter(metadata)
-    event_call = get_event_call(metadata)
+    event_caller = get_event_call(metadata)
 
     oauth_token = None
     try:
@@ -1025,14 +1433,15 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     extra_params = {
         "__event_emitter__": event_emitter,
-        "__event_call__": event_call,
+        "__event_call__": event_caller,
         "__user__": user.model_dump() if isinstance(user, UserModel) else {},
         "__metadata__": metadata,
+        "__oauth_token__": oauth_token,
         "__request__": request,
         "__model__": model,
-        "__oauth_token__": oauth_token,
+        "__chat_id__": metadata.get("chat_id"),
+        "__message_id__": metadata.get("message_id"),
     }
-
     # Initialize events to store additional event to be sent to the client
     # Initialize contexts and citation
     if getattr(request.state, "direct", False) and hasattr(request.state, "model"):
@@ -1075,7 +1484,10 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     user_message = get_last_user_message(form_data["messages"])
     model_knowledge = model.get("info", {}).get("meta", {}).get("knowledge", False)
 
-    if model_knowledge:
+    if (
+        model_knowledge
+        and metadata.get("params", {}).get("function_calling") != "native"
+    ):
         await event_emitter(
             {
                 "type": "status",
@@ -1141,22 +1553,41 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     except Exception as e:
         raise Exception(f"{e}")
 
-    features = form_data.pop("features", None)
+    features = form_data.pop("features", None) or {}
+    extra_params["__features__"] = features
     if features:
+        if "voice" in features and features["voice"]:
+            if request.app.state.config.VOICE_MODE_PROMPT_TEMPLATE != None:
+                if request.app.state.config.VOICE_MODE_PROMPT_TEMPLATE != "":
+                    template = request.app.state.config.VOICE_MODE_PROMPT_TEMPLATE
+                else:
+                    template = DEFAULT_VOICE_MODE_PROMPT_TEMPLATE
+
+                form_data["messages"] = add_or_update_system_message(
+                    template,
+                    form_data["messages"],
+                )
+
         if "memory" in features and features["memory"]:
-            form_data = await chat_memory_handler(
-                request, form_data, extra_params, user
-            )
+            # Skip forced memory injection when native FC is enabled - model can use memory tools
+            if metadata.get("params", {}).get("function_calling") != "native":
+                form_data = await chat_memory_handler(
+                    request, form_data, extra_params, user
+                )
 
         if "web_search" in features and features["web_search"]:
-            form_data = await chat_web_search_handler(
-                request, form_data, extra_params, user
-            )
+            # Skip forced RAG web search when native FC is enabled - model can use web_search tool
+            if metadata.get("params", {}).get("function_calling") != "native":
+                form_data = await chat_web_search_handler(
+                    request, form_data, extra_params, user
+                )
 
         if "image_generation" in features and features["image_generation"]:
-            form_data = await chat_image_generation_handler(
-                request, form_data, extra_params, user
-            )
+            # Skip forced image generation when native FC is enabled - model can use generate_image tool
+            if metadata.get("params", {}).get("function_calling") != "native":
+                form_data = await chat_image_generation_handler(
+                    request, form_data, extra_params, user
+                )
 
         if "code_interpreter" in features and features["code_interpreter"]:
             form_data["messages"] = add_or_update_user_message(
@@ -1236,8 +1667,14 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                         log.error(f"MCP server with id {server_id} not found")
                         continue
 
-                    auth_type = mcp_server_connection.get("auth_type", "")
+                    # Check access control for MCP server
+                    if not has_tool_server_access(user, mcp_server_connection):
+                        log.warning(
+                            f"Access denied to MCP server {server_id} for user {user.id}"
+                        )
+                        continue
 
+                    auth_type = mcp_server_connection.get("auth_type", "")
                     headers = {}
                     if auth_type == "bearer":
                         headers["Authorization"] = (
@@ -1273,11 +1710,23 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                             log.error(f"Error getting OAuth token: {e}")
                             oauth_token = None
 
+                    connection_headers = mcp_server_connection.get("headers", None)
+                    if connection_headers and isinstance(connection_headers, dict):
+                        for key, value in connection_headers.items():
+                            headers[key] = value
+
                     mcp_clients[server_id] = MCPClient()
                     await mcp_clients[server_id].connect(
                         url=mcp_server_connection.get("url", ""),
                         headers=headers if headers else None,
                     )
+
+                    function_name_filter_list = mcp_server_connection.get(
+                        "config", {}
+                    ).get("function_name_filter_list", "")
+
+                    if isinstance(function_name_filter_list, str):
+                        function_name_filter_list = function_name_filter_list.split(",")
 
                     tool_specs = await mcp_clients[server_id].list_tool_specs()
                     for tool_spec in tool_specs:
@@ -1290,6 +1739,13 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                                 )
 
                             return tool_function
+
+                        if function_name_filter_list:
+                            if not is_string_allowed(
+                                tool_spec["name"], function_name_filter_list
+                            ):
+                                # Skip this function
+                                continue
 
                         tool_function = make_tool_function(
                             mcp_clients[server_id], tool_spec["name"]
@@ -1307,6 +1763,17 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                         }
                 except Exception as e:
                     log.debug(e)
+                    if event_emitter:
+                        await event_emitter(
+                            {
+                                "type": "chat:message:error",
+                                "data": {
+                                    "error": {
+                                        "content": f"Failed to connect to MCP server '{server_id}'"
+                                    }
+                                },
+                            }
+                        )
                     continue
 
         tools_dict = await get_tools(
@@ -1320,6 +1787,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 "__files__": metadata.get("files", []),
             },
         )
+
         if mcp_tools_dict:
             tools_dict = {**tools_dict, **mcp_tools_dict}
 
@@ -1337,6 +1805,36 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     if mcp_clients:
         metadata["mcp_clients"] = mcp_clients
 
+    # Inject builtin tools for native function calling based on enabled features and model capability
+    # Check if builtin_tools capability is enabled for this model (defaults to True if not specified)
+    builtin_tools_enabled = (
+        model.get("info", {})
+        .get("meta", {})
+        .get("capabilities", {})
+        .get("builtin_tools", True)
+    )
+    if (
+        metadata.get("params", {}).get("function_calling") == "native"
+        and builtin_tools_enabled
+    ):
+        # Add file context to user messages
+        chat_id = metadata.get("chat_id")
+        form_data["messages"] = add_file_context(
+            form_data.get("messages", []), chat_id, user
+        )
+        builtin_tools = get_builtin_tools(
+            request,
+            {
+                **extra_params,
+                "__event_emitter__": event_emitter,
+            },
+            features,
+            model,
+        )
+        for name, tool_dict in builtin_tools.items():
+            if name not in tools_dict:
+                tools_dict[name] = tool_dict
+
     if tools_dict:
         if metadata.get("params", {}).get("function_calling") == "native":
             # If the function calling is native, then call the tools function calling handler
@@ -1345,6 +1843,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 {"type": "function", "function": tool.get("spec", {})}
                 for tool in tools_dict.values()
             ]
+
         else:
             # If the function calling is not native, then call the tools function calling handler
             try:
@@ -1355,54 +1854,28 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             except Exception as e:
                 log.exception(e)
 
-    try:
-        form_data, flags = await chat_completion_files_handler(
-            request, form_data, extra_params, user
-        )
-        sources.extend(flags.get("sources", []))
-    except Exception as e:
-        log.exception(e)
+    # Check if file context extraction is enabled for this model (default True)
+    file_context_enabled = (
+        model.get("info", {})
+        .get("meta", {})
+        .get("capabilities", {})
+        .get("file_context", True)
+    )
+
+    if file_context_enabled:
+        try:
+            form_data, flags = await chat_completion_files_handler(
+                request, form_data, extra_params, user
+            )
+            sources.extend(flags.get("sources", []))
+        except Exception as e:
+            log.exception(e)
 
     # If context is not empty, insert it into the messages
-    if len(sources) > 0:
-        context_string = ""
-        citation_idx_map = {}
-
-        for source in sources:
-            if "document" in source:
-                for document_text, document_metadata in zip(
-                    source["document"], source["metadata"]
-                ):
-                    source_name = source.get("source", {}).get("name", None)
-                    source_id = (
-                        document_metadata.get("source", None)
-                        or source.get("source", {}).get("id", None)
-                        or "N/A"
-                    )
-
-                    if source_id not in citation_idx_map:
-                        citation_idx_map[source_id] = len(citation_idx_map) + 1
-
-                    context_string += (
-                        f'<source id="{citation_idx_map[source_id]}"'
-                        + (f' name="{source_name}"' if source_name else "")
-                        + f">{document_text}</source>\n"
-                    )
-
-        context_string = context_string.strip()
-        if prompt is None:
-            raise Exception("No user message found")
-
-        if context_string != "":
-            form_data["messages"] = add_or_update_user_message(
-                rag_template(
-                    request.app.state.config.RAG_TEMPLATE,
-                    context_string,
-                    prompt,
-                ),
-                form_data["messages"],
-                append=False,
-            )
+    if sources and prompt:
+        form_data["messages"] = apply_source_context_to_messages(
+            request, form_data["messages"], sources, prompt
+        )
 
     # If there are citations, add them to the data_items
     sources = [
@@ -1543,16 +2016,13 @@ async def process_chat_response(
                 if not metadata.get("chat_id", "").startswith(
                     "local:"
                 ):  # Only update titles and tags for non-temp chats
-                    if (
-                        TASKS.TITLE_GENERATION in tasks
-                        and tasks[TASKS.TITLE_GENERATION]
-                    ):
+                    if TASKS.TITLE_GENERATION in tasks:
                         user_message = get_last_user_message(messages)
                         if user_message and len(user_message) > 100:
                             user_message = user_message[:100] + "..."
 
+                        title = None
                         if tasks[TASKS.TITLE_GENERATION]:
-
                             res = await generate_title(
                                 request,
                                 {
@@ -1603,7 +2073,8 @@ async def process_chat_response(
                                         "data": title,
                                     }
                                 )
-                        elif len(messages) == 2:
+
+                        if title == None and len(messages) == 2:
                             title = messages[0].get("content", user_message)
 
                             Chats.update_chat_title_by_id(metadata["chat_id"], title)
@@ -1761,7 +2232,7 @@ async def process_chat_response(
                             )
 
                             # Send a webhook notification if the user is not active
-                            if not get_active_status_by_user_id(user.id):
+                            if not Users.is_user_active(user.id):
                                 webhook_url = Users.get_user_webhook_url_by_id(user.id)
                                 if webhook_url:
                                     await post_webhook(
@@ -1939,9 +2410,11 @@ async def process_chat_response(
                                 content = f"{content}{tool_calls_display_content}"
 
                     elif block["type"] == "reasoning":
-                        reasoning_display_content = "\n".join(
-                            (f"> {line}" if not line.startswith(">") else line)
-                            for line in block["content"].splitlines()
+                        reasoning_display_content = html.escape(
+                            "\n".join(
+                                (f"> {line}" if not line.startswith(">") else line)
+                                for line in block["content"].splitlines()
+                            )
                         )
 
                         reasoning_duration = block.get("duration", None)
@@ -2349,7 +2822,9 @@ async def process_chat_response(
                             )
 
                             if data:
-                                if "event" in data:
+                                if "event" in data and not getattr(
+                                    request.state, "direct", False
+                                ):
                                     await event_emitter(data.get("event", {}))
 
                                 if "selected_model_id" in data:
@@ -2397,8 +2872,42 @@ async def process_chat_response(
                                         continue
 
                                     delta = choices[0].get("delta", {})
-                                    delta_tool_calls = delta.get("tool_calls", None)
 
+                                    # Handle delta annotations
+                                    annotations = delta.get("annotations")
+                                    if annotations:
+                                        for annotation in annotations:
+                                            if (
+                                                annotation.get("type") == "url_citation"
+                                                and "url_citation" in annotation
+                                            ):
+                                                url_citation = annotation[
+                                                    "url_citation"
+                                                ]
+
+                                                url = url_citation.get("url", "")
+                                                title = url_citation.get("title", url)
+
+                                                await event_emitter(
+                                                    {
+                                                        "type": "source",
+                                                        "data": {
+                                                            "source": {
+                                                                "name": title,
+                                                                "url": url,
+                                                            },
+                                                            "document": [title],
+                                                            "metadata": [
+                                                                {
+                                                                    "source": url,
+                                                                    "name": title,
+                                                                }
+                                                            ],
+                                                        },
+                                                    }
+                                                )
+
+                                    delta_tool_calls = delta.get("tool_calls", None)
                                     if delta_tool_calls:
                                         for delta_tool_call in delta_tool_calls:
                                             tool_call_index = delta_tool_call.get(
@@ -2457,6 +2966,49 @@ async def process_chat_response(
                                                             "arguments"
                                                         ] += delta_arguments
 
+                                        # Emit pending tool calls in real-time
+                                        if response_tool_calls:
+                                            # Flush any pending text first
+                                            await flush_pending_delta_data()
+
+                                            pending_content_blocks = content_blocks + [
+                                                {
+                                                    "type": "tool_calls",
+                                                    "content": response_tool_calls,
+                                                    "pending": True,
+                                                }
+                                            ]
+                                            await event_emitter(
+                                                {
+                                                    "type": "chat:completion",
+                                                    "data": {
+                                                        "content": serialize_content_blocks(
+                                                            pending_content_blocks
+                                                        ),
+                                                    },
+                                                }
+                                            )
+
+                                    image_urls = get_image_urls(
+                                        delta.get("images", []), request, metadata, user
+                                    )
+                                    if image_urls:
+                                        message_files = Chats.add_message_files_by_id_and_message_id(
+                                            metadata["chat_id"],
+                                            metadata["message_id"],
+                                            [
+                                                {"type": "image", "url": url}
+                                                for url in image_urls
+                                            ],
+                                        )
+
+                                        await event_emitter(
+                                            {
+                                                "type": "files",
+                                                "data": {"files": message_files},
+                                            }
+                                        )
+
                                     value = delta.get("content")
 
                                     reasoning_content = (
@@ -2513,6 +3065,21 @@ async def process_chat_response(
                                                     "type": "text",
                                                     "content": "",
                                                 }
+                                            )
+
+                                        if ENABLE_CHAT_RESPONSE_BASE64_IMAGE_URL_CONVERSION:
+                                            value = convert_markdown_base64_images(
+                                                request,
+                                                value,
+                                                {
+                                                    "chat_id": metadata.get(
+                                                        "chat_id", None
+                                                    ),
+                                                    "message_id": metadata.get(
+                                                        "message_id", None
+                                                    ),
+                                                },
+                                                user,
                                             )
 
                                         content = f"{content}{value}"
@@ -2635,6 +3202,7 @@ async def process_chat_response(
                 await stream_body_handler(response, form_data)
 
                 tool_call_retries = 0
+                tool_call_sources = []  # Track citation sources from tool results
 
                 while (
                     len(tool_calls) > 0
@@ -2740,7 +3308,16 @@ async def process_chat_response(
                                     )
 
                                 else:
-                                    tool_function = tool["callable"]
+                                    tool_function = get_updated_tool_function(
+                                        function=tool["callable"],
+                                        extra_params={
+                                            "__messages__": form_data.get(
+                                                "messages", []
+                                            ),
+                                            "__files__": metadata.get("files", []),
+                                        },
+                                    )
+
                                     tool_result = await tool_function(
                                         **tool_function_params
                                     )
@@ -2759,6 +3336,27 @@ async def process_chat_response(
                                 user,
                             )
                         )
+
+                        # Extract citation sources from tool results
+                        if (
+                            tool_function_name
+                            in [
+                                "search_web",
+                                "view_knowledge_file",
+                                "query_knowledge_files",
+                            ]
+                            and tool_result
+                        ):
+                            try:
+                                citation_sources = get_citation_source_from_tool_result(
+                                    tool_name=tool_function_name,
+                                    tool_params=tool_function_params,
+                                    tool_result=tool_result,
+                                    tool_id=tool.get("tool_id", "") if tool else "",
+                                )
+                                tool_call_sources.extend(citation_sources)
+                            except Exception as e:
+                                log.exception(f"Error extracting citation source: {e}")
 
                         results.append(
                             {
@@ -2784,6 +3382,22 @@ async def process_chat_response(
                             "content": "",
                         }
                     )
+
+                    # Emit citation sources for UI display
+                    for source in tool_call_sources:
+                        await event_emitter({"type": "source", "data": source})
+
+                    # Apply source context to messages for model
+                    if tool_call_sources:
+                        user_msg = get_last_user_message(form_data["messages"])
+                        if user_msg:
+                            form_data["messages"] = apply_source_context_to_messages(
+                                request,
+                                form_data["messages"],
+                                tool_call_sources,
+                                user_msg,
+                            )
+                        tool_call_sources.clear()
 
                     await event_emitter(
                         {
@@ -2811,6 +3425,7 @@ async def process_chat_response(
                             request,
                             new_form_data,
                             user,
+                            bypass_system_prompt=True,
                         )
 
                         if isinstance(res, StreamingResponse):
@@ -2990,6 +3605,7 @@ async def process_chat_response(
                                 request,
                                 new_form_data,
                                 user,
+                                bypass_system_prompt=True,
                             )
 
                             if isinstance(res, StreamingResponse):
@@ -3018,7 +3634,7 @@ async def process_chat_response(
                     )
 
                 # Send a webhook notification if the user is not active
-                if not get_active_status_by_user_id(user.id):
+                if not Users.is_user_active(user.id):
                     webhook_url = Users.get_user_webhook_url_by_id(user.id)
                     if webhook_url:
                         await post_webhook(

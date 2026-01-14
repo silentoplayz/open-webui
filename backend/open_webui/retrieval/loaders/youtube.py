@@ -4,10 +4,8 @@ from xml.etree.ElementTree import ParseError
 from typing import Any, Dict, Generator, List, Optional, Sequence, Union
 from urllib.parse import parse_qs, urlparse
 from langchain_core.documents import Document
-from open_webui.env import SRC_LOG_LEVELS
 
 log = logging.getLogger(__name__)
-log.setLevel(SRC_LOG_LEVELS["RAG"])
 
 ALLOWED_SCHEMES = {"http", "https"}
 ALLOWED_NETLOCS = {
@@ -83,6 +81,7 @@ class YoutubeLoader:
                 TranscriptsDisabled,
                 YouTubeTranscriptApi,
             )
+            from youtube_transcript_api.proxies import GenericProxyConfig
         except ImportError:
             raise ImportError(
                 'Could not import "youtube_transcript_api" Python package. '
@@ -90,10 +89,9 @@ class YoutubeLoader:
             )
 
         if self.proxy_url:
-            youtube_proxies = {
-                "http": self.proxy_url,
-                "https": self.proxy_url,
-            }
+            youtube_proxies = GenericProxyConfig(
+                http_url=self.proxy_url, https_url=self.proxy_url
+            )
             log.debug(f"Using proxy URL: {self.proxy_url[:14]}...")
         else:
             youtube_proxies = None

@@ -26,20 +26,23 @@ class MinerULoader:
         api_url: str = "http://localhost:8000",
         api_key: str = "",
         params: dict = None,
+        timeout: Optional[int] = 300,
     ):
         self.file_path = file_path
         self.api_mode = api_mode.lower()
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
+        self.timeout = timeout
 
         # Parse params dict with defaults
-        params = params or {}
+        self.params = params or {}
         self.enable_ocr = params.get("enable_ocr", False)
         self.enable_formula = params.get("enable_formula", True)
         self.enable_table = params.get("enable_table", True)
         self.language = params.get("language", "en")
         self.model_version = params.get("model_version", "pipeline")
-        self.page_ranges = params.get("page_ranges", "")
+
+        self.page_ranges = self.params.pop("page_ranges", "")
 
         # Validate API mode
         if self.api_mode not in ["local", "cloud"]:
@@ -76,26 +79,9 @@ class MinerULoader:
 
         # Build form data for Local API
         form_data = {
+            **self.params,
             "return_md": "true",
-            "formula_enable": str(self.enable_formula).lower(),
-            "table_enable": str(self.enable_table).lower(),
         }
-
-        # Parse method based on OCR setting
-        if self.enable_ocr:
-            form_data["parse_method"] = "ocr"
-        else:
-            form_data["parse_method"] = "auto"
-
-        # Language configuration (Local API uses lang_list array)
-        if self.language:
-            form_data["lang_list"] = self.language
-
-        # Backend/model version (Local API uses "backend" parameter)
-        if self.model_version == "vlm":
-            form_data["backend"] = "vlm-vllm-engine"
-        else:
-            form_data["backend"] = "pipeline"
 
         # Page ranges (Local API uses start_page_id and end_page_id)
         if self.page_ranges:
@@ -117,7 +103,7 @@ class MinerULoader:
                     f"{self.api_url}/file_parse",
                     data=form_data,
                     files=files,
-                    timeout=300,  # 5 minute timeout for large documents
+                    timeout=self.timeout,
                 )
                 response.raise_for_status()
 
@@ -236,10 +222,7 @@ class MinerULoader:
 
         # Build request body
         request_body = {
-            "enable_formula": self.enable_formula,
-            "enable_table": self.enable_table,
-            "language": self.language,
-            "model_version": self.model_version,
+            **self.params,
             "files": [
                 {
                     "name": filename,
@@ -319,7 +302,7 @@ class MinerULoader:
                 response = requests.put(
                     upload_url,
                     data=f,
-                    timeout=300,  # 5 minute timeout for large files
+                    timeout=self.timeout,
                 )
                 response.raise_for_status()
         except FileNotFoundError:
