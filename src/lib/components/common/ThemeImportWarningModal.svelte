@@ -7,6 +7,7 @@
 	export let themeName = '';
 	export let themeVersion = '';
 	export let webuiVersion = '';
+	export let skipWarning = false;
 
 	const dispatch = createEventDispatcher();
 	const i18n = getContext('i18n');
@@ -35,6 +36,18 @@
 		<p class="mt-4 text-sm text-gray-500 dark:text-gray-400">
 			{$i18n.t('Do you want to continue importing this theme?')}
 		</p>
+		<div class="mt-4 flex items-center">
+			<input
+				id="skip-warning"
+				type="checkbox"
+				bind:checked={skipWarning}
+				class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+			/>
+			<label for="skip-warning" class="ml-2 text-sm font-medium text-gray-900 dark:text-gray-300">
+				{$i18n.t("Don't show again for this import session")}
+			</label>
+		</div>
+
 		<div class="mt-6 flex justify-end space-x-2">
 			<button
 				class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition rounded-full"

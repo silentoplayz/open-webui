@@ -39,12 +39,12 @@ const baseThemeSchema = z.enum(['light', 'dark', 'oled-dark', 'her', 'system']);
 // Gradient configuration
 const gradientSchema = z
 	.object({
-		enabled: z.boolean(),
-		colors: z.array(z.string()),
-		direction: z.number(),
-		intensity: z.number()
+		enabled: z.boolean().optional(),
+		colors: z.array(z.string()).optional(),
+		direction: z.number().optional(),
+		intensity: z.number().optional()
 	})
-	.strict();
+	.passthrough();
 
 // Theme toggles
 const togglesSchema = z
@@ -57,7 +57,7 @@ const togglesSchema = z
 		systemBackgroundImage: z.boolean().optional(),
 		chatBackgroundImage: z.boolean().optional()
 	})
-	.strict();
+	.passthrough();
 
 // Size limits (matching our validation logic)
 const MAX_CSS_SIZE = 100 * 1024; // 100KB
@@ -87,12 +87,7 @@ export const themeSchema = z
 			.string()
 			.max(MAX_SCRIPT_SIZE, `Animation script must not exceed ${MAX_SCRIPT_SIZE / 1024}KB`)
 			.optional(),
-		animation: z
-			.object({
-				start: z.function(),
-				stop: z.function()
-			})
-			.optional(),
+		animation: z.any().optional(),
 		css: z
 			.string()
 			.max(MAX_CSS_SIZE, `CSS must not exceed ${MAX_CSS_SIZE / 1024}KB`)
@@ -101,7 +96,7 @@ export const themeSchema = z
 		codeMirrorTheme: z.string().optional(),
 		toggles: togglesSchema.optional()
 	})
-	.strict(); // Reject unknown properties
+	.passthrough(); // Allow unknown properties for backward compatibility
 
 // Export the inferred type (should match Theme interface)
 export type ThemeSchemaType = z.infer<typeof themeSchema>;

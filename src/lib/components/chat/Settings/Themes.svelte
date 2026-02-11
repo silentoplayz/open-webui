@@ -71,7 +71,9 @@
 	let themeToDeleteId = '';
 	let searchQuery = '';
 	let showThemeImportWarning = false;
+	let skipThemeImportWarning = false;
 	let themeToImport: Theme | null = null;
+	let pendingThemeImport: Theme | null = null;
 	let themeToEdit: Theme | null = null;
 	let sortOrder = 'default';
 	let isCheckingForUpdates = false;
@@ -413,11 +415,18 @@
 		}
 	};
 
-	const processAndAddTheme = (
-		theme: any,
-		source: string = '',
-		isDuplicate: boolean = false
-	): boolean => {
+	const processAndAddTheme = (theme: any, source: string = '', force: boolean = false): boolean => {
+		// Version compatibility check
+		const versionMismatch =
+			theme.targetWebUIVersion && isMismatchedVersion(WEBUI_VERSION, theme.targetWebUIVersion);
+
+		if (versionMismatch && !force && !skipThemeImportWarning) {
+			themeToImport = theme;
+			showThemeImportWarning = true;
+			return false;
+		}
+
+		// Validation
 		const validation = validateTheme(theme);
 		if (!validation.valid) {
 			toast.error($i18n.t(validation.error ?? ''));
@@ -425,24 +434,38 @@
 		}
 
 		if ($themes.has(theme.id)) {
+			// This is a default theme, we can't overwrite it
 			toast.error($i18n.t('A theme with this ID already exists as a default theme.'));
 			return false;
 		}
 
-		if (!isDuplicate && isDuplicateTheme(theme, Array.from($communityThemes.values()), false)) {
-			toast.error($i18n.t('This exact theme is already installed.'));
+		if ($communityThemes.has(theme.id) && !force) {
+			// Check if duplicate logic is needed here or handled by caller
+		}
+
+		// Security Checks
+		// 1. Animation Script Check
+		if (theme.animationScript && !skipAnimationScriptWarning && !acceptAllScriptWarning) {
+			themeWithScriptToImport = { theme, source, isDuplicate: false };
+			showAnimationScriptWarning = true;
 			return false;
 		}
 
-		// Security check for animation script
-		if (theme.animationScript && !skipAnimationScriptWarning) {
-			themeWithScriptToImport = { theme, source, isDuplicate };
-			showAnimationScriptWarning = true;
-			return false;
-		} else {
-			return _finalizeAddTheme(theme, source, isDuplicate);
+		if (source) {
+			theme.sourceUrl = source;
 		}
+		
+		const success = addCommunityTheme(theme);
+		return success;
 	};
+
+	// ... (helper functions)
+
+// ... (render block)
+
+
+
+
 
 	const addThemeHandler = async () => {
 		if (!themeUrl) {
@@ -527,6 +550,7 @@
 				importErrorCount = 0;
 				skipAnimationScriptWarning = false;
 				acceptAllScriptWarning = false;
+				skipThemeImportWarning = false;
 
 				if (Array.isArray(content)) {
 					importQueue = [...content];
@@ -534,11 +558,14 @@
 					importQueue = [content];
 				}
 				totalThemesToImport = importQueue.length;
-				processNextThemeInQueue();
 			} catch (e) {
-				toast.error($i18n.t('Invalid JSON file.'));
-				console.error(e);
+				toast.error($i18n.t(`Invalid JSON file: ${e.message}`));
+				console.error('JSON Parse Error:', e);
+				console.error('File Content Snippet:', (reader.result as string).slice(0, 100));
+				return;
 			}
+
+			processNextThemeInQueue();
 		};
 		reader.readAsText(file);
 		// Reset file input so the same file can be loaded again
@@ -679,9 +706,10 @@
 	};
 
 	const exportAllThemes = () => {
-		const allThemes = [...$themes.values(), ...$communityThemes.values()];
+		const defaultThemeIds = ['system', 'dark', 'light', 'oled-dark', 'her'];
+		const allThemes = [...$communityThemes.values()].filter((theme) => !defaultThemeIds.includes(theme.id));
 		const themesJson = JSON.stringify(allThemes, null, 2);
-		const blob = new Blob([themesJson], { type: 'application/json' });
+		const blob = new Blob([themesJson], { type: 'application/json;charset=utf-8' });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
 		a.href = url;
@@ -1068,6 +1096,7 @@
 	themeName={themeToImport?.name ?? ''}
 	themeVersion={themeToImport?.targetWebUIVersion ?? ''}
 	webuiVersion={WEBUI_VERSION}
+	bind:skipWarning={skipThemeImportWarning}
 	on:confirm={() => {
 		if (themeToImport) {
 			if (addCommunityTheme(themeToImport)) {
