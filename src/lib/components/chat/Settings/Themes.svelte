@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, getContext } from 'svelte';
+	import { onMount, getContext, tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { v4 as uuidv4 } from 'uuid';
 	import { WEBUI_VERSION } from '$lib/constants';
@@ -333,6 +333,18 @@
 
 	onMount(() => {
 		selectedThemeId = localStorage.theme ?? 'system';
+
+
+		// Scroll to the selected theme immediately after DOM is ready
+		tick().then(() => {
+			const selectedThemeElement = document.getElementById(`theme-${selectedThemeId}`);
+			if (selectedThemeElement) {
+				selectedThemeElement.scrollIntoView({
+					behavior: 'auto',
+					block: 'center'
+});
+			}
+		});
 
 		const handleScroll = () => {
 			// Hide tooltips
@@ -781,6 +793,7 @@
 								}`}
 							>
 								<div
+									id="theme-{theme.id}"
 									class={`flex h-full items-center p-2 w-full text-left cursor-pointer ${
 										$showThemeEditor && $editingThemeId === theme.id
 											? selectedThemeId === theme.id
