@@ -1,5 +1,7 @@
 import inspect
 from urllib.parse import urlparse
+import asyncio
+import time
 
 import logging
 
@@ -12,6 +14,7 @@ from open_webui.env import (
     REDIS_SENTINEL_MAX_RETRY_COUNT,
     REDIS_SENTINEL_PORT,
     REDIS_URL,
+    REDIS_RECONNECT_DELAY,
 )
 
 log = logging.getLogger(__name__)
@@ -42,6 +45,40 @@ class SentinelRedisProxy:
             return orig_attr
 
         if self._async_mode:
+            if inspect.isasyncgenfunction(orig_attr):
+
+                def _wrapped_iter(*args, **kwargs):
+                    async def _iter():
+                        for i in range(REDIS_SENTINEL_MAX_RETRY_COUNT):
+                            try:
+                                method = getattr(self._master(), item)
+                                async for value in method(*args, **kwargs):
+                                    yield value
+                                return
+                            except (
+                                redis.exceptions.ConnectionError,
+                                redis.exceptions.ReadOnlyError,
+                            ) as e:
+                                if i < REDIS_SENTINEL_MAX_RETRY_COUNT - 1:
+                                    log.debug(
+                                        "Redis sentinel fail-over (%s). Retry %s/%s",
+                                        type(e).__name__,
+                                        i + 1,
+                                        REDIS_SENTINEL_MAX_RETRY_COUNT,
+                                    )
+                                    if REDIS_RECONNECT_DELAY:
+                                        time.sleep(REDIS_RECONNECT_DELAY / 1000)
+                                    continue
+                                log.error(
+                                    "Redis operation failed after %s retries: %s",
+                                    REDIS_SENTINEL_MAX_RETRY_COUNT,
+                                    e,
+                                )
+                                raise e from e
+
+                    return _iter()
+
+                return _wrapped_iter
 
             async def _wrapped(*args, **kwargs):
                 for i in range(REDIS_SENTINEL_MAX_RETRY_COUNT):
@@ -62,6 +99,8 @@ class SentinelRedisProxy:
                                 i + 1,
                                 REDIS_SENTINEL_MAX_RETRY_COUNT,
                             )
+                            if REDIS_RECONNECT_DELAY:
+                                await asyncio.sleep(REDIS_RECONNECT_DELAY / 1000)
                             continue
                         log.error(
                             "Redis operation failed after %s retries: %s",
@@ -90,6 +129,8 @@ class SentinelRedisProxy:
                                 i + 1,
                                 REDIS_SENTINEL_MAX_RETRY_COUNT,
                             )
+                            if REDIS_RECONNECT_DELAY:
+                                time.sleep(REDIS_RECONNECT_DELAY / 1000)
                             continue
                         log.error(
                             "Redis operation failed after %s retries: %s",

@@ -25,6 +25,7 @@
 
 	let selectedIdx = 0;
 	let items = [];
+	let searchDebounceTimer: ReturnType<typeof setTimeout>;
 
 	export let filteredItems = [];
 	$: filteredItems = [
@@ -69,9 +70,16 @@
 
 	$: items = [...folderItems, ...knowledgeItems, ...fileItems];
 
-	$: if (query !== null) {
-		getItems();
+	$: if (query !== undefined) {
+		clearTimeout(searchDebounceTimer);
+		searchDebounceTimer = setTimeout(() => {
+			getItems();
+		}, 200);
 	}
+
+	onDestroy(() => {
+		clearTimeout(searchDebounceTimer);
+	});
 
 	const getItems = () => {
 		getFolderItems();
@@ -216,7 +224,7 @@
 			on:click={() => {
 				if (isValidHttpUrl(query)) {
 					onSelect({
-						type: 'youtube',
+						type: 'web',
 						data: query
 					});
 				} else {

@@ -108,6 +108,10 @@
 	onMount(async () => {
 		languages = await getLanguages();
 
+		if (!$config?.features?.enable_easter_eggs) {
+			languages = languages.filter((l) => l.code !== 'dg-DG');
+		}
+
 		notificationEnabled = $settings.notificationEnabled ?? false;
 		system = $settings.system ?? '';
 
@@ -120,6 +124,7 @@
 	<div class="  overflow-y-scroll max-h-[28rem] md:max-h-full">
 		<div class="">
 			<div class=" mb-1 text-sm font-medium">{$i18n.t('WebUI Settings')}</div>
+
 
 			<div class=" flex w-full justify-between">
 				<div class=" self-center text-xs font-medium">{$i18n.t('Language')}</div>

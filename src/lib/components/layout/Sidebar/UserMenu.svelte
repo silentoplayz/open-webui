@@ -9,7 +9,7 @@
 	import { getUsage } from '$lib/apis';
 	import { getSessionUser, userSignOut } from '$lib/apis/auths';
 
-	import { showSettings, mobile, showSidebar, showShortcuts, user } from '$lib/stores';
+	import { showSettings, mobile, showSidebar, showShortcuts, user, config } from '$lib/stores';
 
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
@@ -59,9 +59,14 @@
 		}
 	};
 
-	$: if (show) {
-		getUsageInfo();
-	}
+	const handleDropdownChange = (state: boolean) => {
+		dispatch('change', state);
+
+		// Fetch usage info when dropdown opens, if user has permission
+		if (state && ($config?.features?.enable_public_active_users_count || role === 'admin')) {
+			getUsageInfo();
+		}
+	};
 </script>
 
 <ShortcutsModal bind:show={$showShortcuts} />
@@ -73,12 +78,7 @@
 />
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<DropdownMenu.Root
-	bind:open={show}
-	onOpenChange={(state) => {
-		dispatch('change', state);
-	}}
->
+<DropdownMenu.Root bind:open={show} onOpenChange={handleDropdownChange}>
 	<DropdownMenu.Trigger>
 		<slot />
 	</DropdownMenu.Trigger>
@@ -110,9 +110,6 @@
 							{#if $user?.is_active ?? true}
 								<div>
 									<span class="relative flex size-2">
-										<span
-											class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"
-										/>
 										<span class="relative inline-flex rounded-full size-2 bg-green-500" />
 									</span>
 								</div>
@@ -352,7 +349,7 @@
 				<div class=" self-center truncate">{$i18n.t('Sign Out')}</div>
 			</DropdownMenu.Item>
 
-			{#if showActiveUsers && usage}
+			{#if showActiveUsers && ($config?.features?.enable_public_active_users_count || role === 'admin') && usage}
 				{#if usage?.user_count}
 					<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1 p-0" />
 
@@ -364,14 +361,13 @@
 						<div
 							class="flex rounded-xl py-1 px-3 text-xs gap-2.5 items-center"
 							on:mouseenter={() => {
-								getUsageInfo();
+								if ($config?.features?.enable_public_active_users_count || role === 'admin') {
+									getUsageInfo();
+								}
 							}}
 						>
 							<div class=" flex items-center">
 								<span class="relative flex size-2">
-									<span
-										class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"
-									/>
 									<span class="relative inline-flex rounded-full size-2 bg-green-500" />
 								</span>
 							</div>

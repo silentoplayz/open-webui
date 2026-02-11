@@ -5,10 +5,12 @@
 	import { getContext } from 'svelte';
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import Pin from '$lib/components/icons/Pin.svelte';
+	import PinSlash from '$lib/components/icons/PinSlash.svelte';
+	import DocumentDuplicate from '$lib/components/icons/DocumentDuplicate.svelte';
 	import Link from '$lib/components/icons/Link.svelte';
-	import Eye from '$lib/components/icons/Eye.svelte';
-	import EyeSlash from '$lib/components/icons/EyeSlash.svelte';
-	import { settings } from '$lib/stores';
+	import { config, settings } from '$lib/stores';
+	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -44,7 +46,7 @@
 
 	<DropdownMenu.Content
 		strategy="fixed"
-		class="w-full max-w-[180px] text-sm rounded-2xl p-1 z-[9999999] bg-white dark:bg-gray-850 dark:text-white shadow-lg border border-gray-100  dark:border-gray-800"
+		class="w-full max-w-[210px] text-sm rounded-2xl p-1 z-[9999999] bg-white dark:bg-gray-850 dark:text-white shadow-lg border border-gray-100  dark:border-gray-800"
 		sideOffset={-2}
 		side="bottom"
 		align="end"
@@ -63,9 +65,9 @@
 			}}
 		>
 			{#if ($settings?.pinnedModels ?? []).includes(model?.id)}
-				<EyeSlash />
+				<PinSlash />
 			{:else}
-				<Eye />
+				<Pin />
 			{/if}
 
 			<div class="flex items-center">
@@ -92,5 +94,25 @@
 
 			<div class="flex items-center">{$i18n.t('Copy Link')}</div>
 		</DropdownMenu.Item>
+
+		{#if $config?.features.enable_community_sharing}
+			<hr class="border-gray-50 dark:border-gray-850/30 my-1" />
+
+			<DropdownMenu.Item
+				type="button"
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition items-center gap-2"
+				on:click={(e) => {
+					e.stopPropagation();
+					e.preventDefault();
+
+					window.open(`https://openwebui.com/models?q=${encodeURIComponent(model?.id ?? '')}`, '_blank');
+					show = false;
+				}}
+			>
+				<GlobeAlt className="size-4" />
+
+				<div class="flex items-center">{$i18n.t('Community Reviews')}</div>
+			</DropdownMenu.Item>
+		{/if}
 	</DropdownMenu.Content>
 </DropdownMenu.Root>

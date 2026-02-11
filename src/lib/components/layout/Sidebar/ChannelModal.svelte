@@ -17,12 +17,13 @@
 	import MemberSelector from '$lib/components/workspace/common/MemberSelector.svelte';
 	import Visibility from '$lib/components/workspace/common/Visibility.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import WebhooksModal from '$lib/components/channel/WebhooksModal.svelte';
 
 	export let show = false;
 	export let onSubmit: Function = () => {};
 	export let onUpdate: Function = () => {};
 
-	export let channel = null;
+	export let channel: any = null;
 	export let edit = false;
 
 	let channelTypes = ['group', 'dm'];
@@ -30,7 +31,7 @@
 	let name = '';
 
 	let isPrivate = null;
-	let accessControl = {};
+	let accessGrants = [];
 
 	let groupIds = [];
 	let userIds = [];
@@ -55,11 +56,17 @@
 
 	const submitHandler = async () => {
 		loading = true;
+		if (name.length > 128) {
+			toast.error($i18n.t('Channel name must be less than 128 characters'));
+			loading = false;
+			return;
+		}
+
 		await onSubmit({
 			type: type,
 			name: name.replace(/\s/g, '-'),
-			is_private: type === 'group' ? isPrivate : null,
-			access_control: type === '' ? accessControl : {},
+			is_private: type === 'group' ? (isPrivate ?? true) : null,
+			access_grants: type === '' ? accessGrants : [],
 			group_ids: groupIds,
 			user_ids: userIds
 		});
@@ -78,8 +85,12 @@
 
 		if (channel) {
 			name = channel?.name ?? '';
-			isPrivate = channel?.is_private ?? null;
-			accessControl = channel.access_control;
+			if (type === 'group') {
+				isPrivate = typeof channel?.is_private === 'boolean' ? channel.is_private : true;
+			} else {
+				isPrivate = null;
+			}
+			accessGrants = channel?.access_grants ?? [];
 			userIds = channel?.user_ids ?? [];
 		}
 	};
@@ -91,11 +102,18 @@
 	}
 
 	let showDeleteConfirmDialog = false;
+	let showWebhooksModal = false;
 
 	const deleteHandler = async () => {
 		showDeleteConfirmDialog = false;
+		if (!channel?.id) {
+			show = false;
+			return;
+		}
 
-		const res = await deleteChannelById(localStorage.token, channel.id).catch((error) => {
+		const channelId = channel.id;
+
+		const res = await deleteChannelById(localStorage.token, channelId).catch((error) => {
 			toast.error(error.message);
 		});
 
@@ -103,7 +121,7 @@
 			toast.success($i18n.t('Channel deleted successfully'));
 			onUpdate();
 
-			if ($page.url.pathname === `/channels/${channel.id}`) {
+			if ($page.url.pathname === `/channels/${channelId}`) {
 				goto('/');
 			}
 		}
@@ -114,13 +132,13 @@
 	const resetHandler = () => {
 		type = '';
 		name = '';
-		accessControl = {};
+		accessGrants = [];
 		userIds = [];
 		loading = false;
 	};
 </script>
 
-<Modal size="sm" bind:show>
+<Modal size="md" bind:show>
 	<div>
 		<div class=" flex justify-between dark:text-gray-300 px-5 pt-4 pb-1">
 			<div class=" text-lg font-medium self-center">
@@ -210,6 +228,7 @@
 								placeholder={`${$i18n.t('new-channel')}`}
 								autocomplete="off"
 								required={type !== 'dm'}
+								max="100"
 							/>
 						</div>
 					</div>
@@ -217,11 +236,11 @@
 					{#if type !== 'dm'}
 						<div class="-mx-2 mb-1 mt-2.5 px-2">
 							{#if type === ''}
-								<AccessControl bind:accessControl accessRoles={['read', 'write']} />
+								<AccessControl bind:accessGrants accessRoles={['read', 'write']} />
 							{:else if type === 'group'}
 								<Visibility
 									state={isPrivate ? 'private' : 'public'}
-									onChange={(value) => {
+									onChange={(value: string) => {
 										if (value === 'private') {
 											isPrivate = true;
 										} else {
@@ -237,6 +256,22 @@
 					{#if ['dm'].includes(type)}
 						<div class="">
 							<MemberSelector bind:userIds includeGroups={false} />
+						</div>
+					{/if}
+
+					{#if edit}
+						<div class="flex w-full mt-2 items-center justify-between">
+							<div class="text-xs text-gray-500">{$i18n.t('Webhooks')}</div>
+
+							<button
+								class="text-xs bg-transparent placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-hidden text-left"
+								type="button"
+								on:click={() => {
+									showWebhooksModal = true;
+								}}
+							>
+								{$i18n.t('Manage')}
+							</button>
 						</div>
 					{/if}
 
@@ -287,3 +322,5 @@
 		deleteHandler();
 	}}
 />
+
+<WebhooksModal bind:show={showWebhooksModal} {channel} />

@@ -20,6 +20,10 @@
 	let filesInputElement = null;
 	let inputFiles = null;
 
+	$: if (selectedItems === null) {
+		selectedItems = [];
+	}
+
 	const uploadFileHandler = async (file, fullContext: boolean = false) => {
 		if ($user?.role !== 'admin' && !($user?.permissions?.chat?.file_upload ?? true)) {
 			toast.error($i18n.t('You do not have permission to upload files.'));
@@ -80,7 +84,7 @@
 				fileItem.id = uploadedFile.id;
 				fileItem.collection_name =
 					uploadedFile?.meta?.collection_name || uploadedFile?.collection_name;
-				fileItem.url = `${WEBUI_API_BASE_URL}/files/${uploadedFile.id}`;
+				fileItem.url = `${uploadedFile.id}`;
 
 				selectedItems = selectedItems;
 			} else {

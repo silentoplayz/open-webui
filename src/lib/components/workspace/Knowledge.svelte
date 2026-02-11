@@ -4,11 +4,15 @@
 	dayjs.extend(relativeTime);
 
 	import { toast } from 'svelte-sonner';
-	import { onMount, getContext, tick } from 'svelte';
+	import { onMount, getContext, tick, onDestroy } from 'svelte';
 	const i18n = getContext('i18n');
 
 	import { WEBUI_NAME, knowledge, user } from '$lib/stores';
-	import { deleteKnowledgeById, searchKnowledgeBases } from '$lib/apis/knowledge';
+	import {
+		deleteKnowledgeById,
+		searchKnowledgeBases,
+		exportKnowledgeById
+	} from '$lib/apis/knowledge';
 
 	import { goto } from '$app/navigation';
 	import { capitalizeFirstLetter } from '$lib/utils';
@@ -32,6 +36,7 @@
 
 	let page = 1;
 	let query = '';
+	let searchDebounceTimer: ReturnType<typeof setTimeout>;
 	let viewOption = '';
 
 	let items = null;
@@ -40,7 +45,18 @@
 	let allItemsLoaded = false;
 	let itemsLoading = false;
 
-	$: if (loaded && query !== undefined && viewOption !== undefined) {
+	$: if (query !== undefined) {
+		clearTimeout(searchDebounceTimer);
+		searchDebounceTimer = setTimeout(() => {
+			init();
+		}, 300);
+	}
+
+	onDestroy(() => {
+		clearTimeout(searchDebounceTimer);
+	});
+
+	$: if (viewOption !== undefined) {
 		init();
 	}
 
@@ -59,6 +75,8 @@
 	};
 
 	const init = async () => {
+		if (!loaded) return;
+
 		reset();
 		await getItemsPage();
 	};
@@ -101,6 +119,25 @@
 		if (res) {
 			toast.success($i18n.t('Knowledge deleted successfully.'));
 			init();
+		}
+	};
+
+	const exportHandler = async (item) => {
+		try {
+			const blob = await exportKnowledgeById(localStorage.token, item.id);
+			if (blob) {
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = `${item.name}.zip`;
+				document.body.appendChild(a);
+				a.click();
+				document.body.removeChild(a);
+				URL.revokeObjectURL(url);
+				toast.success($i18n.t('Knowledge exported successfully'));
+			}
+		} catch (e) {
+			toast.error(`${e}`);
 		}
 	};
 
@@ -232,10 +269,16 @@
 												</div>
 											{/if}
 										</div>
-										{#if item?.write_access}
+
+										{#if item?.write_access || $user?.role === 'admin'}
 											<div class="flex items-center gap-2">
 												<div class=" flex self-center">
 													<ItemMenu
+														onExport={$user.role === 'admin'
+															? () => {
+																	exportHandler(item);
+																}
+															: null}
 														on:delete={() => {
 															selectedItem = item;
 															showDeleteConfirm = true;

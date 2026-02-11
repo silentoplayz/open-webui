@@ -26,7 +26,8 @@
 		models,
 		selectedFolder,
 		WEBUI_NAME,
-		sidebarWidth
+		sidebarWidth,
+		activeChatIds
 	} from '$lib/stores';
 	import { onMount, getContext, tick, onDestroy } from 'svelte';
 
@@ -42,6 +43,7 @@
 		importChats
 	} from '$lib/apis/chats';
 	import { createNewFolder, getFolders, updateFolderParentIdById } from '$lib/apis/folders';
+	import { checkActiveChats } from '$lib/apis/tasks';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import ArchivedChatsModal from './ArchivedChatsModal.svelte';
@@ -64,7 +66,6 @@
 	import Note from '../icons/Note.svelte';
 	import { slide } from 'svelte/transition';
 	import HotkeyHint from '../common/HotkeyHint.svelte';
-	import { key } from 'vega';
 
 	const BREAKPOINT = 768;
 
@@ -81,6 +82,12 @@
 	let allChatsLoaded = false;
 
 	let showCreateFolderModal = false;
+
+	let pinnedModels = [];
+
+	let showPinnedModels = false;
+	let showChannels = false;
+	let showFolders = false;
 
 	let folders = {};
 	let folderRegistry = {};
@@ -178,6 +185,7 @@
 		if (res) {
 			// newFolderId = res.id;
 			await initFolders();
+			showFolders = true;
 		}
 	};
 
@@ -455,8 +463,31 @@
 				}
 
 				if (value) {
-					await initChannels();
+					// Only fetch channels if the feature is enabled and user has permission
+					if (
+						$config?.features?.enable_channels &&
+						($user?.role === 'admin' || ($user?.permissions?.features?.channels ?? true))
+					) {
+						await initChannels();
+					}
 					await initChatList();
+
+					// Check which chats have active tasks
+					const allChatIds = [...$chats.map((c) => c.id), ...$pinnedChats.map((c) => c.id)];
+					if (allChatIds.length > 0) {
+						try {
+							const res = await checkActiveChats(localStorage.token, allChatIds);
+							activeChatIds.set(new Set(res.active_chat_ids || []));
+						} catch (e) {
+							console.debug('Failed to check active chats:', e);
+						}
+					}
+				}
+			}),
+			settings.subscribe((value) => {
+				if (pinnedModels != value?.pinnedModels ?? []) {
+					pinnedModels = value?.pinnedModels ?? [];
+					showPinnedModels = pinnedModels.length > 0;
 				}
 			})
 		];
@@ -475,7 +506,31 @@
 		dropZone?.addEventListener('dragover', onDragOver);
 		dropZone?.addEventListener('drop', onDrop);
 		dropZone?.addEventListener('dragleave', onDragLeave);
+
+		// Listen for real-time chat:active events via the events channel
+		$socket?.off('events', chatActiveEventHandler);
+		$socket?.on('events', chatActiveEventHandler);
 	});
+
+	// Handler for chat:active events (defined outside onMount for proper cleanup)
+	const chatActiveEventHandler = (event: {
+		chat_id: string;
+		message_id: string;
+		data: { type: string; data: any };
+	}) => {
+		if (event.data?.type === 'chat:active') {
+			const { active } = event.data.data;
+			activeChatIds.update((ids) => {
+				const newSet = new Set(ids);
+				if (active) {
+					newSet.add(event.chat_id);
+				} else {
+					newSet.delete(event.chat_id);
+				}
+				return newSet;
+			});
+		}
+	};
 
 	onDestroy(() => {
 		if (unsubscribers && unsubscribers.length > 0) {
@@ -500,6 +555,9 @@
 		dropZone?.removeEventListener('dragover', onDragOver);
 		dropZone?.removeEventListener('drop', onDrop);
 		dropZone?.removeEventListener('dragleave', onDragLeave);
+
+		// Clean up socket listener
+		$socket?.off('events', chatActiveEventHandler);
 	});
 
 	const newChatHandler = async () => {
@@ -542,7 +600,8 @@
 
 <ChannelModal
 	bind:show={showCreateChannel}
-	onSubmit={async ({ type, name, is_private, access_control, group_ids, user_ids }) => {
+	onSubmit={async (payload: any) => {
+		let { type, name, is_private, access_grants, group_ids, user_ids } = payload ?? {};
 		name = name?.trim();
 
 		if (type === 'dm') {
@@ -561,7 +620,7 @@
 			type: type,
 			name: name,
 			is_private: is_private,
-			access_control: access_control,
+			access_grants: access_grants,
 			group_ids: group_ids,
 			user_ids: user_ids
 		}).catch((error) => {
@@ -573,7 +632,7 @@
 			$socket.emit('join-channels', { auth: { token: $user?.token } });
 			await initChannels();
 			showCreateChannel = false;
-
+			showChannels = true;
 			goto(`/channels/${res.id}`);
 		}
 	}}
@@ -775,7 +834,7 @@
 					{#if $user !== undefined && $user !== null}
 						<UserMenu
 							role={$user?.role}
-							profile={true}
+							profile={$config?.features?.enable_user_status ?? true}
 							showActiveUsers={false}
 							on:show={(e) => {
 								if (e.detail === 'archived-chat') {
@@ -794,18 +853,17 @@
 										aria-label={$i18n.t('Open User Profile Menu')}
 									/>
 
-									<div class="absolute -bottom-0.5 -right-0.5">
-										<span class="relative flex size-2.5">
-											<span
-												class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"
-											></span>
-											<span
-												class="relative inline-flex size-2.5 rounded-full {true
-													? 'bg-green-500'
-													: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
-											></span>
-										</span>
-									</div>
+									{#if $config?.features?.enable_user_status}
+										<div class="absolute -bottom-0.5 -right-0.5">
+											<span class="relative flex size-2.5">
+												<span
+													class="relative inline-flex size-2.5 rounded-full {true
+														? 'bg-green-500'
+														: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
+												></span>
+											</span>
+										</div>
+									{/if}
 								</div>
 							</div>
 						</UserMenu>
@@ -1000,6 +1058,7 @@
 				{#if ($models ?? []).length > 0 && (($settings?.pinnedModels ?? []).length > 0 || $config?.default_pinned_models)}
 					<Folder
 						id="sidebar-models"
+						bind:open={showPinnedModels}
 						className="px-2 mt-0.5"
 						name={$i18n.t('Models')}
 						chevron={false}
@@ -1012,6 +1071,7 @@
 				{#if $config?.features?.enable_channels && ($user?.role === 'admin' || ($user?.permissions?.features?.channels ?? true))}
 					<Folder
 						id="sidebar-channels"
+						bind:open={showChannels}
 						className="px-2 mt-0.5"
 						name={$i18n.t('Channels')}
 						chevron={false}
@@ -1046,6 +1106,7 @@
 				{#if $config?.features?.enable_folders && ($user?.role === 'admin' || ($user?.permissions?.features?.folders ?? true))}
 					<Folder
 						id="sidebar-folders"
+						bind:open={showFolders}
 						className="px-2 mt-0.5"
 						name={$i18n.t('Folders')}
 						chevron={false}
@@ -1224,6 +1285,7 @@
 												className=""
 												id={chat.id}
 												title={chat.title}
+												createdAt={chat.created_at}
 												{shiftKey}
 												selected={selectedChatId === chat.id}
 												on:select={() => {
@@ -1284,6 +1346,7 @@
 										className=""
 										id={chat.id}
 										title={chat.title}
+										createdAt={chat.created_at}
 										{shiftKey}
 										selected={selectedChatId === chat.id}
 										on:select={() => {
@@ -1339,7 +1402,7 @@
 					{#if $user !== undefined && $user !== null}
 						<UserMenu
 							role={$user?.role}
-							profile={true}
+							profile={$config?.features?.enable_user_status ?? true}
 							showActiveUsers={false}
 							on:show={(e) => {
 								if (e.detail === 'archived-chat') {
@@ -1358,18 +1421,17 @@
 										aria-label={$i18n.t('Open User Profile Menu')}
 									/>
 
-									<div class="absolute -bottom-0.5 -right-0.5">
-										<span class="relative flex size-2.5">
-											<span
-												class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"
-											></span>
-											<span
-												class="relative inline-flex size-2.5 rounded-full {true
-													? 'bg-green-500'
-													: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
-											></span>
-										</span>
-									</div>
+									{#if $config?.features?.enable_user_status}
+										<div class="absolute -bottom-0.5 -right-0.5">
+											<span class="relative flex size-2.5">
+												<span
+													class="relative inline-flex size-2.5 rounded-full {true
+														? 'bg-green-500'
+														: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
+												></span>
+											</span>
+										</div>
+									{/if}
 								</div>
 								<div class=" self-center font-medium">{$user?.name}</div>
 							</div>

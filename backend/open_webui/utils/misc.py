@@ -13,10 +13,9 @@ import mimeparse
 
 
 import collections.abc
-from open_webui.env import SRC_LOG_LEVELS, CHAT_STREAM_RESPONSE_CHUNK_MAX_BUFFER_SIZE
+from open_webui.env import CHAT_STREAM_RESPONSE_CHUNK_MAX_BUFFER_SIZE
 
 log = logging.getLogger(__name__)
-log.setLevel(SRC_LOG_LEVELS["MAIN"])
 
 
 def deep_update(d, u):
@@ -127,6 +126,132 @@ def get_content_from_message(message: dict) -> Optional[str]:
     else:
         return message.get("content")
     return None
+
+
+def convert_output_to_messages(output: list, raw: bool = False) -> list[dict]:
+    """
+    Convert OR-aligned output items to OpenAI Chat Completion-format messages.
+
+    This reconstructs the full conversation from the stored Responses API-native
+    output items, including assistant messages with tool_calls arrays and tool
+    role messages.
+
+    Args:
+        output: List of OR-aligned output items (Responses API format).
+        raw: If True, include reasoning blocks (with original tags) and code
+             interpreter blocks for LLM re-processing follow-ups.
+    """
+    if not output or not isinstance(output, list):
+        return []
+
+    messages = []
+    pending_tool_calls = []
+    pending_content = []
+
+    def flush_pending():
+        nonlocal pending_content, pending_tool_calls
+        if pending_content or pending_tool_calls:
+            messages.append({
+                "role": "assistant",
+                "content": "\n".join(pending_content) if pending_content else "",
+                **({"tool_calls": pending_tool_calls} if pending_tool_calls else {}),
+            })
+            pending_content = []
+            pending_tool_calls = []
+
+    for item in output:
+        item_type = item.get("type", "")
+
+        if item_type == "message":
+            # Extract text from output_text content parts
+            content_parts = item.get("content", [])
+            text = ""
+            for part in content_parts:
+                if part.get("type") == "output_text":
+                    text += part.get("text", "")
+            if text:
+                pending_content.append(text)
+
+        elif item_type == "function_call":
+            # Collect tool calls to batch into assistant message
+            arguments = item.get("arguments", "{}")
+            # Ensure arguments is always a JSON string
+            if not isinstance(arguments, str):
+                arguments = json.dumps(arguments)
+            pending_tool_calls.append({
+                "id": item.get("call_id", ""),
+                "type": "function",
+                "function": {
+                    "name": item.get("name", ""),
+                    "arguments": arguments,
+                }
+            })
+
+        elif item_type == "function_call_output":
+            # Flush any pending content/tool_calls before adding tool result
+            flush_pending()
+
+            # Extract text from output content parts
+            output_parts = item.get("output", [])
+            content = ""
+            for part in output_parts:
+                if part.get("type") == "input_text":
+                    content += part.get("text", "")
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": item.get("call_id", ""),
+                "content": content,
+            })
+
+        elif item_type == "reasoning":
+            if raw:
+                # Include reasoning with original tags for LLM re-processing
+                reasoning_text = ""
+                source_list = item.get("summary", []) or item.get("content", [])
+                for part in source_list:
+                    if part.get("type") == "output_text":
+                        reasoning_text += part.get("text", "")
+                    elif "text" in part:
+                        reasoning_text += part.get("text", "")
+
+                if reasoning_text:
+                    start_tag = item.get("start_tag", "<think>")
+                    end_tag = item.get("end_tag", "</think>")
+                    pending_content.append(
+                        f"{start_tag}{reasoning_text}{end_tag}"
+                    )
+            # else: skip reasoning blocks for normal LLM messages
+
+        elif item_type == "open_webui:code_interpreter":
+            if raw:
+                # Include code interpreter content for LLM re-processing
+                code = item.get("code", "")
+                code_output = item.get("output", "")
+
+                if code:
+                    lang = item.get("lang", "python")
+                    pending_content.append(f"```{lang}\n{code}\n```")
+
+                if code_output:
+                    if isinstance(code_output, dict):
+                        stdout = code_output.get("stdout", "")
+                        result = code_output.get("result", "")
+                        output_text = stdout or result
+                    else:
+                        output_text = str(code_output)
+                    if output_text:
+                        pending_content.append(f"Output:\n{output_text}")
+            # else: skip extension types
+
+        elif item_type.startswith("open_webui:"):
+            # Skip other extension types
+            pass
+
+    # Flush remaining content/tool_calls
+    flush_pending()
+
+    return messages
 
 
 def get_last_user_message(messages: list[dict]) -> Optional[str]:
@@ -374,6 +499,34 @@ def sanitize_filename(file_name):
     return final_file_name
 
 
+def sanitize_text_for_db(text: str) -> str:
+    """Remove null bytes and invalid UTF-8 surrogates from text for PostgreSQL storage."""
+    if not isinstance(text, str):
+        return text
+    # Remove null bytes
+    text = text.replace("\x00", "").replace("\u0000", "")
+    # Remove invalid UTF-8 surrogate characters that can cause encoding errors
+    # This handles cases where binary data or encoding issues introduced surrogates
+    try:
+        text = text.encode("utf-8", errors="surrogatepass").decode(
+            "utf-8", errors="ignore"
+        )
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    return text
+
+
+def sanitize_data_for_db(obj):
+    """Recursively sanitize all strings in a data structure for database storage."""
+    if isinstance(obj, str):
+        return sanitize_text_for_db(obj)
+    elif isinstance(obj, dict):
+        return {k: sanitize_data_for_db(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_data_for_db(v) for v in obj]
+    return obj
+
+
 def extract_folders_after_data_docs(path):
     # Convert the path to a Path object if it's not already
     path = Path(path)
@@ -523,16 +676,18 @@ def parse_ollama_modelfile(model_text):
     return data
 
 
-def convert_logit_bias_input_to_json(user_input):
-    logit_bias_pairs = user_input.split(",")
-    logit_bias_json = {}
-    for pair in logit_bias_pairs:
-        token, bias = pair.split(":")
-        token = str(token.strip())
-        bias = int(bias.strip())
-        bias = 100 if bias > 100 else -100 if bias < -100 else bias
-        logit_bias_json[token] = bias
-    return json.dumps(logit_bias_json)
+def convert_logit_bias_input_to_json(user_input) -> Optional[str]:
+    if user_input:
+        logit_bias_pairs = user_input.split(",")
+        logit_bias_json = {}
+        for pair in logit_bias_pairs:
+            token, bias = pair.split(":")
+            token = str(token.strip())
+            bias = int(bias.strip())
+            bias = 100 if bias > 100 else -100 if bias < -100 else bias
+            logit_bias_json[token] = bias
+        return json.dumps(logit_bias_json)
+    return None
 
 
 def freeze(value):
@@ -592,6 +747,10 @@ def strict_match_mime_type(supported: list[str] | str, header: str) -> Optional[
             supported = supported.split(",")
 
         supported = [s for s in supported if s.strip() and "/" in s]
+
+        if len(supported) == 0:
+            # Default to common types if none are specified
+            supported = ["audio/*", "video/webm"]
 
         match = mimeparse.best_match(supported, header)
         if not match:

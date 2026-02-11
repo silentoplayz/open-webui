@@ -23,6 +23,7 @@ from open_webui.models.users import UserModel
 
 from open_webui.env import (
     ENABLE_FORWARD_USER_INFO_HEADERS,
+    FORWARD_SESSION_INFO_HEADER_CHAT_ID,
 )
 
 from fastapi import (
@@ -38,9 +39,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, validator
 from starlette.background import BackgroundTask
+from sqlalchemy.orm import Session
+
+from open_webui.internal.db import get_session
 
 
 from open_webui.models.models import Models
+from open_webui.models.access_grants import AccessGrants
 from open_webui.utils.misc import (
     calculate_sha256,
 )
@@ -50,15 +55,11 @@ from open_webui.utils.payload import (
     apply_system_prompt_to_body,
 )
 from open_webui.utils.auth import get_admin_user, get_verified_user
-from open_webui.utils.access_control import has_access
-
-
 from open_webui.config import (
     UPLOAD_DIR,
 )
 from open_webui.env import (
     ENV,
-    SRC_LOG_LEVELS,
     MODELS_CACHE_TTL,
     AIOHTTP_CLIENT_SESSION_SSL,
     AIOHTTP_CLIENT_TIMEOUT,
@@ -68,7 +69,6 @@ from open_webui.env import (
 from open_webui.constants import ERROR_MESSAGES
 
 log = logging.getLogger(__name__)
-log.setLevel(SRC_LOG_LEVELS["OLLAMA"])
 
 
 ##########################################
@@ -136,7 +136,7 @@ async def send_post_request(
         if ENABLE_FORWARD_USER_INFO_HEADERS and user:
             headers = include_user_info_headers(headers, user)
             if metadata and metadata.get("chat_id"):
-                headers["X-OpenWebUI-Chat-Id"] = metadata.get("chat_id")
+                headers[FORWARD_SESSION_INFO_HEADER_CHAT_ID] = metadata.get("chat_id")
 
         r = await session.post(
             url,
@@ -423,14 +423,18 @@ async def get_all_models(request: Request, user: UserModel = None):
     return models
 
 
-async def get_filtered_models(models, user):
+async def get_filtered_models(models, user, db=None):
     # Filter models based on user access control
     filtered_models = []
     for model in models.get("models", []):
-        model_info = Models.get_model_by_id(model["model"])
+        model_info = Models.get_model_by_id(model["model"], db=db)
         if model_info:
-            if user.id == model_info.user_id or has_access(
-                user.id, type="read", access_control=model_info.access_control
+            if user.id == model_info.user_id or AccessGrants.has_access(
+                user_id=user.id,
+                resource_type="model",
+                resource_id=model_info.id,
+                permission="read",
+                db=db,
             ):
                 filtered_models.append(model)
     return filtered_models
@@ -441,6 +445,9 @@ async def get_filtered_models(models, user):
 async def get_ollama_tags(
     request: Request, url_idx: Optional[int] = None, user=Depends(get_verified_user)
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     models = []
 
     if url_idx is None:
@@ -705,6 +712,9 @@ async def pull_model(
     url_idx: int = 0,
     user=Depends(get_admin_user),
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     form_data = form_data.model_dump(exclude_none=True)
     form_data["model"] = form_data.get("model", form_data.get("name"))
 
@@ -736,6 +746,9 @@ async def push_model(
     url_idx: Optional[int] = None,
     user=Depends(get_admin_user),
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     if url_idx is None:
         await get_all_models(request, user=user)
         models = request.app.state.OLLAMA_MODELS
@@ -775,6 +788,9 @@ async def create_model(
     url_idx: int = 0,
     user=Depends(get_admin_user),
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     log.debug(f"form_data: {form_data}")
     url = request.app.state.config.OLLAMA_BASE_URLS[url_idx]
 
@@ -799,6 +815,9 @@ async def copy_model(
     url_idx: Optional[int] = None,
     user=Depends(get_admin_user),
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     if url_idx is None:
         await get_all_models(request, user=user)
         models = request.app.state.OLLAMA_MODELS
@@ -859,6 +878,9 @@ async def delete_model(
     url_idx: Optional[int] = None,
     user=Depends(get_admin_user),
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     form_data = form_data.model_dump(exclude_none=True)
     form_data["model"] = form_data.get("model", form_data.get("name"))
 
@@ -921,6 +943,9 @@ async def delete_model(
 async def show_model_info(
     request: Request, form_data: ModelNameForm, user=Depends(get_verified_user)
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     form_data = form_data.model_dump(exclude_none=True)
     form_data["model"] = form_data.get("model", form_data.get("name"))
 
@@ -993,6 +1018,9 @@ async def embed(
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     log.info(f"generate_ollama_batch_embeddings {form_data}")
 
     if url_idx is None:
@@ -1075,6 +1103,9 @@ async def embeddings(
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     log.info(f"generate_ollama_embeddings {form_data}")
 
     if url_idx is None:
@@ -1165,6 +1196,9 @@ async def generate_completion(
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
     if url_idx is None:
         await get_all_models(request, user=user)
         models = request.app.state.OLLAMA_MODELS
@@ -1255,7 +1289,15 @@ async def generate_chat_completion(
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
     bypass_filter: Optional[bool] = False,
+    bypass_system_prompt: bool = False,
 ):
+    if not request.app.state.config.ENABLE_OLLAMA_API:
+        raise HTTPException(status_code=503, detail="Ollama API is disabled")
+
+    # NOTE: We intentionally do NOT use Depends(get_session) here.
+    # Database operations (get_model_by_id, AccessGrants.has_access) manage their own short-lived sessions.
+    # This prevents holding a connection during the entire LLM call (30-60+ seconds),
+    # which would exhaust the connection pool under concurrent load.
     if BYPASS_MODEL_ACCESS_CONTROL:
         bypass_filter = True
 
@@ -1280,7 +1322,12 @@ async def generate_chat_completion(
 
     if model_info:
         if model_info.base_model_id:
-            payload["model"] = model_info.base_model_id
+            base_model_id = (
+                request.base_model_id
+                if hasattr(request, "base_model_id")
+                else model_info.base_model_id
+            )  # Use request's base_model_id if available
+            payload["model"] = base_model_id
 
         params = model_info.params.model_dump()
 
@@ -1288,14 +1335,18 @@ async def generate_chat_completion(
             system = params.pop("system", None)
 
             payload = apply_model_params_to_body_ollama(params, payload)
-            payload = apply_system_prompt_to_body(system, payload, metadata, user)
+            if not bypass_system_prompt:
+                payload = apply_system_prompt_to_body(system, payload, metadata, user)
 
         # Check if user has access to the model
         if not bypass_filter and user.role == "user":
             if not (
                 user.id == model_info.user_id
-                or has_access(
-                    user.id, type="read", access_control=model_info.access_control
+                or AccessGrants.has_access(
+                    user_id=user.id,
+                    resource_type="model",
+                    resource_id=model_info.id,
+                    permission="read",
                 )
             ):
                 raise HTTPException(
@@ -1368,6 +1419,10 @@ async def generate_openai_completion(
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
 ):
+    # NOTE: We intentionally do NOT use Depends(get_session) here.
+    # Database operations (get_model_by_id, AccessGrants.has_access) manage their own short-lived sessions.
+    # This prevents holding a connection during the entire LLM call (30-60+ seconds),
+    # which would exhaust the connection pool under concurrent load.
     metadata = form_data.pop("metadata", None)
 
     try:
@@ -1400,8 +1455,11 @@ async def generate_openai_completion(
         if user.role == "user":
             if not (
                 user.id == model_info.user_id
-                or has_access(
-                    user.id, type="read", access_control=model_info.access_control
+                or AccessGrants.has_access(
+                    user_id=user.id,
+                    resource_type="model",
+                    resource_id=model_info.id,
+                    permission="read",
                 )
             ):
                 raise HTTPException(
@@ -1447,6 +1505,10 @@ async def generate_openai_chat_completion(
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
 ):
+    # NOTE: We intentionally do NOT use Depends(get_session) here.
+    # Database operations (get_model_by_id, AccessGrants.has_access) manage their own short-lived sessions.
+    # This prevents holding a connection during the entire LLM call (30-60+ seconds),
+    # which would exhaust the connection pool under concurrent load.
     metadata = form_data.pop("metadata", None)
 
     try:
@@ -1483,8 +1545,11 @@ async def generate_openai_chat_completion(
         if user.role == "user":
             if not (
                 user.id == model_info.user_id
-                or has_access(
-                    user.id, type="read", access_control=model_info.access_control
+                or AccessGrants.has_access(
+                    user_id=user.id,
+                    resource_type="model",
+                    resource_id=model_info.id,
+                    permission="read",
                 )
             ):
                 raise HTTPException(
@@ -1527,6 +1592,7 @@ async def get_openai_models(
     request: Request,
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
+    db: Session = Depends(get_session),
 ):
 
     models = []
@@ -1579,10 +1645,14 @@ async def get_openai_models(
         # Filter models based on user access control
         filtered_models = []
         for model in models:
-            model_info = Models.get_model_by_id(model["id"])
+            model_info = Models.get_model_by_id(model["id"], db=db)
             if model_info:
-                if user.id == model_info.user_id or has_access(
-                    user.id, type="read", access_control=model_info.access_control
+                if user.id == model_info.user_id or AccessGrants.has_access(
+                    user_id=user.id,
+                    resource_type="model",
+                    resource_id=model_info.id,
+                    permission="read",
+                    db=db,
                 ):
                     filtered_models.append(model)
         models = filtered_models
@@ -1649,11 +1719,10 @@ async def download_file_stream(
 
                 if done:
                     file.close()
+                    hashed = calculate_sha256(file_path, chunk_size)
 
                     with open(file_path, "rb") as file:
                         chunk_size = 1024 * 1024 * 2
-                        hashed = calculate_sha256(file, chunk_size)
-
                         url = f"{ollama_url}/api/blobs/sha256:{hashed}"
                         with requests.Session() as session:
                             response = session.post(url, data=file, timeout=30)

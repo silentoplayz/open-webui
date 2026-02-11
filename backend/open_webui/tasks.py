@@ -8,11 +8,10 @@ from redis.asyncio import Redis
 from fastapi import Request
 from typing import Dict, List, Optional
 
-from open_webui.env import SRC_LOG_LEVELS, REDIS_KEY_PREFIX
+from open_webui.env import REDIS_KEY_PREFIX
 
 
 log = logging.getLogger(__name__)
-log.setLevel(SRC_LOG_LEVELS["MAIN"])
 
 # A dictionary to keep track of active tasks
 tasks: Dict[str, asyncio.Task] = {}
@@ -184,3 +183,18 @@ async def stop_item_tasks(redis: Redis, item_id: str):
             return result  # Return the first failure
 
     return {"status": True, "message": f"All tasks for item {item_id} stopped."}
+
+
+async def has_active_tasks(redis, chat_id: str) -> bool:
+    """Check if a chat has any active tasks."""
+    task_ids = await list_task_ids_by_item_id(redis, chat_id)
+    return len(task_ids) > 0
+
+
+async def get_active_chat_ids(redis, chat_ids: List[str]) -> List[str]:
+    """Filter a list of chat_ids to only those with active tasks."""
+    active = []
+    for chat_id in chat_ids:
+        if await has_active_tasks(redis, chat_id):
+            active.append(chat_id)
+    return active

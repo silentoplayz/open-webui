@@ -1,12 +1,18 @@
 import json
+import secrets
 import time
 import uuid
 from typing import Optional
 
-from open_webui.internal.db import Base, get_db
+from sqlalchemy.orm import Session
+from open_webui.internal.db import Base, JSONField, get_db, get_db_context
 from open_webui.models.groups import Groups
+from open_webui.models.access_grants import (
+    AccessGrantModel,
+    AccessGrants,
+)
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.dialects.postgresql import JSONB
 
 
@@ -45,7 +51,6 @@ class Channel(Base):
 
     data = Column(JSON, nullable=True)
     meta = Column(JSON, nullable=True)
-    access_control = Column(JSON, nullable=True)
 
     created_at = Column(BigInteger)
 
@@ -74,7 +79,7 @@ class ChannelModel(BaseModel):
 
     data: Optional[dict] = None
     meta: Optional[dict] = None
-    access_control: Optional[dict] = None
+    access_grants: list[AccessGrantModel] = Field(default_factory=list)
 
     created_at: int  # timestamp in epoch (time_ns)
 
@@ -235,7 +240,7 @@ class ChannelForm(BaseModel):
     is_private: Optional[bool] = None
     data: Optional[dict] = None
     meta: Optional[dict] = None
-    access_control: Optional[dict] = None
+    access_grants: Optional[list[dict]] = None
     group_ids: Optional[list[str]] = None
     user_ids: Optional[list[str]] = None
 
@@ -244,7 +249,24 @@ class CreateChannelForm(ChannelForm):
     type: Optional[str] = None
 
 
+class ChannelWebhookForm(BaseModel):
+    name: str
+    profile_image_url: Optional[str] = None
+
+
 class ChannelTable:
+    def _get_access_grants(
+        self, channel_id: str, db: Optional[Session] = None
+    ) -> list[AccessGrantModel]:
+        return AccessGrants.get_grants_by_resource("channel", channel_id, db=db)
+
+    def _to_channel_model(
+        self, channel: Channel, db: Optional[Session] = None
+    ) -> ChannelModel:
+        channel_data = ChannelModel.model_validate(channel).model_dump(exclude={"access_grants"})
+        access_grants = self._get_access_grants(channel_data["id"], db=db)
+        channel_data["access_grants"] = access_grants
+        return ChannelModel.model_validate(channel_data)
 
     def _collect_unique_user_ids(
         self,
@@ -304,21 +326,22 @@ class ChannelTable:
         return memberships
 
     def insert_new_channel(
-        self, form_data: CreateChannelForm, user_id: str
+        self, form_data: CreateChannelForm, user_id: str, db: Optional[Session] = None
     ) -> Optional[ChannelModel]:
-        with get_db() as db:
+        with get_db_context(db) as db:
             channel = ChannelModel(
                 **{
-                    **form_data.model_dump(),
+                    **form_data.model_dump(exclude={"access_grants"}),
                     "type": form_data.type if form_data.type else None,
                     "name": form_data.name.lower(),
                     "id": str(uuid.uuid4()),
                     "user_id": user_id,
                     "created_at": int(time.time_ns()),
                     "updated_at": int(time.time_ns()),
+                    "access_grants": [],
                 }
             )
-            new_channel = Channel(**channel.model_dump())
+            new_channel = Channel(**channel.model_dump(exclude={"access_grants"}))
 
             if form_data.type in ["group", "dm"]:
                 users = self._collect_unique_user_ids(
@@ -335,59 +358,32 @@ class ChannelTable:
                 db.add_all(memberships)
             db.add(new_channel)
             db.commit()
-            return channel
+            AccessGrants.set_access_grants(
+                "channel", new_channel.id, form_data.access_grants, db=db
+            )
+            return self._to_channel_model(new_channel, db=db)
 
-    def get_channels(self) -> list[ChannelModel]:
-        with get_db() as db:
+    def get_channels(self, db: Optional[Session] = None) -> list[ChannelModel]:
+        with get_db_context(db) as db:
             channels = db.query(Channel).all()
-            return [ChannelModel.model_validate(channel) for channel in channels]
+            return [self._to_channel_model(channel, db=db) for channel in channels]
 
     def _has_permission(self, db, query, filter: dict, permission: str = "read"):
-        group_ids = filter.get("group_ids", [])
-        user_id = filter.get("user_id")
+        return AccessGrants.has_permission_filter(
+            db=db,
+            query=query,
+            DocumentModel=Channel,
+            filter=filter,
+            resource_type="channel",
+            permission=permission,
+        )
 
-        dialect_name = db.bind.dialect.name
-
-        # Public access
-        conditions = []
-        if group_ids or user_id:
-            conditions.extend(
-                [
-                    Channel.access_control.is_(None),
-                    cast(Channel.access_control, String) == "null",
-                ]
-            )
-
-        # User-level permission
-        if user_id:
-            conditions.append(Channel.user_id == user_id)
-
-        # Group-level permission
-        if group_ids:
-            group_conditions = []
-            for gid in group_ids:
-                if dialect_name == "sqlite":
-                    group_conditions.append(
-                        Channel.access_control[permission]["group_ids"].contains([gid])
-                    )
-                elif dialect_name == "postgresql":
-                    group_conditions.append(
-                        cast(
-                            Channel.access_control[permission]["group_ids"],
-                            JSONB,
-                        ).contains([gid])
-                    )
-            conditions.append(or_(*group_conditions))
-
-        if conditions:
-            query = query.filter(or_(*conditions))
-
-        return query
-
-    def get_channels_by_user_id(self, user_id: str) -> list[ChannelModel]:
-        with get_db() as db:
+    def get_channels_by_user_id(
+        self, user_id: str, db: Optional[Session] = None
+    ) -> list[ChannelModel]:
+        with get_db_context(db) as db:
             user_group_ids = [
-                group.id for group in Groups.get_groups_by_member_id(user_id)
+                group.id for group in Groups.get_groups_by_member_id(user_id, db=db)
             ]
 
             membership_channels = (
@@ -419,10 +415,12 @@ class ChannelTable:
             standard_channels = query.all()
 
             all_channels = membership_channels + standard_channels
-            return [ChannelModel.model_validate(c) for c in all_channels]
+            return [self._to_channel_model(c, db=db) for c in all_channels]
 
-    def get_dm_channel_by_user_ids(self, user_ids: list[str]) -> Optional[ChannelModel]:
-        with get_db() as db:
+    def get_dm_channel_by_user_ids(
+        self, user_ids: list[str], db: Optional[Session] = None
+    ) -> Optional[ChannelModel]:
+        with get_db_context(db) as db:
             # Ensure uniqueness in case a list with duplicates is passed
             unique_user_ids = list(set(user_ids))
 
@@ -452,7 +450,7 @@ class ChannelTable:
                 .first()
             )
 
-            return ChannelModel.model_validate(channel) if channel else None
+            return self._to_channel_model(channel, db=db) if channel else None
 
     def add_members_to_channel(
         self,
@@ -460,8 +458,9 @@ class ChannelTable:
         invited_by: str,
         user_ids: Optional[list[str]] = None,
         group_ids: Optional[list[str]] = None,
+        db: Optional[Session] = None,
     ) -> list[ChannelMemberModel]:
-        with get_db() as db:
+        with get_db_context(db) as db:
             # 1. Collect all user_ids including groups + inviter
             requested_users = self._collect_unique_user_ids(
                 invited_by, user_ids, group_ids
@@ -494,8 +493,9 @@ class ChannelTable:
         self,
         channel_id: str,
         user_ids: list[str],
+        db: Optional[Session] = None,
     ) -> int:
-        with get_db() as db:
+        with get_db_context(db) as db:
             result = (
                 db.query(ChannelMember)
                 .filter(
@@ -507,8 +507,10 @@ class ChannelTable:
             db.commit()
             return result  # number of rows deleted
 
-    def is_user_channel_manager(self, channel_id: str, user_id: str) -> bool:
-        with get_db() as db:
+    def is_user_channel_manager(
+        self, channel_id: str, user_id: str, db: Optional[Session] = None
+    ) -> bool:
+        with get_db_context(db) as db:
             # Check if the user is the creator of the channel
             # or has a 'manager' role in ChannelMember
             channel = db.query(Channel).filter(Channel.id == channel_id).first()
@@ -527,9 +529,9 @@ class ChannelTable:
             return membership is not None
 
     def join_channel(
-        self, channel_id: str, user_id: str
+        self, channel_id: str, user_id: str, db: Optional[Session] = None
     ) -> Optional[ChannelMemberModel]:
-        with get_db() as db:
+        with get_db_context(db) as db:
             # Check if the membership already exists
             existing_membership = (
                 db.query(ChannelMember)
@@ -565,8 +567,10 @@ class ChannelTable:
             db.commit()
             return channel_member
 
-    def leave_channel(self, channel_id: str, user_id: str) -> bool:
-        with get_db() as db:
+    def leave_channel(
+        self, channel_id: str, user_id: str, db: Optional[Session] = None
+    ) -> bool:
+        with get_db_context(db) as db:
             membership = (
                 db.query(ChannelMember)
                 .filter(
@@ -587,9 +591,9 @@ class ChannelTable:
             return True
 
     def get_member_by_channel_and_user_id(
-        self, channel_id: str, user_id: str
+        self, channel_id: str, user_id: str, db: Optional[Session] = None
     ) -> Optional[ChannelMemberModel]:
-        with get_db() as db:
+        with get_db_context(db) as db:
             membership = (
                 db.query(ChannelMember)
                 .filter(
@@ -600,8 +604,10 @@ class ChannelTable:
             )
             return ChannelMemberModel.model_validate(membership) if membership else None
 
-    def get_members_by_channel_id(self, channel_id: str) -> list[ChannelMemberModel]:
-        with get_db() as db:
+    def get_members_by_channel_id(
+        self, channel_id: str, db: Optional[Session] = None
+    ) -> list[ChannelMemberModel]:
+        with get_db_context(db) as db:
             memberships = (
                 db.query(ChannelMember)
                 .filter(ChannelMember.channel_id == channel_id)
@@ -612,8 +618,14 @@ class ChannelTable:
                 for membership in memberships
             ]
 
-    def pin_channel(self, channel_id: str, user_id: str, is_pinned: bool) -> bool:
-        with get_db() as db:
+    def pin_channel(
+        self,
+        channel_id: str,
+        user_id: str,
+        is_pinned: bool,
+        db: Optional[Session] = None,
+    ) -> bool:
+        with get_db_context(db) as db:
             membership = (
                 db.query(ChannelMember)
                 .filter(
@@ -631,8 +643,10 @@ class ChannelTable:
             db.commit()
             return True
 
-    def update_member_last_read_at(self, channel_id: str, user_id: str) -> bool:
-        with get_db() as db:
+    def update_member_last_read_at(
+        self, channel_id: str, user_id: str, db: Optional[Session] = None
+    ) -> bool:
+        with get_db_context(db) as db:
             membership = (
                 db.query(ChannelMember)
                 .filter(
@@ -651,9 +665,13 @@ class ChannelTable:
             return True
 
     def update_member_active_status(
-        self, channel_id: str, user_id: str, is_active: bool
+        self,
+        channel_id: str,
+        user_id: str,
+        is_active: bool,
+        db: Optional[Session] = None,
     ) -> bool:
-        with get_db() as db:
+        with get_db_context(db) as db:
             membership = (
                 db.query(ChannelMember)
                 .filter(
@@ -671,8 +689,10 @@ class ChannelTable:
             db.commit()
             return True
 
-    def is_user_channel_member(self, channel_id: str, user_id: str) -> bool:
-        with get_db() as db:
+    def is_user_channel_member(
+        self, channel_id: str, user_id: str, db: Optional[Session] = None
+    ) -> bool:
+        with get_db_context(db) as db:
             membership = (
                 db.query(ChannelMember)
                 .filter(
@@ -683,24 +703,31 @@ class ChannelTable:
             )
             return membership is not None
 
-    def get_channel_by_id(self, id: str) -> Optional[ChannelModel]:
-        with get_db() as db:
-            channel = db.query(Channel).filter(Channel.id == id).first()
-            return ChannelModel.model_validate(channel) if channel else None
+    def get_channel_by_id(
+        self, id: str, db: Optional[Session] = None
+    ) -> Optional[ChannelModel]:
+        try:
+            with get_db_context(db) as db:
+                channel = db.query(Channel).filter(Channel.id == id).first()
+                return self._to_channel_model(channel, db=db) if channel else None
+        except Exception:
+            return None
 
-    def get_channels_by_file_id(self, file_id: str) -> list[ChannelModel]:
-        with get_db() as db:
+    def get_channels_by_file_id(
+        self, file_id: str, db: Optional[Session] = None
+    ) -> list[ChannelModel]:
+        with get_db_context(db) as db:
             channel_files = (
                 db.query(ChannelFile).filter(ChannelFile.file_id == file_id).all()
             )
             channel_ids = [cf.channel_id for cf in channel_files]
             channels = db.query(Channel).filter(Channel.id.in_(channel_ids)).all()
-            return [ChannelModel.model_validate(channel) for channel in channels]
+            return [self._to_channel_model(channel, db=db) for channel in channels]
 
     def get_channels_by_file_id_and_user_id(
-        self, file_id: str, user_id: str
+        self, file_id: str, user_id: str, db: Optional[Session] = None
     ) -> list[ChannelModel]:
-        with get_db() as db:
+        with get_db_context(db) as db:
             # 1. Determine which channels have this file
             channel_file_rows = (
                 db.query(ChannelFile).filter(ChannelFile.file_id == file_id).all()
@@ -724,7 +751,9 @@ class ChannelTable:
                 return []
 
             # Preload user's group membership
-            user_group_ids = [g.id for g in Groups.get_groups_by_member_id(user_id)]
+            user_group_ids = [
+                g.id for g in Groups.get_groups_by_member_id(user_id, db=db)
+            ]
 
             allowed_channels = []
 
@@ -741,7 +770,9 @@ class ChannelTable:
                         .first()
                     )
                     if membership:
-                        allowed_channels.append(ChannelModel.model_validate(channel))
+                        allowed_channels.append(
+                            self._to_channel_model(channel, db=db)
+                        )
                     continue
 
                 # --- Case B: standard channel => rely on ACL permissions ---
@@ -756,14 +787,14 @@ class ChannelTable:
 
                 allowed = query.first()
                 if allowed:
-                    allowed_channels.append(ChannelModel.model_validate(allowed))
+                    allowed_channels.append(self._to_channel_model(allowed, db=db))
 
             return allowed_channels
 
     def get_channel_by_id_and_user_id(
-        self, id: str, user_id: str
+        self, id: str, user_id: str, db: Optional[Session] = None
     ) -> Optional[ChannelModel]:
-        with get_db() as db:
+        with get_db_context(db) as db:
             # Fetch the channel
             channel: Channel = (
                 db.query(Channel)
@@ -790,7 +821,7 @@ class ChannelTable:
                     .first()
                 )
                 if membership:
-                    return ChannelModel.model_validate(channel)
+                    return self._to_channel_model(channel, db=db)
                 else:
                     return None
 
@@ -799,7 +830,7 @@ class ChannelTable:
 
             # Determine user groups
             user_group_ids = [
-                group.id for group in Groups.get_groups_by_member_id(user_id)
+                group.id for group in Groups.get_groups_by_member_id(user_id, db=db)
             ]
 
             # Apply ACL rules
@@ -812,15 +843,15 @@ class ChannelTable:
 
             channel_allowed = query.first()
             return (
-                ChannelModel.model_validate(channel_allowed)
+                self._to_channel_model(channel_allowed, db=db)
                 if channel_allowed
                 else None
             )
 
     def update_channel_by_id(
-        self, id: str, form_data: ChannelForm
+        self, id: str, form_data: ChannelForm, db: Optional[Session] = None
     ) -> Optional[ChannelModel]:
-        with get_db() as db:
+        with get_db_context(db) as db:
             channel = db.query(Channel).filter(Channel.id == id).first()
             if not channel:
                 return None
@@ -832,16 +863,19 @@ class ChannelTable:
             channel.data = form_data.data
             channel.meta = form_data.meta
 
-            channel.access_control = form_data.access_control
+            if form_data.access_grants is not None:
+                AccessGrants.set_access_grants(
+                    "channel", id, form_data.access_grants, db=db
+                )
             channel.updated_at = int(time.time_ns())
 
             db.commit()
-            return ChannelModel.model_validate(channel) if channel else None
+            return self._to_channel_model(channel, db=db) if channel else None
 
     def add_file_to_channel_by_id(
-        self, channel_id: str, file_id: str, user_id: str
+        self, channel_id: str, file_id: str, user_id: str, db: Optional[Session] = None
     ) -> Optional[ChannelFileModel]:
-        with get_db() as db:
+        with get_db_context(db) as db:
             channel_file = ChannelFileModel(
                 **{
                     "id": str(uuid.uuid4()),
@@ -866,10 +900,14 @@ class ChannelTable:
                 return None
 
     def set_file_message_id_in_channel_by_id(
-        self, channel_id: str, file_id: str, message_id: str
+        self,
+        channel_id: str,
+        file_id: str,
+        message_id: str,
+        db: Optional[Session] = None,
     ) -> bool:
         try:
-            with get_db() as db:
+            with get_db_context(db) as db:
                 channel_file = (
                     db.query(ChannelFile)
                     .filter_by(channel_id=channel_id, file_id=file_id)
@@ -886,9 +924,11 @@ class ChannelTable:
         except Exception:
             return False
 
-    def remove_file_from_channel_by_id(self, channel_id: str, file_id: str) -> bool:
+    def remove_file_from_channel_by_id(
+        self, channel_id: str, file_id: str, db: Optional[Session] = None
+    ) -> bool:
         try:
-            with get_db() as db:
+            with get_db_context(db) as db:
                 db.query(ChannelFile).filter_by(
                     channel_id=channel_id, file_id=file_id
                 ).delete()
@@ -897,11 +937,116 @@ class ChannelTable:
         except Exception:
             return False
 
-    def delete_channel_by_id(self, id: str):
-        with get_db() as db:
+    def delete_channel_by_id(self, id: str, db: Optional[Session] = None) -> bool:
+        with get_db_context(db) as db:
+            AccessGrants.revoke_all_access("channel", id, db=db)
             db.query(Channel).filter(Channel.id == id).delete()
             db.commit()
             return True
+
+    ####################
+    # Webhook Methods
+    ####################
+
+    def insert_webhook(
+        self,
+        channel_id: str,
+        user_id: str,
+        form_data: ChannelWebhookForm,
+        db: Optional[Session] = None,
+    ) -> Optional[ChannelWebhookModel]:
+        with get_db_context(db) as db:
+            webhook = ChannelWebhookModel(
+                id=str(uuid.uuid4()),
+                channel_id=channel_id,
+                user_id=user_id,
+                name=form_data.name,
+                profile_image_url=form_data.profile_image_url,
+                token=secrets.token_urlsafe(32),
+                last_used_at=None,
+                created_at=int(time.time_ns()),
+                updated_at=int(time.time_ns()),
+            )
+            db.add(ChannelWebhook(**webhook.model_dump()))
+            db.commit()
+            return webhook
+
+    def get_webhooks_by_channel_id(
+        self, channel_id: str, db: Optional[Session] = None
+    ) -> list[ChannelWebhookModel]:
+        with get_db_context(db) as db:
+            webhooks = (
+                db.query(ChannelWebhook)
+                .filter(ChannelWebhook.channel_id == channel_id)
+                .all()
+            )
+            return [ChannelWebhookModel.model_validate(w) for w in webhooks]
+
+    def get_webhook_by_id(
+        self, webhook_id: str, db: Optional[Session] = None
+    ) -> Optional[ChannelWebhookModel]:
+        with get_db_context(db) as db:
+            webhook = (
+                db.query(ChannelWebhook).filter(ChannelWebhook.id == webhook_id).first()
+            )
+            return ChannelWebhookModel.model_validate(webhook) if webhook else None
+
+    def get_webhook_by_id_and_token(
+        self, webhook_id: str, token: str, db: Optional[Session] = None
+    ) -> Optional[ChannelWebhookModel]:
+        with get_db_context(db) as db:
+            webhook = (
+                db.query(ChannelWebhook)
+                .filter(
+                    ChannelWebhook.id == webhook_id,
+                    ChannelWebhook.token == token,
+                )
+                .first()
+            )
+            return ChannelWebhookModel.model_validate(webhook) if webhook else None
+
+    def update_webhook_by_id(
+        self,
+        webhook_id: str,
+        form_data: ChannelWebhookForm,
+        db: Optional[Session] = None,
+    ) -> Optional[ChannelWebhookModel]:
+        with get_db_context(db) as db:
+            webhook = (
+                db.query(ChannelWebhook).filter(ChannelWebhook.id == webhook_id).first()
+            )
+            if not webhook:
+                return None
+            webhook.name = form_data.name
+            webhook.profile_image_url = form_data.profile_image_url
+            webhook.updated_at = int(time.time_ns())
+            db.commit()
+            return ChannelWebhookModel.model_validate(webhook)
+
+    def update_webhook_last_used_at(
+        self, webhook_id: str, db: Optional[Session] = None
+    ) -> bool:
+        with get_db_context(db) as db:
+            webhook = (
+                db.query(ChannelWebhook).filter(ChannelWebhook.id == webhook_id).first()
+            )
+            if not webhook:
+                return False
+            webhook.last_used_at = int(time.time_ns())
+            db.commit()
+            return True
+
+    def delete_webhook_by_id(
+        self, webhook_id: str, db: Optional[Session] = None
+    ) -> bool:
+        with get_db_context(db) as db:
+            result = (
+                db.query(ChannelWebhook)
+                .filter(ChannelWebhook.id == webhook_id)
+                .delete()
+            )
+            db.commit()
+            return result > 0
 
 
 Channels = ChannelTable()

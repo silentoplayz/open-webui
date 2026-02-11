@@ -31,9 +31,12 @@
 		resetKnowledgeById,
 		updateFileFromKnowledgeById,
 		updateKnowledgeById,
+		updateKnowledgeAccessGrants,
 		searchKnowledgeFilesById
 	} from '$lib/apis/knowledge';
-	import { blobToFile } from '$lib/utils';
+	import { processWeb, processYoutubeVideo } from '$lib/apis/retrieval';
+
+	import { blobToFile, isYoutubeUrl } from '$lib/utils';
 
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Files from './KnowledgeBase/Files.svelte';
@@ -51,13 +54,16 @@
 	import FilesOverlay from '$lib/components/chat/MessageInput/FilesOverlay.svelte';
 	import DropdownOptions from '$lib/components/common/DropdownOptions.svelte';
 	import Pagination from '$lib/components/common/Pagination.svelte';
+	import AttachWebpageModal from '$lib/components/chat/MessageInput/AttachWebpageModal.svelte';
 
 	let largeScreen = true;
 
 	let pane;
 	let showSidepanel = true;
 
+	let showAddWebpageModal = false;
 	let showAddTextContentModal = false;
+
 	let showSyncConfirmModal = false;
 	let showAccessControlModal = false;
 
@@ -70,6 +76,8 @@
 			file_ids: string[];
 		};
 		files: any[];
+		access_grants?: any[];
+		write_access?: boolean;
 	};
 
 	let id = null;
@@ -83,6 +91,8 @@
 	let inputFiles = null;
 
 	let query = '';
+	let searchDebounceTimer: ReturnType<typeof setTimeout>;
+
 	let viewOption = null;
 	let sortKey = null;
 	let direction = null;
@@ -100,9 +110,18 @@
 		await getItemsPage();
 	};
 
+	// Debounce only query changes
+	$: if (query !== undefined) {
+		clearTimeout(searchDebounceTimer);
+
+		searchDebounceTimer = setTimeout(() => {
+			getItemsPage();
+		}, 300);
+	}
+
+	// Immediate response to filter/pagination changes
 	$: if (
 		knowledgeId !== null &&
-		query !== undefined &&
 		viewOption !== undefined &&
 		sortKey !== undefined &&
 		direction !== undefined &&
@@ -166,10 +185,85 @@
 		return file;
 	};
 
+	const uploadWeb = async (urls) => {
+		if (!Array.isArray(urls)) {
+			urls = [urls];
+		}
+
+		const newFileItems = urls.map((url) => ({
+			type: 'file',
+			file: '',
+			id: null,
+			url: url,
+			name: url,
+			size: null,
+			status: 'uploading',
+			error: '',
+			itemId: uuidv4()
+		}));
+
+		// Display all items at once
+		fileItems = [...newFileItems, ...(fileItems ?? [])];
+
+		for (const fileItem of newFileItems) {
+			try {
+				console.log(fileItem);
+				const res = await processWeb(localStorage.token, '', fileItem.url, false).catch((e) => {
+					console.error('Error processing web URL:', e);
+					return null;
+				});
+
+				if (res) {
+					console.log(res);
+					const file = createFileFromText(
+						// Use URL as filename, sanitized
+						fileItem.url
+							.replace(/[^a-z0-9]/gi, '_')
+							.toLowerCase()
+							.slice(0, 50),
+						res.content
+					);
+
+					const uploadedFile = await uploadFile(localStorage.token, file).catch((e) => {
+						toast.error(`${e}`);
+						return null;
+					});
+
+					if (uploadedFile) {
+						console.log(uploadedFile);
+						fileItems = fileItems.map((item) => {
+							if (item.itemId === fileItem.itemId) {
+								item.id = uploadedFile.id;
+							}
+							return item;
+						});
+
+						if (uploadedFile.error) {
+							console.warn('File upload warning:', uploadedFile.error);
+							toast.warning(uploadedFile.error);
+							fileItems = fileItems.filter((file) => file.id !== uploadedFile.id);
+						} else {
+							await addFileHandler(uploadedFile.id);
+						}
+					} else {
+						toast.error($i18n.t('Failed to upload file.'));
+					}
+				} else {
+					// remove the item from fileItems
+					fileItems = fileItems.filter((item) => item.itemId !== fileItem.itemId);
+					toast.error($i18n.t('Failed to process URL: {{url}}', { url: fileItem.url }));
+				}
+			} catch (e) {
+				// remove the item from fileItems
+				fileItems = fileItems.filter((item) => item.itemId !== fileItem.itemId);
+				toast.error(`${e}`);
+			}
+		}
+	};
+
 	const uploadFileHandler = async (file) => {
 		console.log(file);
 
-		const tempItemId = uuidv4();
 		const fileItem = {
 			type: 'file',
 			file: '',
@@ -179,7 +273,7 @@
 			size: file.size,
 			status: 'uploading',
 			error: '',
-			itemId: tempItemId
+			itemId: uuidv4()
 		};
 
 		if (fileItem.size == 0) {
@@ -203,7 +297,7 @@
 			return;
 		}
 
-		fileItems = [...(fileItems ?? []), fileItem];
+		fileItems = [fileItem, ...(fileItems ?? [])];
 		try {
 			let metadata = {
 				knowledge_id: knowledge.id,
@@ -224,12 +318,9 @@
 			if (uploadedFile) {
 				console.log(uploadedFile);
 				fileItems = fileItems.map((item) => {
-					if (item.itemId === tempItemId) {
+					if (item.itemId === fileItem.itemId) {
 						item.id = uploadedFile.id;
 					}
-
-					// Remove temporary item id
-					delete item.itemId;
 					return item;
 				});
 
@@ -526,7 +617,7 @@
 				...knowledge,
 				name: knowledge.name,
 				description: knowledge.description,
-				access_control: knowledge.access_control
+				access_grants: knowledge.access_grants ?? []
 			}).catch((e) => {
 				toast.error(`${e}`);
 			});
@@ -657,6 +748,9 @@
 
 		if (res) {
 			knowledge = res;
+			if (!Array.isArray(knowledge?.access_grants)) {
+				knowledge.access_grants = [];
+			}
 			knowledgeId = knowledge?.id;
 		} else {
 			goto('/workspace/knowledge');
@@ -669,6 +763,7 @@
 	});
 
 	onDestroy(() => {
+		clearTimeout(searchDebounceTimer);
 		mediaQuery?.removeEventListener('change', handleMediaQuery);
 		const dropZone = document.querySelector('body');
 		dropZone?.removeEventListener('dragover', onDragOver);
@@ -693,6 +788,13 @@
 	)}
 	on:confirm={() => {
 		syncDirectoryHandler();
+	}}
+/>
+
+<AttachWebpageModal
+	bind:show={showAddWebpageModal}
+	onSubmit={async (e) => {
+		uploadWeb(e.data);
 	}}
 />
 
@@ -732,11 +834,18 @@
 	{#if id && knowledge}
 		<AccessControlModal
 			bind:show={showAccessControlModal}
-			bind:accessControl={knowledge.access_control}
+			bind:accessGrants={knowledge.access_grants}
 			share={$user?.permissions?.sharing?.knowledge || $user?.role === 'admin'}
-			sharePublic={$user?.permissions?.sharing?.public_knowledge || $user?.role === 'admin'}
-			onChange={() => {
-				changeDebounceHandler();
+			sharePublic={$user?.permissions?.sharing?.public_knowledge ||
+				$user?.role === 'admin' ||
+				knowledge?.write_access}
+			onChange={async () => {
+				try {
+					await updateKnowledgeAccessGrants(localStorage.token, id, knowledge.access_grants ?? []);
+					toast.success($i18n.t('Saved'));
+				} catch (error) {
+					toast.error(`${error}`);
+				}
 			}}
 			accessRoles={['read', 'write']}
 		/>
@@ -759,8 +868,9 @@
 							<div class="shrink-0 mr-2.5">
 								{#if fileItemsTotal}
 									<div class="text-xs text-gray-500">
-										{$i18n.t('{{count}} files', {
-											count: fileItemsTotal
+										<!-- {$i18n.t('{{COUNT}} files')} -->
+										{$i18n.t('{{COUNT}} files', {
+											COUNT: fileItemsTotal
 										})}
 									</div>
 								{/if}
@@ -826,16 +936,18 @@
 					{#if knowledge?.write_access}
 						<div>
 							<AddContentMenu
-								on:upload={(e) => {
-									if (e.detail.type === 'directory') {
+								onUpload={(data) => {
+									if (data.type === 'directory') {
 										uploadDirectoryHandler();
-									} else if (e.detail.type === 'text') {
+									} else if (data.type === 'web') {
+										showAddWebpageModal = true;
+									} else if (data.type === 'text') {
 										showAddTextContentModal = true;
 									} else {
 										document.getElementById('files-input').click();
 									}
 								}}
-								on:sync={(e) => {
+								onSync={() => {
 									showSyncConfirmModal = true;
 								}}
 							/>

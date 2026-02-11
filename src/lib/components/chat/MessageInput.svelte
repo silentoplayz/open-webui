@@ -90,10 +90,13 @@
 	import { goto } from '$app/navigation';
 	import InputModal from '../common/InputModal.svelte';
 	import Expand from '../icons/Expand.svelte';
+	import QueuedMessageItem from './MessageInput/QueuedMessageItem.svelte';
 
 	const i18n = getContext('i18n');
 
+	export let onUpload: Function = (e) => {};
 	export let onChange: Function = () => {};
+
 	export let createMessagePair: Function;
 	export let stopResponse: Function;
 
@@ -119,6 +122,11 @@
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
 
+	export let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
+	export let onQueueSendNow: (id: string) => void = () => {};
+	export let onQueueEdit: (id: string) => void = () => {};
+	export let onQueueDelete: (id: string) => void = () => {};
+
 	let inputContent = null;
 
 	let showInputVariablesModal = false;
@@ -143,7 +151,7 @@
 				return {
 					...file,
 					user: undefined,
-					access_control: undefined
+					access_grants: undefined
 				};
 			}),
 		selectedToolIds,
@@ -189,22 +197,16 @@
 				for (const type of item.types) {
 					if (type.startsWith('image/')) {
 						const blob = await item.getType(type);
-						const reader = new FileReader();
-						reader.onload = (event) => {
-							files = [
-								...files,
-								{
-									type: 'image',
-									url: event.target.result as string
-								}
-							];
-						};
-						reader.readAsDataURL(blob);
+						const file = new File([blob], `clipboard-image.${type.split('/')[1]}`, {
+							type: type
+						});
+
+						inputFilesHandler([file]);
 					}
 				}
 			}
 
-			text = text.replaceAll('{{CLIPBOARD}}', clipboardText);
+			text = text.replaceAll('{{CLIPBOARD}}', clipboardText.replaceAll('\r\n', '\n'));
 		}
 
 		if (text.includes('{{USER_LOCATION}}')) {
@@ -223,6 +225,14 @@
 		if (text.includes('{{USER_NAME}}')) {
 			const name = sessionUser?.name || 'User';
 			text = text.replaceAll('{{USER_NAME}}', name);
+		}
+
+		if (text.includes('{{USER_EMAIL}}')) {
+			const email = sessionUser?.email || '';
+
+			if (email) {
+				text = text.replaceAll('{{USER_EMAIL}}', email);
+			}
 		}
 
 		if (text.includes('{{USER_BIO}}')) {
@@ -525,8 +535,9 @@
 
 			// Convert the canvas to a Base64 image URL
 			const imageUrl = canvas.toDataURL('image/png');
-			// Add the captured image to the files array to render it
-			files = [...files, { type: 'image', url: imageUrl }];
+			const blob = await (await fetch(imageUrl)).blob();
+			const file = new File([blob], `screen-capture-${Date.now()}.png`, { type: 'image/png' });
+			inputFilesHandler([file]);
 			// Clean memory: Clear video srcObject
 			video.srcObject = null;
 		} catch (error) {
@@ -535,7 +546,7 @@
 		}
 	};
 
-	const uploadFileHandler = async (file, fullContext: boolean = false) => {
+	const uploadFileHandler = async (file, process = true, itemData = {}) => {
 		if ($_user?.role !== 'admin' && !($_user?.permissions?.chat?.file_upload ?? true)) {
 			toast.error($i18n.t('You do not have permission to upload files.'));
 			return null;
@@ -558,7 +569,7 @@
 			size: file.size,
 			error: '',
 			itemId: tempItemId,
-			...(fullContext ? { context: 'full' } : {})
+			...itemData
 		};
 
 		if (fileItem.size == 0) {
@@ -582,7 +593,7 @@
 				}
 
 				// During the file upload, file content is automatically extracted.
-				const uploadedFile = await uploadFile(localStorage.token, file, metadata);
+				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
 
 				if (uploadedFile) {
 					console.log('File upload completed:', {
@@ -601,7 +612,8 @@
 					fileItem.id = uploadedFile.id;
 					fileItem.collection_name =
 						uploadedFile?.meta?.collection_name || uploadedFile?.collection_name;
-					fileItem.url = `${WEBUI_API_BASE_URL}/files/${uploadedFile.id}`;
+					fileItem.content_type = uploadedFile.meta?.content_type || uploadedFile.content_type;
+					fileItem.url = `${uploadedFile.id}`;
 
 					files = files;
 				} else {
@@ -724,19 +736,31 @@
 				};
 
 				let reader = new FileReader();
+
 				reader.onload = async (event) => {
 					let imageUrl = event.target.result;
 
-					imageUrl = await compressImageHandler(imageUrl, $settings, $config);
+					// Compress the image if settings or config require it
+					if ($settings?.imageCompression && $settings?.imageCompressionInChannels) {
+						imageUrl = await compressImageHandler(imageUrl, $settings, $config);
+					}
 
-					files = [
-						...files,
-						{
-							type: 'image',
-							url: `${imageUrl}`
-						}
-					];
+					if ($temporaryChatEnabled) {
+						files = [
+							...files,
+							{
+								type: 'image',
+								url: imageUrl
+							}
+						];
+					} else {
+						const blob = await (await fetch(imageUrl)).blob();
+						const compressedFile = new File([blob], file.name, { type: file.type });
+
+						uploadFileHandler(compressedFile, false);
+					}
 				};
+
 				reader.readAsDataURL(file['type'] === 'image/heic' ? await convertHeicToJpeg(file) : file);
 			} else {
 				uploadFileHandler(file);
@@ -848,7 +872,7 @@
 								}
 							];
 						} else {
-							dispatch('upload', e);
+							onUpload(e);
 						}
 					}
 				})
@@ -883,7 +907,7 @@
 								}
 							];
 						} else {
-							dispatch('upload', e);
+							onUpload(e);
 						}
 					}
 				})
@@ -918,7 +942,7 @@
 								}
 							];
 						} else {
-							dispatch('upload', e);
+							onUpload(e);
 						}
 					}
 				})
@@ -1104,6 +1128,23 @@
 							on:click={() => createMessagePair(prompt)}
 						/>
 
+						<!-- Queued messages display -->
+						{#if messageQueue.length > 0}
+							<div
+								class="mb-1 mx-2 py-0.5 px-1.5 rounded-2xl bg-gray-900/60 border border-gray-800/50 overflow-hidden"
+							>
+								{#each messageQueue as queuedMessage (queuedMessage.id)}
+									<QueuedMessageItem
+										id={queuedMessage.id}
+										content={queuedMessage.prompt}
+										onSendNow={onQueueSendNow}
+										onEdit={onQueueEdit}
+										onDelete={onQueueDelete}
+									/>
+								{/each}
+							</div>
+						{/if}
+
 						<div
 							id="message-input-container"
 							class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border {$temporaryChatEnabled
@@ -1144,11 +1185,15 @@
 									dir={$settings?.chatDirection ?? 'auto'}
 								>
 									{#each files as file, fileIdx}
-										{#if file.type === 'image'}
+										{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
+											{@const fileUrl =
+												file.url.startsWith('data') || file.url.startsWith('http')
+													? file.url
+													: `${WEBUI_API_BASE_URL}/files/${file.url}${file?.content_type ? '/content' : ''}`}
 											<div class=" relative group">
 												<div class="relative flex items-center">
 													<Image
-														src={file.url}
+														src={fileUrl}
 														alt=""
 														imageClassName=" size-10 rounded-xl object-cover"
 													/>
@@ -1390,29 +1435,7 @@
 
 														if (clipboardData && clipboardData.items) {
 															for (const item of clipboardData.items) {
-																if (item.type.indexOf('image') !== -1) {
-																	const blob = item.getAsFile();
-																	const reader = new FileReader();
-
-																	reader.onload = function (e) {
-																		files = [
-																			...files,
-																			{
-																				type: 'image',
-																				url: `${e.target.result}`
-																			}
-																		];
-																	};
-
-																	reader.readAsDataURL(blob);
-																} else if (item?.kind === 'file') {
-																	const file = item.getAsFile();
-																	if (file) {
-																		const _files = [file];
-																		await inputFilesHandler(_files);
-																		e.preventDefault();
-																	}
-																} else if (item.type === 'text/plain') {
+																if (item.type === 'text/plain') {
 																	if (($settings?.largeTextAsFile ?? false) && !shiftKey) {
 																		const text = clipboardData.getData('text/plain');
 
@@ -1427,8 +1450,14 @@
 																				}
 																			);
 
-																			await uploadFileHandler(file, true);
+																			await uploadFileHandler(file, true, { context: 'full' });
 																		}
+																	}
+																} else {
+																	const file = item.getAsFile();
+																	if (file) {
+																		await inputFilesHandler([file]);
+																		e.preventDefault();
 																	}
 																}
 															}
@@ -1487,9 +1516,7 @@
 												console.error('OneDrive Error:', error);
 											}
 										}}
-										onUpload={async (e) => {
-											dispatch('upload', e);
-										}}
+										{onUpload}
 										onClose={async () => {
 											await tick();
 
@@ -1607,7 +1634,7 @@
 															<div class="size-4 items-center flex justify-center">
 																<img
 																	src={filter.icon}
-																	class="size-3.5 {filter.icon.includes('svg')
+																	class="size-3.5 {filter.icon.includes('data:image/svg')
 																		? 'dark:invert-[80%]'
 																		: ''}"
 																	style="fill: currentColor;"
@@ -1715,10 +1742,11 @@
 											</Tooltip>
 										</div>
 									{:else}
-										{#if prompt !== '' && !history?.currentId && ($config?.features?.enable_notes ?? false) && ($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true))}
+										{#if prompt !== '' && !history?.currentId && ($config?.features?.enable_notes ?? false) && ($_user?.role === 'admin' || ($_user?.permissions?.features?.notes ?? true))}
+											<!-- {$i18n.t('Create Note')}  -->
 											<Tooltip content={$i18n.t('Create note')} className=" flex items-center">
 												<button
-													id="send-message-button"
+													id="create-note-button"
 													class=" text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 transition rounded-full p-1.5 self-center"
 													type="button"
 													disabled={prompt === '' && files.length === 0}
