@@ -1095,6 +1095,7 @@
 	message={$i18n.t('Are you sure you want to delete this theme?')}
 	on:confirm={() => {
 		removeCommunityTheme(themeToDeleteId);
+		selectedThemeId = localStorage.theme ?? 'system';
 		showConfirmDialog = false;
 	}}
 />
