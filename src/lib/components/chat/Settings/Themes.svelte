@@ -703,10 +703,10 @@
 					</div>
 					<Tooltip
 						content={sortOrder === 'default'
-							? $i18n.t('Sort Ascending')
+							? $i18n.t('Default Sort')
 							: sortOrder === 'asc'
-								? $i18n.t('Sort Descending')
-								: $i18n.t('Default Sort Order')}
+								? $i18n.t('Sort Ascending')
+								: $i18n.t('Sort Descending')}
 						placement="top"
 					>
 						<button
