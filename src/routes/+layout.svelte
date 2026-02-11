@@ -32,7 +32,7 @@
 		channels,
 		channelId
 	} from '$lib/stores';
-	import { applyTheme, checkForThemeUpdates } from '$lib/theme';
+	import { applyTheme, checkForThemeUpdates, themes, communityThemes } from '$lib/theme';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { beforeNavigate } from '$app/navigation';
@@ -635,6 +635,41 @@
 		}
 	};
 
+	// Reactive theme application with auth page detection
+	$: {
+		const isAuthPage = $page?.url?.pathname?.startsWith('/auth');
+		
+		if ($theme) {
+			(async () => {
+				await tick();
+				
+				if (isAuthPage) {
+					// On auth pages, apply only the base theme (no custom CSS/variables)
+					const allThemes = new Map([...$themes, ...$communityThemes]);
+					const fullTheme = allThemes.get($theme);
+					
+					if (fullTheme) {
+						// Create a stripped version with only the base
+						const baseOnlyTheme = {
+							...fullTheme,
+							css: undefined,
+							variables: undefined,
+							toggles: {
+								...fullTheme.toggles,
+								customCss: false,
+								cssVariables: false
+							}
+						};
+						await applyTheme(baseOnlyTheme);
+					}
+				} else {
+					// On other pages, apply the full theme
+					await applyTheme($theme);
+				}
+			})();
+		}
+	}
+
 	onMount(async () => {
 		window.addEventListener('message', windowMessageEventHandler);
 
@@ -721,12 +756,8 @@
 		// Call visibility change handler initially to set state on load
 		handleVisibilityChange();
 
-		const unsubscribeTheme = theme.subscribe(async (value) => {
-			if (value) {
-				await tick();
-				await applyTheme(value);
-			}
-		});
+		// Theme subscription is now handled via reactive statement below (after onMount)
+		// to allow for route-based theme modifications
 
 		// Check for community theme updates
 
@@ -869,7 +900,7 @@
 
 		return () => {
 			window.removeEventListener('resize', onResize);
-			unsubscribeTheme();
+			// unsubscribeTheme removed - now using reactive statement
 			window.removeEventListener('message', windowMessageEventHandler);
 			document.removeEventListener('touchstart', touchstartHandler);
 			document.removeEventListener('touchmove', touchmoveHandler);
