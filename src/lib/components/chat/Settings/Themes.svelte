@@ -79,9 +79,9 @@
 	let showAnimationScriptWarning = false;
 	let acceptAllScriptWarning = false;
 	let skipAnimationScriptWarning = false;
-	let themeWithScriptToImport: { theme: Theme; source: string } | null = null;
-
+	let themeWithScriptToImport: { theme: Theme; source: string; isDuplicate?: boolean } | null = null;
 	let importQueue: Theme[] = [];
+	let totalThemesToImport = 0;
 	let importSuccessCount = 0;
 	let importErrorCount = 0;
 
@@ -385,10 +385,16 @@
 		}
 	});
 
-	const _finalizeAddTheme = (theme: Theme, source: string = ''): boolean => {
-		// Version compatibility check
+	const _finalizeAddTheme = (
+		theme: Theme,
+		source: string = '',
+		isDuplicate: boolean = false
+	): boolean => {
+		// Version compatibility check - skip for duplicates as they are already installed
 		const versionMismatch =
-			theme.targetWebUIVersion && isMismatchedVersion(WEBUI_VERSION, theme.targetWebUIVersion);
+			!isDuplicate &&
+			theme.targetWebUIVersion &&
+			isMismatchedVersion(WEBUI_VERSION, theme.targetWebUIVersion);
 
 		if (versionMismatch) {
 			themeToImport = { ...theme, sourceUrl: source };
@@ -399,7 +405,7 @@
 				theme.sourceUrl = source;
 			}
 			const success = addCommunityTheme(theme);
-			if (success) {
+			if (success && !isDuplicate) {
 				toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: theme.name }));
 				themeUrl = ''; // Clear input on success
 			}
@@ -407,7 +413,11 @@
 		}
 	};
 
-	const processAndAddTheme = (theme: any, source: string = ''): boolean => {
+	const processAndAddTheme = (
+		theme: any,
+		source: string = '',
+		isDuplicate: boolean = false
+	): boolean => {
 		const validation = validateTheme(theme);
 		if (!validation.valid) {
 			toast.error($i18n.t(validation.error ?? ''));
@@ -419,18 +429,18 @@
 			return false;
 		}
 
-		if (isDuplicateTheme(theme, Array.from($communityThemes.values()), false)) {
+		if (!isDuplicate && isDuplicateTheme(theme, Array.from($communityThemes.values()), false)) {
 			toast.error($i18n.t('This exact theme is already installed.'));
 			return false;
 		}
 
 		// Security check for animation script
 		if (theme.animationScript && !skipAnimationScriptWarning) {
-			themeWithScriptToImport = { theme, source };
+			themeWithScriptToImport = { theme, source, isDuplicate };
 			showAnimationScriptWarning = true;
 			return false;
 		} else {
-			return _finalizeAddTheme(theme, source);
+			return _finalizeAddTheme(theme, source, isDuplicate);
 		}
 	};
 
@@ -447,7 +457,8 @@
 				throw new Error(`Failed to fetch theme: ${res.statusText}`);
 			}
 			const theme = await res.json();
-			importQueue = [theme];
+			importQueue = Array.isArray(theme) ? [...theme] : [theme];
+			totalThemesToImport = importQueue.length;
 			importSuccessCount = 0;
 			importErrorCount = 0;
 			skipAnimationScriptWarning = false;
@@ -464,15 +475,24 @@
 	};
 
 	const processNextThemeInQueue = () => {
+		// If a warning modal is active, wait for it to be resolved before continuing or showing summary
+		if (showAnimationScriptWarning || showThemeImportWarning) {
+			return;
+		}
+
 		if (importQueue.length === 0) {
-			if (importSuccessCount > 0) {
-				toast.success(`${importSuccessCount} theme(s) imported successfully.`);
-			}
-			if (importErrorCount > 0) {
-				toast.error(`${importErrorCount} theme(s) could not be imported.`);
+			// Only show summary toast if more than one theme was processed
+			if (totalThemesToImport > 1) {
+				if (importSuccessCount > 0) {
+					toast.success(`${importSuccessCount} theme(s) imported successfully.`);
+				}
+				if (importErrorCount > 0) {
+					toast.error(`${importErrorCount} theme(s) could not be imported.`);
+				}
 			}
 			importSuccessCount = 0;
 			importErrorCount = 0;
+			totalThemesToImport = 0;
 			return;
 		}
 
@@ -513,6 +533,7 @@
 				} else {
 					importQueue = [content];
 				}
+				totalThemesToImport = importQueue.length;
 				processNextThemeInQueue();
 			} catch (e) {
 				toast.error($i18n.t('Invalid JSON file.'));
@@ -652,7 +673,7 @@
 			name: `${theme.name} (Copy)`,
 			sourceUrl: undefined
 		};
-		if (processAndAddTheme(duplicatedTheme)) {
+		if (processAndAddTheme(duplicatedTheme, '', true)) {
 			toast.success($i18n.t('Theme cloned successfully!'));
 		}
 	};
@@ -1099,13 +1120,27 @@
 		if (themeWithScriptToImport) {
 			const success = _finalizeAddTheme(
 				themeWithScriptToImport.theme,
-				themeWithScriptToImport.source
+				themeWithScriptToImport.source,
+				themeWithScriptToImport.isDuplicate ?? false
 			);
 
 			if (success) {
 				importSuccessCount++;
+				if (themeWithScriptToImport.isDuplicate) {
+					toast.success($i18n.t('Theme cloned successfully!'));
+				}
 			} else {
 				importErrorCount++;
+			}
+
+			// If it was an individual duplicate operation, don't call processNextThemeInQueue
+			// as it might show an incorrect summary toast or interfere with future imports
+			if (themeWithScriptToImport.isDuplicate && totalThemesToImport === 0) {
+				showAnimationScriptWarning = false;
+				themeWithScriptToImport = null;
+				importSuccessCount = 0;
+				importErrorCount = 0;
+				return;
 			}
 
 			// If theme editor is open, close it and revert to previous theme
