@@ -1096,6 +1096,11 @@
 	on:confirm={() => {
 		removeCommunityTheme(themeToDeleteId);
 		selectedThemeId = localStorage.theme ?? 'system';
+
+		if (themesScrollContainer) {
+			themesScrollContainer.scrollTop = 0;
+		}
+
 		showConfirmDialog = false;
 	}}
 />
