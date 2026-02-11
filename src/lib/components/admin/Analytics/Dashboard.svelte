@@ -170,7 +170,7 @@
 </script>
 
 <!-- Header with title and period selector -->
-<div class="pt-0.5 pb-1 gap-1 flex flex-row justify-between items-center sticky top-0 z-10 bg-white dark:bg-gray-900">
+<div class="pt-0.5 pb-1 gap-1 flex flex-row justify-between items-center sticky top-0 z-10 bg-transparent">
 	<div class="text-lg font-medium px-0.5">
 		{$i18n.t('Analytics')}
 	</div>
@@ -178,7 +178,7 @@
 		{#if groups.length > 0}
 			<select
 				bind:value={selectedGroupId}
-				class="dark:bg-gray-900 w-fit pr-8 rounded-sm px-2 text-xs bg-transparent outline-none text-right"
+				class="w-fit pr-8 rounded-sm px-2 text-xs bg-transparent outline-none text-right"
 			>
 				<option value={null}>{$i18n.t('All Users')}</option>
 				{#each groups as group}
@@ -188,7 +188,7 @@
 		{/if}
 		<select
 			bind:value={selectedPeriod}
-			class="dark:bg-gray-900 w-fit pr-8 rounded-sm px-2 text-xs bg-transparent outline-none text-right"
+			class="w-fit pr-8 rounded-sm px-2 text-xs bg-transparent outline-none text-right"
 		>
 			{#each periods as period}
 				<option value={period.value}>{$i18n.t(period.label)}</option>
