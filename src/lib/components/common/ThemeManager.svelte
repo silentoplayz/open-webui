@@ -192,83 +192,72 @@
 
 			// Apply new animation
 			if (theme.animationScript && (!theme.toggles || theme.toggles.animationScript)) {
-				if (
-					theme.animationScript.includes('document.') ||
-					theme.animationScript.includes('window.')
-				) {
-					// Run in main thread
-					const script = document.createElement('script');
-					script.textContent = theme.animationScript;
-					script.id = `${theme.id}-script`;
-					document.head.appendChild(script);
-				} else {
-					// Run in worker
-					const canvas = document.createElement('canvas');
-					canvas.id = `${theme.id}-canvas`;
-					canvas.style.position = 'absolute';
-					canvas.style.top = '0';
-					canvas.style.left = '0';
-					canvas.style.width = '100%';
-					canvas.style.height = '100%';
-					canvas.style.zIndex = '0';
-					canvas.style.pointerEvents = 'none';
-					canvas.style.opacity = '0';
-					canvas.style.transition = 'opacity 0.5s ease-in-out';
-					mainContainer.prepend(canvas);
+				// Enforce Worker isolation for all scripts
+				const canvas = document.createElement('canvas');
+				canvas.id = `${theme.id}-canvas`;
+				canvas.style.position = 'absolute';
+				canvas.style.top = '0';
+				canvas.style.left = '0';
+				canvas.style.width = '100%';
+				canvas.style.height = '100%';
+				canvas.style.zIndex = '0';
+				canvas.style.pointerEvents = 'none';
+				canvas.style.opacity = '0';
+				canvas.style.transition = 'opacity 0.5s ease-in-out';
+				mainContainer.prepend(canvas);
 
-					try {
-						const blob = new Blob([theme.animationScript], { type: 'application/javascript' });
-						const workerUrl = URL.createObjectURL(blob);
-						const worker = new Worker(workerUrl);
+				try {
+					const blob = new Blob([theme.animationScript], { type: 'application/javascript' });
+					const workerUrl = URL.createObjectURL(blob);
+					const worker = new Worker(workerUrl);
 
-						const offscreen = canvas.transferControlToOffscreen();
+					const offscreen = canvas.transferControlToOffscreen();
 
-						const rect = mainContainer.getBoundingClientRect();
-						worker.postMessage(
-							{ type: 'init', canvas: offscreen, width: rect.width, height: rect.height },
-							[offscreen]
-						);
+					const rect = mainContainer.getBoundingClientRect();
+					worker.postMessage(
+						{ type: 'init', canvas: offscreen, width: rect.width, height: rect.height },
+						[offscreen]
+					);
 
-						currentResizeObserver = new ResizeObserver((entries) => {
-							if (entries.length > 0) {
-								const entry = entries[0];
-								worker.postMessage({
-									type: 'resize',
-									width: entry.contentRect.width,
-									height: entry.contentRect.height
-								});
-							}
-						});
-						currentResizeObserver.observe(mainContainer);
-
-						mainContainer.addEventListener('mousemove', (e) => {
-							const rect = mainContainer.getBoundingClientRect();
+					currentResizeObserver = new ResizeObserver((entries) => {
+						if (entries.length > 0) {
+							const entry = entries[0];
 							worker.postMessage({
-								type: 'mousemove',
-								x: e.clientX - rect.left,
-								y: e.clientY - rect.top
+								type: 'resize',
+								width: entry.contentRect.width,
+								height: entry.contentRect.height
 							});
+						}
+					});
+					currentResizeObserver.observe(mainContainer);
+
+					mainContainer.addEventListener('mousemove', (e) => {
+						const rect = mainContainer.getBoundingClientRect();
+						worker.postMessage({
+							type: 'mousemove',
+							x: e.clientX - rect.left,
+							y: e.clientY - rect.top
 						});
+					});
 
-						currentAnimation = {
-							start: () => {},
-							stop: () => {
-								worker.terminate();
-								URL.revokeObjectURL(workerUrl);
-								if (currentResizeObserver) {
-									currentResizeObserver.disconnect();
-								}
+					currentAnimation = {
+						start: () => {},
+						stop: () => {
+							worker.terminate();
+							URL.revokeObjectURL(workerUrl);
+							if (currentResizeObserver) {
+								currentResizeObserver.disconnect();
 							}
-						};
-					} catch (e) {
-						console.error('Failed to start animation worker:', e);
-					}
-
-					setTimeout(() => {
-						window.dispatchEvent(new Event('resize'));
-						canvas.style.opacity = '1';
-					}, 100);
+						}
+					};
+				} catch (e) {
+					console.error('Failed to start animation worker:', e);
 				}
+
+				setTimeout(() => {
+					window.dispatchEvent(new Event('resize'));
+					canvas.style.opacity = '1';
+				}, 100);
 			} else if (theme.animation && typeof theme.animation.start === 'function') {
 				const canvas = document.createElement('canvas');
 				canvas.id = `${theme.id}-canvas`;

@@ -1174,8 +1174,9 @@
 			<div>{$i18n.t('Please carefully review the following warnings:')}</div>
 
 			<ul class=" mt-1 list-disc pl-4 text-xs">
-				<li>{$i18n.t('Animation scripts allow arbitrary code execution.')}</li>
-				<li>{$i18n.t('Do not install themes from sources you do not fully trust.')}</li>
+				<li>{$i18n.t('Animation scripts are executed in an isolated Web Worker.')}</li>
+				<li>{$i18n.t('Scripts cannot access the main page or your personal data (DOM, cookies, etc).')}</li>
+				<li>{$i18n.t('Animations must use OffscreenCanvas for rendering.')}</li>
 			</ul>
 		</div>
 

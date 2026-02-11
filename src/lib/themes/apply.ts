@@ -10,6 +10,7 @@ import { theme as themeStore, codeMirrorTheme } from '$lib/stores';
 import variables from '$lib/themes/variables.json';
 
 import { currentThemeStore, liveThemeStore, communityThemes, themes } from '$lib/stores/theme';
+import { sanitizeCSS } from '$lib/utils/css-sanitizer';
 
 let currentStylesheet: HTMLStyleElement | undefined;
 
@@ -26,14 +27,17 @@ const cleanupTheme = () => {
 const _applyGlobalThemeStyles = (theme: Theme) => {
 	console.log('Applying theme:', theme);
 	if (theme.css && (!theme.toggles || theme.toggles.customCss)) {
+		// Sanitize CSS before applying to prevent malicious constructs
+		const sanitizedCSS = sanitizeCSS(theme.css);
+		
 		if (!currentStylesheet) {
 			currentStylesheet = document.createElement('style');
 			currentStylesheet.id = `${theme.id}-stylesheet`;
 			document.head.appendChild(currentStylesheet);
 		}
-		// Update content of existing stylesheet
-		if (currentStylesheet.innerHTML !== theme.css) {
-			currentStylesheet.innerHTML = theme.css;
+		// Update content of existing stylesheet with sanitized CSS
+		if (currentStylesheet.innerHTML !== sanitizedCSS) {
+			currentStylesheet.innerHTML = sanitizedCSS;
 		}
 	} else if (currentStylesheet) {
 		// Remove stylesheet if theme has no custom CSS

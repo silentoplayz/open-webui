@@ -89,6 +89,24 @@ export const removeCommunityTheme = (themeId: string) => {
 	saveCommunityThemes(get(communityThemes));
 };
 
+export const deleteAllCommunityThemes = () => {
+	const currentThemeId = localStorage.getItem('theme');
+	const themes = get(communityThemes);
+	
+	// If current theme is one of the themes being deleted, reset to base
+	if (currentThemeId && themes.has(currentThemeId)) {
+		const themeToDelete = themes.get(currentThemeId);
+		const baseTheme = themeToDelete?.base ?? 'system';
+		themeStore.set(baseTheme);
+		localStorage.setItem('theme', baseTheme);
+		applyTheme(baseTheme);
+	}
+
+	communityThemes.set(new Map());
+	localStorage.removeItem('communityThemes');
+	toast.success('All custom themes deleted successfully.');
+};
+
 const _fetchTheme = async (url: string): Promise<[Theme | null, string | null]> => {
 	try {
 		const res = await fetch(url);

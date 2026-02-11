@@ -27,6 +27,7 @@
 	import SharedChatsModal from '$lib/components/layout/SharedChatsModal.svelte';
 	import FilesModal from '$lib/components/layout/FilesModal.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import { deleteAllCommunityThemes } from '$lib/themes/community';
 
 	const i18n = getContext('i18n');
 
@@ -37,6 +38,7 @@
 
 	let showArchiveConfirmDialog = false;
 	let showDeleteConfirmDialog = false;
+	let showDeleteAllThemesConfirmDialog = false;
 	let showArchivedChatsModal = false;
 	let showSharedChatsModal = false;
 	let showFilesModal = false;
@@ -131,6 +133,10 @@
 		scrollPaginationEnabled.set(true);
 	};
 
+	const deleteAllThemesHandler = () => {
+		deleteAllCommunityThemes();
+	};
+
 	const handleArchivedChatsChange = async () => {
 		currentChatPage.set(1);
 		await chats.set(await getChatList(localStorage.token, $currentChatPage));
@@ -160,6 +166,16 @@
 	on:confirm={deleteAllChatsHandler}
 	on:cancel={() => {
 		showDeleteConfirmDialog = false;
+	}}
+/>
+
+<ConfirmDialog
+	title={$i18n.t('Delete All Themes')}
+	message={$i18n.t('Are you sure you want to delete all custom themes? This action cannot be undone.')}
+	bind:show={showDeleteAllThemesConfirmDialog}
+	on:confirm={deleteAllThemesHandler}
+	on:cancel={() => {
+		showDeleteAllThemesConfirmDialog = false;
 	}}
 />
 
@@ -261,6 +277,25 @@
 						class="p-1 px-3 text-xs flex rounded-sm transition"
 						on:click={() => {
 							showDeleteConfirmDialog = true;
+						}}
+						type="button"
+					>
+						<span class="self-center">{$i18n.t('Delete All')}</span>
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<div>
+			<div class="mb-1 text-sm font-medium">{$i18n.t('Themes')}</div>
+
+			<div>
+				<div class="py-0.5 flex w-full justify-between">
+					<div class="self-center text-xs">{$i18n.t('Delete All Themes')}</div>
+					<button
+						class="p-1 px-3 text-xs flex rounded-sm transition"
+						on:click={() => {
+							showDeleteAllThemesConfirmDialog = true;
 						}}
 						type="button"
 					>
