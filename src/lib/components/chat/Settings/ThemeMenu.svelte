@@ -91,6 +91,7 @@
 					show = false;
 				}}
 			>
+				<DocumentDuplicate className="w-4 h-4" />
 				<div class="flex items-center">{$i18n.t('Clone')}</div>
 			</DropdownMenu.Item>
 
