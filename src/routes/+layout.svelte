@@ -30,7 +30,8 @@
 		toolServers,
 		playingNotificationSound,
 		channels,
-		channelId
+		channelId,
+		showThemeEditor
 	} from '$lib/stores';
 	import { applyTheme, checkForThemeUpdates, themes, communityThemes } from '$lib/theme';
 	import { goto } from '$app/navigation';
@@ -663,8 +664,10 @@
 						await applyTheme(baseOnlyTheme);
 					}
 				} else {
-					// On other pages, apply the full theme
-					await applyTheme($theme);
+					// On other pages, apply the full theme if not in the theme editor
+					if (!$showThemeEditor) {
+						await applyTheme($theme);
+					}
 				}
 			})();
 		}
