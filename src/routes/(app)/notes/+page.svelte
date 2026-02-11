@@ -51,7 +51,7 @@
 			? 'md:max-w-[calc(100%-var(--sidebar-width))]'
 			: ''} max-w-full {$showThemeEditor ? ($themeEditorCollapsed ? 'pr-5' : 'pr-[600px]') : ''}"
 	>
-		<nav class="   px-2 pt-1.5 backdrop-blur-xl w-full drag-region">
+		<nav class="   px-2 pt-1.5 w-full drag-region">
 			<div class=" flex items-center">
 				{#if $mobile}
 					<div class="{$showSidebar ? 'md:hidden' : ''} flex flex-none items-center">
