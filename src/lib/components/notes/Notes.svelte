@@ -387,7 +387,7 @@
 				</div>
 			</div>
 
-			<div class="px-3 flex justify-between">
+			<div class="px-3 flex justify-between relative z-40">
 				<div
 					class="flex w-full bg-transparent overflow-x-auto scrollbar-none"
 					on:wheel={(e) => {
@@ -454,7 +454,7 @@
 				{#if (items ?? []).length > 0}
 					{@const groupedNotes = groupNotes(items)}
 
-					<div class="@container h-full py-2.5 px-2.5">
+					<div class="@container h-full py-2.5 px-2.5 relative z-0">
 						<div class="">
 							{#each groupedNotes as [timeRange, notesList], idx}
 								<div
