@@ -194,32 +194,33 @@
 		document.body.style.overflow = 'unset';
 	});
 
-	const save = () => {
+	const validateLocalTheme = () => {
 		if (manualEditMode) {
 			try {
 				const newTheme = JSON.parse(themeJsonText);
 				themeCopy = newTheme;
+				return true;
 			} catch (e) {
 				toast.error('Invalid JSON format. Please fix it before saving.');
-				return;
+				return false;
 			}
 		} else {
 			// Form-based validation
 			if (!themeCopy.name) {
 				toast.error('Theme name cannot be empty.');
-				return;
+				return false;
 			}
 			if (!themeCopy.author) {
 				toast.error('Author name cannot be empty.');
-				return;
+				return false;
 			}
 			if (!themeCopy.version || !/^\d+(\.\d+){0,2}$/.test(themeCopy.version)) {
 				toast.error('Version must be in the format X, X.Y, or X.Y.Z (e.g., 1.0.0).');
-				return;
+				return false;
 			}
 			if (themeCopy.repository && !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(themeCopy.repository)) {
 				toast.error('Repository must be a valid URL.');
-				return;
+				return false;
 			}
 
 			themeCopy.variables = cssToObject(variablesText);
@@ -231,8 +232,15 @@
 					: undefined;
 			} catch (e) {
 				toast.error('Invalid JSON format for Particle Config. Please fix it before saving.');
-				return;
+				return false;
 			}
+			return true;
+		}
+	};
+
+	const save = () => {
+		if (!validateLocalTheme()) {
+			return;
 		}
 
 		if (!themeCopy.targetWebUIVersion) {
@@ -249,6 +257,11 @@
 			dispatch('update', themeCopy);
 		} catch (e) {
 			// Do not dispatch update if JSON is invalid
+			// Ideally we would show a toast here, but it might be annoying while typing.
+			// The syntax highlighter in the editor usually handles visual feedback.
+			// But for explicit user actions (like Save), we definitely show it.
+			// Let's at least log it.
+			console.warn('Invalid JSON in manual editor:', e);
 		}
 	};
 
@@ -528,28 +541,8 @@
 						<button
 							class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition rounded-full"
 							on:click={() => {
-								if (manualEditMode) {
-									try {
-										const newTheme = JSON.parse(themeJsonText);
-										themeCopy = newTheme;
-									} catch (e) {
-										toast.error('Invalid JSON format. Please fix it before saving.');
-										return;
-									}
-								} else {
-									themeCopy.variables = cssToObject(variablesText);
-									themeCopy.css = cssText;
-									themeCopy.animationScript = animationScriptText;
-									try {
-										themeCopy.tsparticlesConfig = tsParticleConfigText
-											? JSON.parse(tsParticleConfigText)
-											: undefined;
-									} catch (e) {
-										toast.error(
-											'Invalid JSON format for Particle Config. Please fix it before saving.'
-										);
-										return;
-									}
+								if (!validateLocalTheme()) {
+									return;
 								}
 								if (!themeCopy.targetWebUIVersion) {
 									themeCopy.targetWebUIVersion = WEBUI_VERSION;

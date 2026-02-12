@@ -230,11 +230,23 @@
 						Object.defineProperty(self, 'importScripts', {
 							value: _blocked, writable: false, configurable: false
 						});
+						
+						// Block Worker creation to prevent sandbox escape
+						Object.defineProperty(self, 'Worker', {
+							value: undefined, writable: false, configurable: false
+						});
+						Object.defineProperty(self, 'SharedWorker', {
+							value: undefined, writable: false, configurable: false
+						});
 						if (self.navigator) {
+							Object.defineProperty(self.navigator, 'serviceWorker', {
+								value: undefined, writable: false, configurable: false
+							});
 							Object.defineProperty(self.navigator, 'sendBeacon', {
 								value: undefined, writable: false, configurable: false
 							});
 						}
+						
 						// Block code-generation APIs that could bypass the sandbox
 						Object.defineProperty(self, 'eval', {
 							value: undefined, writable: false, configurable: false
