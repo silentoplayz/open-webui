@@ -38,7 +38,8 @@
 		showSidebar,
 		showThemeEditor,
 		editingThemeId,
-		selectedFolder
+		selectedFolder,
+		theme
 	} from '$lib/stores';
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -513,10 +514,23 @@
 			showThemeEditor.set(false);
 			editingThemeId.set(null);
 			selectedTheme = null;
-			// Apply the user's active theme from localStorage
-			// This respects any active theme changes made via the confirmation modal
-			const activeThemeId = localStorage.getItem('theme') ?? 'system';
+			
+			// Use previousThemeId as source of truth for the intended active theme
+			console.log('[+layout] Theme Editor Cancelled. previousThemeId:', previousThemeId, 'localStorage:', localStorage.getItem('theme'));
+			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+			
+			// 1. Apply the theme visually (updates live/current stores)
 			applyTheme(activeThemeId);
+			
+			// 2. CRITICAL: Update the global theme selection store if it differs.
+			// Themes.svelte avoids updating this during edit to prevent jumps,
+			// but now that we are done/cancelled, we MUST ensure the global state matches our selection.
+			// This ensures other components (like Themes list) see the correct "active" theme.
+			// We access the store via the 'theme' store import.
+			if ($theme !== activeThemeId) {
+				console.log('[+layout] Syncing global theme store to:', activeThemeId);
+				theme.set(activeThemeId);
+			}
 		}}
 	/>
 {/if}
