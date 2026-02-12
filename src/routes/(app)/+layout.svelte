@@ -206,10 +206,19 @@
 			editingThemeId.set(null);
 			selectedTheme = null;
 
-			// Apply the user's active theme from localStorage
-			// This ensures the active theme choice is respected after saving
-			const activeThemeId = localStorage.getItem('theme') ?? 'system';
+			// Apply the user's active theme.
+			// Use previousThemeId as source of truth for the intended active theme, 
+			// which includes updates from handleActiveThemeChanged.
+			console.log('[+layout] Save Complete. previousThemeId:', previousThemeId, 'localStorage:', localStorage.getItem('theme'));
+			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+			
 			applyTheme(activeThemeId);
+
+			// CRITICAL: Sync global theme store if it differs (same fix as cancel handler).
+			if ($theme !== activeThemeId) {
+				console.log('[+layout] Syncing global theme store after save to:', activeThemeId);
+				theme.set(activeThemeId);
+			}
 		}
 	};
 
