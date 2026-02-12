@@ -257,11 +257,35 @@
 								return _origSetInterval(fn, ...args);
 							}, writable: false, configurable: false
 						});
+						// Send heartbeat every 1 second
+						// This allows the main thread to detect if the worker is unresponsive (e.g. infinite loop)
+						const _heartbeatInterval = _origSetInterval(() => {
+							self.postMessage({ type: 'heartbeat' });
+						}, 1000);
 					`;
 					const sandboxedScript = sandboxPreamble + '\n' + theme.animationScript;
 					const blob = new Blob([sandboxedScript], { type: 'application/javascript' });
 					workerUrl = URL.createObjectURL(blob);
 					const worker = new Worker(workerUrl);
+
+					// Watchdog: terminate worker if no heartbeat received for 3 seconds
+					let watchdogTimer: number;
+					const resetWatchdog = () => {
+						if (watchdogTimer) clearTimeout(watchdogTimer);
+						watchdogTimer = window.setTimeout(() => {
+							console.warn('Theme worker unresponsive, terminating...');
+							cleanupAnimation(mainContainer, theme.id);
+						}, 3000);
+					};
+
+					worker.onmessage = (e) => {
+						if (e.data?.type === 'heartbeat') {
+							resetWatchdog();
+						}
+					};
+
+					// Start watchdog
+					resetWatchdog();
 
 					const offscreen = canvas.transferControlToOffscreen();
 
@@ -297,6 +321,7 @@
 					currentAnimation = {
 						start: () => {},
 						stop: () => {
+							if (watchdogTimer) clearTimeout(watchdogTimer);
 							worker.terminate();
 							if (workerUrl) URL.revokeObjectURL(workerUrl);
 							if (currentResizeObserver) {
