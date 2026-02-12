@@ -72,6 +72,7 @@
 
 	// Theme editor state
 	let selectedTheme: Theme | null = null;
+	let originalTheme: Theme | null = null;
 	let isEditingTheme = false;
 	let previousThemeId = '';
 
@@ -178,6 +179,7 @@
 		console.log('[+layout] Opening theme editor', { themeName: theme.name, isEditing });
 		// Create a deep copy to ensure reactivity
 		selectedTheme = JSON.parse(JSON.stringify(theme));
+		originalTheme = JSON.parse(JSON.stringify(theme));
 
 		// Apply the theme immediately for live preview
 		applyTheme(selectedTheme);
@@ -478,7 +480,8 @@
 			console.log('[+layout] Save as New event received from ThemeEditorModal', newTheme);
 			
 			// If name hasn't changed, append (Copy) to avoid duplicate error
-			if (selectedTheme && newTheme.name === selectedTheme.name) {
+			// Use originalTheme to check against the state when editor was opened
+			if (originalTheme && newTheme.name === originalTheme.name) {
 				newTheme.name = `${newTheme.name} (Copy)`;
 			}
 			
