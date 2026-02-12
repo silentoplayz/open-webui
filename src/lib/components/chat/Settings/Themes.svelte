@@ -428,47 +428,54 @@
 	};
 
 	const processAndAddTheme = (theme: any, source: string = '', force: boolean = false): boolean => {
-		// Version compatibility check
-		const versionMismatch =
-			theme.targetWebUIVersion && isMismatchedVersion(WEBUI_VERSION, theme.targetWebUIVersion);
+		try {
+			// Version compatibility check
+			const versionMismatch =
+				theme.targetWebUIVersion && isMismatchedVersion(WEBUI_VERSION, theme.targetWebUIVersion);
 
-		if (versionMismatch && !force && !skipThemeImportWarning) {
-			themeToImport = theme;
-			showThemeImportWarning = true;
+			if (versionMismatch && !force && !skipThemeImportWarning) {
+				themeToImport = theme;
+				showThemeImportWarning = true;
+				return false;
+			}
+
+			// Validation
+			const validation = validateTheme(theme);
+			if (!validation.valid) {
+				toast.error($i18n.t(validation.error ?? ''));
+				return false;
+			}
+
+			if ($themes.has(theme.id)) {
+				// This is a default theme, we can't overwrite it
+				toast.error($i18n.t('A theme with this ID already exists as a default theme.'));
+				return false;
+			}
+
+			if ($communityThemes.has(theme.id) && !force) {
+				// Check if duplicate logic is needed here or handled by caller
+			}
+
+			// Security Checks
+			// 1. Animation Script Check
+			if (theme.animationScript && !skipAnimationScriptWarning && !acceptAllScriptWarning) {
+				themeWithScriptToImport = { theme, source, isDuplicate: false };
+				showAnimationScriptWarning = true;
+				return false;
+			}
+
+			if (source) {
+				theme.sourceUrl = source;
+			}
+
+			const success = addCommunityTheme(theme);
+			return success;
+		} catch (e) {
+			console.error('Error processing theme:', e);
+			const errorMsg = e instanceof Error ? e.message : String(e);
+			toast.error($i18n.t(`Failed to process theme: ${errorMsg}`));
 			return false;
 		}
-
-		// Validation
-		const validation = validateTheme(theme);
-		if (!validation.valid) {
-			toast.error($i18n.t(validation.error ?? ''));
-			return false;
-		}
-
-		if ($themes.has(theme.id)) {
-			// This is a default theme, we can't overwrite it
-			toast.error($i18n.t('A theme with this ID already exists as a default theme.'));
-			return false;
-		}
-
-		if ($communityThemes.has(theme.id) && !force) {
-			// Check if duplicate logic is needed here or handled by caller
-		}
-
-		// Security Checks
-		// 1. Animation Script Check
-		if (theme.animationScript && !skipAnimationScriptWarning && !acceptAllScriptWarning) {
-			themeWithScriptToImport = { theme, source, isDuplicate: false };
-			showAnimationScriptWarning = true;
-			return false;
-		}
-
-		if (source) {
-			theme.sourceUrl = source;
-		}
-		
-		const success = addCommunityTheme(theme);
-		return success;
 	};
 
 	// ... (helper functions)

@@ -177,15 +177,24 @@ export const isDuplicateTheme = (
 };
 
 export const isMismatchedVersion = (uiVersion: string, themeVersion: string) => {
-	if (!themeVersion) {
+	if (!uiVersion || !themeVersion) {
 		return false;
 	}
 
-	const [uiMajor, uiMinor] = uiVersion.split('.').map(Number);
-	const [themeMajor, themeMinor] = themeVersion.split('.').map(Number);
+	try {
+		const [uiMajor, uiMinor] = uiVersion.split('.').map((v) => parseInt(v, 10));
+		const [themeMajor, themeMinor] = themeVersion.split('.').map((v) => parseInt(v, 10));
 
-	if (uiMajor !== themeMajor || uiMinor !== themeMinor) {
-		return true;
+		if (isNaN(uiMajor) || isNaN(uiMinor) || isNaN(themeMajor) || isNaN(themeMinor)) {
+			return false;
+		}
+
+		if (uiMajor !== themeMajor || uiMinor !== themeMinor) {
+			return true;
+		}
+	} catch (e) {
+		console.error('Failed to compare versions:', e);
+		return false;
 	}
 
 	return false;

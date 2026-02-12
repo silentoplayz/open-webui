@@ -21,7 +21,7 @@
 	};
 </script>
 
-<Modal bind:show {cancel} width="max-w-md">
+<Modal bind:show {cancel} width="max-w-md" containerClassName="z-[99999]">
 	<div class="p-4">
 		<h2 class="text-lg font-medium">{$i18n.t('Theme Import Warning')}</h2>
 		<p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
