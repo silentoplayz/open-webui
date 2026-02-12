@@ -19,8 +19,8 @@ export const isValidThemeUrl = (url: string, allowDataUri = false): boolean => {
 		const parsed = new URL(url);
 		if (['http:', 'https:'].includes(parsed.protocol)) return true;
 		if (allowDataUri && parsed.protocol === 'data:') {
-			// Allow data URIs for images but enforce a size limit (500KB)
-			const MAX_DATA_URI_SIZE = 500 * 1024;
+			// Allow data URIs for images but enforce a size limit (5MB)
+			const MAX_DATA_URI_SIZE = 5 * 1024 * 1024;
 			return url.length <= MAX_DATA_URI_SIZE;
 		}
 		return false;
