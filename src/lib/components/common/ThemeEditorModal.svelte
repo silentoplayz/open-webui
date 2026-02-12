@@ -526,6 +526,40 @@
 							{$i18n.t('Cancel')}
 						</button>
 						<button
+							class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition rounded-full"
+							on:click={() => {
+								if (manualEditMode) {
+									try {
+										const newTheme = JSON.parse(themeJsonText);
+										themeCopy = newTheme;
+									} catch (e) {
+										toast.error('Invalid JSON format. Please fix it before saving.');
+										return;
+									}
+								} else {
+									themeCopy.variables = cssToObject(variablesText);
+									themeCopy.css = cssText;
+									themeCopy.animationScript = animationScriptText;
+									try {
+										themeCopy.tsparticlesConfig = tsParticleConfigText
+											? JSON.parse(tsParticleConfigText)
+											: undefined;
+									} catch (e) {
+										toast.error(
+											'Invalid JSON format for Particle Config. Please fix it before saving.'
+										);
+										return;
+									}
+								}
+								if (!themeCopy.targetWebUIVersion) {
+									themeCopy.targetWebUIVersion = WEBUI_VERSION;
+								}
+								dispatch('saveAsNew', themeCopy);
+							}}
+						>
+							{$i18n.t('Save as New Theme')}
+						</button>
+						<button
 							class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
 							on:click={save}
 						>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
+	import { v4 as uuidv4 } from 'uuid';
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { openDB, deleteDB } from 'idb';
 	import fileSaver from 'file-saver';
@@ -471,6 +472,26 @@
 				})
 			);
 			console.log('[+layout] Dispatched theme-editor-save event');
+		}}
+		on:saveAsNew={(e) => {
+			const newTheme = e.detail;
+			console.log('[+layout] Save as New event received from ThemeEditorModal', newTheme);
+			
+			// If name hasn't changed, append (Copy) to avoid duplicate error
+			if (selectedTheme && newTheme.name === selectedTheme.name) {
+				newTheme.name = `${newTheme.name} (Copy)`;
+			}
+			
+			// Generate new ID and treat as new theme
+			newTheme.id = `theme-${uuidv4()}`;
+			newTheme.sourceUrl = undefined;
+			
+			// Dispatch save event for Themes.svelte to handle (isEditing = false)
+			window.dispatchEvent(
+				new CustomEvent('theme-editor-save', {
+					detail: { theme: newTheme, isEditing: false }
+				})
+			);
 		}}
 		on:update={(e) => {
 			selectedTheme = e.detail;
