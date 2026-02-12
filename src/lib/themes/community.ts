@@ -12,7 +12,7 @@ import { WEBUI_VERSION } from '$lib/constants';
 import { communityThemes, themeUpdates, themeUpdateErrors, themes } from '$lib/stores/theme';
 import { theme as themeStore, editingThemeId } from '$lib/stores';
 import { applyTheme } from '$lib/themes/apply';
-import { validateTheme } from '$lib/utils/theme';
+import { validateTheme, isValidThemeUrl } from '$lib/utils/theme';
 import { containsDangerousCSS } from '$lib/utils/css-sanitizer';
 
 export const loadCommunityThemes = () => {
@@ -110,6 +110,12 @@ export const deleteAllCommunityThemes = () => {
 };
 
 const _fetchTheme = async (url: string): Promise<[Theme | null, string | null]> => {
+	// Security: validate URL protocol before fetching
+	if (!isValidThemeUrl(url)) {
+		const errorText = 'Invalid URL: only HTTP and HTTPS protocols are allowed.';
+		console.error(`Refused to fetch theme from ${url}: ${errorText}`);
+		return [null, errorText];
+	}
 	try {
 		const res = await fetch(url);
 		if (!res.ok) {
@@ -181,6 +187,23 @@ export const retryThemeUpdateCheck = async (theme: Theme) => {
 	const [latestTheme, error] = await _fetchTheme(theme.sourceUrl);
 
 	if (latestTheme) {
+		// Security: validate the fetched theme before storing
+		const validation = validateTheme(latestTheme);
+		if (!validation.valid) {
+			const errors = get(themeUpdateErrors);
+			errors.set(theme.id, `Validation failed: ${validation.error}`);
+			themeUpdateErrors.set(errors);
+			toast.error(`Update for "${theme.name}" rejected: ${validation.error}`);
+			return;
+		}
+		if (latestTheme.css && containsDangerousCSS(latestTheme.css)) {
+			const errors = get(themeUpdateErrors);
+			errors.set(theme.id, 'CSS contains dangerous constructs');
+			themeUpdateErrors.set(errors);
+			toast.error(`Update for "${theme.name}" rejected: CSS contains dangerous constructs.`);
+			return;
+		}
+
 		// Clear the error for this theme
 		const errors = get(themeUpdateErrors);
 		errors.delete(theme.id);
@@ -240,6 +263,17 @@ export const checkForThemeUpdates = async (manual = false) => {
 			const [latestTheme, error] = await _fetchTheme(theme.sourceUrl);
 
 			if (latestTheme) {
+				// Security: validate before storing
+				const validation = validateTheme(latestTheme);
+				const hasDangerousCSS = latestTheme.css && containsDangerousCSS(latestTheme.css);
+				if (!validation.valid || hasDangerousCSS) {
+					errors.set(id, validation.error || 'CSS contains dangerous constructs');
+					if (manual) {
+						toast.error(`Update for "${theme.name}" rejected: ${validation.error || 'dangerous CSS'}`);
+					}
+					continue;
+				}
+
 				if (latestTheme.version && isNewerVersion(theme.version, latestTheme.version)) {
 					updates.set(id, latestTheme);
 					updatesFound++;

@@ -80,10 +80,8 @@
 			script.remove();
 		}
 
-		if (window.cleanupDoomTheme) {
-			window.cleanupDoomTheme();
-			delete window.cleanupDoomTheme;
-		}
+		// NOTE: window.cleanupDoomTheme global hook removed for security.
+		// Theme-specific cleanup should be handled via the Worker messaging protocol.
 	};
 
 	const cleanupCustomizations = (theme: Theme, mainContainer: HTMLElement) => {
@@ -208,14 +206,23 @@
 
 				try {
 					// Security sandbox: neutralize networking APIs before running user script
+					// Uses Object.defineProperty with configurable:false to prevent reversal
 					const sandboxPreamble = `
 						// Sandbox: prevent data exfiltration from animation scripts
-						self.fetch = undefined;
-						self.XMLHttpRequest = undefined;
-						self.WebSocket = undefined;
-						self.EventSource = undefined;
-						self.importScripts = () => { throw new Error('importScripts is disabled for security'); };
-						self.navigator.sendBeacon = undefined;
+						const _blocked = () => { throw new Error('Blocked for security'); };
+						for (const api of ['fetch','XMLHttpRequest','WebSocket','EventSource']) {
+							Object.defineProperty(self, api, {
+								value: undefined, writable: false, configurable: false
+							});
+						}
+						Object.defineProperty(self, 'importScripts', {
+							value: _blocked, writable: false, configurable: false
+						});
+						if (self.navigator) {
+							Object.defineProperty(self.navigator, 'sendBeacon', {
+								value: undefined, writable: false, configurable: false
+							});
+						}
 					`;
 					const sandboxedScript = sandboxPreamble + '\n' + theme.animationScript;
 					const blob = new Blob([sandboxedScript], { type: 'application/javascript' });

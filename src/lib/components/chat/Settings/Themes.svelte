@@ -52,7 +52,7 @@
 	import emojiGroups from '$lib/emoji-groups.json';
 	import { config, user } from '$lib/stores';
 	import variables from '$lib/themes/variables.json';
-	import { validateTheme, isDuplicateTheme, isMismatchedVersion } from '$lib/utils/theme';
+	import { validateTheme, isDuplicateTheme, isMismatchedVersion, isValidThemeUrl } from '$lib/utils/theme';
 
 	const i18n = getContext('i18n');
 
@@ -482,6 +482,12 @@
 	const addThemeHandler = async () => {
 		if (!themeUrl) {
 			toast.error($i18n.t('Please enter a theme URL.'));
+			return;
+		}
+
+		// Security: validate URL protocol before fetching
+		if (!isValidThemeUrl(themeUrl)) {
+			toast.error($i18n.t('Invalid URL: only HTTP and HTTPS protocols are allowed.'));
 			return;
 		}
 

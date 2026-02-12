@@ -2,6 +2,27 @@ import type { Theme } from '$lib/types';
 import { containsDangerousCSS } from '$lib/utils/css-sanitizer';
 import { themeSchema } from '$lib/schemas/theme-schema';
 
+/**
+ * Validates that a URL uses a safe protocol (http: or https:).
+ * Rejects javascript:, data:, blob:, and other dangerous protocols.
+ * Allows data: URIs for background images if they are reasonably sized.
+ */
+export const isValidThemeUrl = (url: string, allowDataUri = false): boolean => {
+	if (!url || typeof url !== 'string') return false;
+	try {
+		const parsed = new URL(url);
+		if (['http:', 'https:'].includes(parsed.protocol)) return true;
+		if (allowDataUri && parsed.protocol === 'data:') {
+			// Allow data URIs for images but enforce a size limit (500KB)
+			const MAX_DATA_URI_SIZE = 500 * 1024;
+			return url.length <= MAX_DATA_URI_SIZE;
+		}
+		return false;
+	} catch {
+		return false;
+	}
+};
+
 export const validateTheme = (theme: any): { valid: boolean; error?: string } => {
 	// Phase 1: Structural validation with Zod schema
 	const schemaValidation = themeSchema.safeParse(theme);
@@ -48,11 +69,11 @@ export const validateTheme = (theme: any): { valid: boolean; error?: string } =>
 		return { valid: false, error: 'Invalid theme: "css" must be a string.' };
 	}
 
-	// Warn if CSS contains dangerous constructs (url(), @import)
+	// Warn if CSS contains dangerous constructs (url(), @import, image-set(), etc.)
 	if (theme.css && containsDangerousCSS(theme.css)) {
 		return {
 			valid: false,
-			error: 'Invalid theme: "css" contains url() or @import which are not allowed for security reasons. External resources cannot be loaded.'
+			error: 'Invalid theme: CSS contains dangerous constructs (url(), @import, image-set(), expression()) which are not allowed for security reasons.'
 		};
 	}
 
@@ -88,6 +109,32 @@ export const validateTheme = (theme: any): { valid: boolean; error?: string } =>
 				};
 			}
 		}
+	}
+
+	// URL validation for source and background URLs
+	if (theme.sourceUrl && !isValidThemeUrl(theme.sourceUrl)) {
+		return {
+			valid: false,
+			error: 'Invalid theme: "sourceUrl" must be a valid HTTP or HTTPS URL.'
+		};
+	}
+	if (theme.repository && !isValidThemeUrl(theme.repository)) {
+		return {
+			valid: false,
+			error: 'Invalid theme: "repository" must be a valid HTTP or HTTPS URL.'
+		};
+	}
+	if (theme.systemBackgroundImageUrl && !isValidThemeUrl(theme.systemBackgroundImageUrl, true)) {
+		return {
+			valid: false,
+			error: 'Invalid theme: "systemBackgroundImageUrl" must be a valid HTTP/HTTPS URL or data URI (max 500KB).'
+		};
+	}
+	if (theme.chatBackgroundImageUrl && !isValidThemeUrl(theme.chatBackgroundImageUrl, true)) {
+		return {
+			valid: false,
+			error: 'Invalid theme: "chatBackgroundImageUrl" must be a valid HTTP/HTTPS URL or data URI (max 500KB).'
+		};
 	}
 	return { valid: true };
 };

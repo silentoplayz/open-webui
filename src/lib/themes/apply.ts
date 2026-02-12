@@ -10,9 +10,24 @@ import { theme as themeStore, codeMirrorTheme } from '$lib/stores';
 import variables from '$lib/themes/variables.json';
 
 import { currentThemeStore, liveThemeStore, communityThemes, themes } from '$lib/stores/theme';
-import { sanitizeCSS } from '$lib/utils/css-sanitizer';
+import { sanitizeCSS, containsDangerousCSS } from '$lib/utils/css-sanitizer';
 
 let currentStylesheet: HTMLStyleElement | undefined;
+
+/**
+ * Validates a CSS variable value before applying.
+ * Prevents injection of dangerous constructs via variable values.
+ */
+const isValidCSSVariableValue = (value: string): boolean => {
+	if (typeof value !== 'string') return false;
+	// Limit value length to prevent DoS
+	if (value.length > 500) return false;
+	// Block values containing CSS syntax delimiters (could escape variable context in some renderers)
+	if (/[{}]/.test(value)) return false;
+	// Block dangerous CSS functions in values
+	if (containsDangerousCSS(value)) return false;
+	return true;
+};
 
 const cleanupTheme = () => {
 	// Note: currentStylesheet is now managed in _applyGlobalThemeStyles to allow reuse
@@ -55,14 +70,22 @@ const _applyGlobalThemeStyles = (theme: Theme) => {
 	const baseThemeObject = allThemes.get(resolvedBase);
 	if (baseThemeObject?.variables) {
 		for (const [key, value] of Object.entries(baseThemeObject.variables)) {
-			document.documentElement.style.setProperty(key, value);
+			if (isValidCSSVariableValue(value)) {
+				document.documentElement.style.setProperty(key, value);
+			} else {
+				console.warn(`Blocked invalid CSS variable value for ${key}`);
+			}
 		}
 	}
 
 	// Apply variables from current theme (override base)
 	if (theme.variables && (!theme.toggles || theme.toggles.cssVariables)) {
 		for (const [key, value] of Object.entries(theme.variables)) {
-			document.documentElement.style.setProperty(key, value);
+			if (isValidCSSVariableValue(value)) {
+				document.documentElement.style.setProperty(key, value);
+			} else {
+				console.warn(`Blocked invalid CSS variable value for ${key}`);
+			}
 		}
 	}
 
@@ -155,7 +178,9 @@ export const applyTheme = async (themeInput: string | Theme, isLiveUpdate = fals
 		codeMirrorTheme.set(themeToApply.codeMirrorTheme);
 	}
 
-	if (typeof window !== 'undefined' && window.applyTheme) {
-		window.applyTheme();
+	// Dispatch a custom event for any listeners that need to react to theme changes
+	// This replaces the previous window.applyTheme global hook for security reasons
+	if (typeof window !== 'undefined') {
+		window.dispatchEvent(new CustomEvent('theme-applied', { detail: { themeId: themeToApply.id } }));
 	}
 };

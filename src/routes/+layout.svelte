@@ -749,11 +749,7 @@
 		document.addEventListener('touchmove', touchmoveHandler, { passive: false });
 		document.addEventListener('touchend', touchendHandler);
 
-		if (typeof window !== 'undefined') {
-			if (window.applyTheme) {
-				window.applyTheme();
-			}
-		}
+		// window.applyTheme global hook removed for security — use 'theme-applied' CustomEvent instead
 
 		if (window?.electronAPI) {
 			const info = await window.electronAPI.send({

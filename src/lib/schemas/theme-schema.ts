@@ -44,7 +44,7 @@ const gradientSchema = z
 		direction: z.number().optional(),
 		intensity: z.number().optional()
 	})
-	.passthrough();
+	.strip(); // Strip unknown properties to prevent prototype pollution
 
 // Theme toggles
 const togglesSchema = z
@@ -57,7 +57,7 @@ const togglesSchema = z
 		systemBackgroundImage: z.boolean().optional(),
 		chatBackgroundImage: z.boolean().optional()
 	})
-	.passthrough();
+	.strip(); // Strip unknown properties to prevent prototype pollution
 
 // Size limits (matching our validation logic)
 const MAX_CSS_SIZE = 100 * 1024; // 100KB
@@ -82,12 +82,23 @@ export const themeSchema = z
 		chatBackgroundImageDarken: z.number().optional(),
 		variables: z.record(z.string(), z.string()).optional(),
 		gradient: gradientSchema.optional(),
-		tsparticlesConfig: z.any().optional(), // IOptions type is complex, using any for now
+		tsparticlesConfig: z.record(z.string(), z.unknown())
+			.optional()
+			.transform((val) => {
+				if (!val) return val;
+				// Strip dangerous prototype pollution keys
+				const { __proto__, constructor, prototype, ...safe } = val as any;
+				return safe;
+			})
+			.refine(
+				(val) => !val || JSON.stringify(val).length < 50 * 1024,
+				{ message: `tsParticles config must not exceed 50KB` }
+			),
 		animationScript: z
 			.string()
 			.max(MAX_SCRIPT_SIZE, `Animation script must not exceed ${MAX_SCRIPT_SIZE / 1024}KB`)
 			.optional(),
-		animation: z.any().optional(),
+		// NOTE: Legacy 'animation' field removed — all animations must use animationScript (Web Worker)
 		css: z
 			.string()
 			.max(MAX_CSS_SIZE, `CSS must not exceed ${MAX_CSS_SIZE / 1024}KB`)
@@ -96,7 +107,7 @@ export const themeSchema = z
 		codeMirrorTheme: z.string().optional(),
 		toggles: togglesSchema.optional()
 	})
-	.passthrough(); // Allow unknown properties for backward compatibility
+	.strip(); // Strip unknown properties to prevent prototype pollution
 
 // Export the inferred type (should match Theme interface)
 export type ThemeSchemaType = z.infer<typeof themeSchema>;
