@@ -84,7 +84,12 @@ const normalizeCSSEscapes = (css: string): string => {
 	// Match CSS escape sequences: backslash + 1-6 hex digits (+ optional whitespace), or backslash + any char
 	return css.replace(/\\([0-9a-fA-F]{1,6})\s?|\\(.)/g, (_, hex, char) => {
 		if (hex) {
-			return String.fromCodePoint(parseInt(hex, 16));
+			const codePoint = parseInt(hex, 16);
+			// Valid Unicode range is 0 to 0x10FFFF
+			if (codePoint > 0x10ffff) {
+				return '\ufffd';
+			}
+			return String.fromCodePoint(codePoint);
 		}
 		return char || '';
 	});
