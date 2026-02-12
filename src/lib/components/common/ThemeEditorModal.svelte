@@ -517,7 +517,7 @@
 
 			<!-- Fixed Footer -->
 			{#if !$themeEditorCollapsed}
-				<div class="flex-shrink-0 p-4 border-t border-gray-200 dark:border-gray-700">
+				<div class="flex-shrink-0 p-4">
 					<div class="flex justify-end space-x-2">
 						<button
 							class="px-3.5 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition rounded-full"

@@ -246,14 +246,14 @@
 			showControls.set(false);
 		}}
 		collapsible={true}
-		class=" z-10 bg-white dark:bg-gray-850"
+		class=" z-10 {$mobile ? 'bg-gray-50 dark:bg-gray-950' : 'bg-gray-50/70 dark:bg-gray-950/70'}"
 	>
 		{#if $showControls}
 			<div class="flex max-h-full min-h-full">
 				<div
 					class="w-full {($showOverview || $showArtifacts || $showEmbeds) && !$showCallOverlay
 						? ' '
-						: 'px-4 py-3 bg-white dark:shadow-lg dark:bg-gray-850 '} z-40 pointer-events-auto overflow-y-auto scrollbar-hidden"
+						: 'px-4 py-3'} z-40 pointer-events-auto overflow-y-auto scrollbar-hidden"
 					id="controls-container"
 				>
 					{#if $showCallOverlay}
