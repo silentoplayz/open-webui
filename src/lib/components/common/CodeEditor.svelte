@@ -129,7 +129,7 @@
 							}
 
 							pickerColor = colord(color).toHex();
-							pickerStyle = `position: fixed; left: ${e.clientX}px; top: ${e.clientY}px; z-index: 10000;`;
+							pickerStyle = `position: fixed; left: ${left}px; top: ${top}px; z-index: 10000;`;
 							pickerUpdateCallback = (newColor) => {
 								if (activeColorRange) {
 									let newColorStr = newColor;
