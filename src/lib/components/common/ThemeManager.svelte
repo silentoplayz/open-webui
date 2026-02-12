@@ -207,7 +207,18 @@
 				mainContainer.prepend(canvas);
 
 				try {
-					const blob = new Blob([theme.animationScript], { type: 'application/javascript' });
+					// Security sandbox: neutralize networking APIs before running user script
+					const sandboxPreamble = `
+						// Sandbox: prevent data exfiltration from animation scripts
+						self.fetch = undefined;
+						self.XMLHttpRequest = undefined;
+						self.WebSocket = undefined;
+						self.EventSource = undefined;
+						self.importScripts = () => { throw new Error('importScripts is disabled for security'); };
+						self.navigator.sendBeacon = undefined;
+					`;
+					const sandboxedScript = sandboxPreamble + '\n' + theme.animationScript;
+					const blob = new Blob([sandboxedScript], { type: 'application/javascript' });
 					const workerUrl = URL.createObjectURL(blob);
 					const worker = new Worker(workerUrl);
 
@@ -258,28 +269,9 @@
 					window.dispatchEvent(new Event('resize'));
 					canvas.style.opacity = '1';
 				}, 100);
-			} else if (theme.animation && typeof theme.animation.start === 'function') {
-				const canvas = document.createElement('canvas');
-				canvas.id = `${theme.id}-canvas`;
-				canvas.style.position = 'absolute';
-				canvas.style.top = '0';
-				canvas.style.left = '0';
-				canvas.style.width = '100%';
-				canvas.style.height = '100%';
-				canvas.style.zIndex = '0';
-				canvas.style.pointerEvents = 'none';
-				canvas.style.opacity = '0';
-				canvas.style.transition = 'opacity 0.5s ease-in-out';
-				mainContainer.prepend(canvas);
-
-				currentAnimation = theme.animation;
-				currentAnimation.start(canvas);
-
-				setTimeout(() => {
-					window.dispatchEvent(new Event('resize'));
-					canvas.style.opacity = '1';
-				}, 100);
 			}
+			// NOTE: Legacy animation.start() path has been removed for security.
+			// All animations must use the Web Worker-based animationScript path.
 		}
 	};
 

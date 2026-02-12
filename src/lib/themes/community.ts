@@ -12,6 +12,8 @@ import { WEBUI_VERSION } from '$lib/constants';
 import { communityThemes, themeUpdates, themeUpdateErrors, themes } from '$lib/stores/theme';
 import { theme as themeStore, editingThemeId } from '$lib/stores';
 import { applyTheme } from '$lib/themes/apply';
+import { validateTheme } from '$lib/utils/theme';
+import { containsDangerousCSS } from '$lib/utils/css-sanitizer';
 
 export const loadCommunityThemes = () => {
 	const themes = localStorage.getItem('communityThemes');
@@ -138,6 +140,17 @@ export const updateCommunityThemeFromUrl = async (theme: Theme) => {
 	const [latestTheme, error] = await _fetchTheme(theme.sourceUrl);
 
 	if (latestTheme) {
+		// Security: validate the fetched theme before applying
+		const validation = validateTheme(latestTheme);
+		if (!validation.valid) {
+			toast.error(`Update rejected for "${theme.name}": ${validation.error}`);
+			return;
+		}
+		if (latestTheme.css && containsDangerousCSS(latestTheme.css)) {
+			toast.error(`Update rejected for "${theme.name}": CSS contains url() or @import which are not allowed.`);
+			return;
+		}
+
 		const existingTheme = get(communityThemes).get(theme.id);
 		if (existingTheme?.toggles) {
 			latestTheme.toggles = { ...existingTheme.toggles, ...(latestTheme.toggles ?? {}) };
