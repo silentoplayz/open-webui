@@ -11,12 +11,14 @@
 	import type { Theme } from '$lib/types';
 	import { onMount, onDestroy } from 'svelte';
 	import { liveThemeStore } from '$lib/stores/theme';
+	import { sanitizeThemeId } from '$lib/utils/theme';
 
 	export let container: HTMLElement;
 
 	let lastTheme: Theme | undefined = undefined;
 	let currentAnimation: Theme['animation'] | undefined;
 	let currentResizeObserver: ResizeObserver | undefined;
+	let currentMouseMoveHandler: ((e: MouseEvent) => void) | undefined;
 
 	// Helper to check if gradient changed
 	const isGradientChanged = (newTheme: Theme, oldTheme: Theme | undefined) => {
@@ -65,6 +67,13 @@
 		}
 		currentAnimation = undefined;
 
+		// Clean up mousemove listener to prevent leaks
+		if (currentMouseMoveHandler) {
+			mainContainer.removeEventListener('mousemove', currentMouseMoveHandler);
+			currentMouseMoveHandler = undefined;
+		}
+
+		const safeId = sanitizeThemeId(themeId);
 		const canvas = mainContainer.querySelector(`[id$='-canvas']`);
 		if (canvas) {
 			canvas.remove();
@@ -75,7 +84,7 @@
 			currentResizeObserver = undefined;
 		}
 
-		const script = document.getElementById(`${themeId}-script`);
+		const script = document.getElementById(`${safeId}-script`);
 		if (script) {
 			script.remove();
 		}
@@ -88,7 +97,8 @@
 		if (!mainContainer) return;
 		cleanupAnimation(mainContainer, theme.id);
 
-		mainContainer.classList.remove(`${theme.id}-bg`);
+		const safeId = sanitizeThemeId(theme.id);
+		mainContainer.classList.remove(`${safeId}-bg`);
 		mainContainer.style.backgroundImage = 'none';
 
 		const gradientLayer = mainContainer.querySelector('#theme-gradient-layer');
@@ -160,9 +170,9 @@
 		// --- Background Image Handling ---
 		// Always update these as they are cheap operations
 		if (oldTheme && oldTheme.id !== theme.id) {
-			mainContainer.classList.remove(`${oldTheme.id}-bg`);
+			mainContainer.classList.remove(`${sanitizeThemeId(oldTheme.id)}-bg`);
 		}
-		mainContainer.classList.add(`${theme.id}-bg`);
+		mainContainer.classList.add(`${sanitizeThemeId(theme.id)}-bg`);
 
 		// Only update background image if it changed (optimization)
 		if (
@@ -191,8 +201,9 @@
 			// Apply new animation
 			if (theme.animationScript && (!theme.toggles || theme.toggles.animationScript)) {
 				// Enforce Worker isolation for all scripts
+				const safeId = sanitizeThemeId(theme.id);
 				const canvas = document.createElement('canvas');
-				canvas.id = `${theme.id}-canvas`;
+				canvas.id = `${safeId}-canvas`;
 				canvas.style.position = 'absolute';
 				canvas.style.top = '0';
 				canvas.style.left = '0';
@@ -204,8 +215,9 @@
 				canvas.style.transition = 'opacity 0.5s ease-in-out';
 				mainContainer.prepend(canvas);
 
+				let workerUrl: string | undefined;
 				try {
-					// Security sandbox: neutralize networking APIs before running user script
+					// Security sandbox: neutralize networking and code-generation APIs
 					// Uses Object.defineProperty with configurable:false to prevent reversal
 					const sandboxPreamble = `
 						// Sandbox: prevent data exfiltration from animation scripts
@@ -223,10 +235,32 @@
 								value: undefined, writable: false, configurable: false
 							});
 						}
+						// Block code-generation APIs that could bypass the sandbox
+						Object.defineProperty(self, 'eval', {
+							value: undefined, writable: false, configurable: false
+						});
+						Object.defineProperty(self, 'Function', {
+							value: undefined, writable: false, configurable: false
+						});
+						// Override setTimeout/setInterval to only accept functions, not strings
+						const _origSetTimeout = self.setTimeout;
+						const _origSetInterval = self.setInterval;
+						Object.defineProperty(self, 'setTimeout', {
+							value: (fn, ...args) => {
+								if (typeof fn !== 'function') throw new Error('Blocked for security');
+								return _origSetTimeout(fn, ...args);
+							}, writable: false, configurable: false
+						});
+						Object.defineProperty(self, 'setInterval', {
+							value: (fn, ...args) => {
+								if (typeof fn !== 'function') throw new Error('Blocked for security');
+								return _origSetInterval(fn, ...args);
+							}, writable: false, configurable: false
+						});
 					`;
 					const sandboxedScript = sandboxPreamble + '\n' + theme.animationScript;
 					const blob = new Blob([sandboxedScript], { type: 'application/javascript' });
-					const workerUrl = URL.createObjectURL(blob);
+					workerUrl = URL.createObjectURL(blob);
 					const worker = new Worker(workerUrl);
 
 					const offscreen = canvas.transferControlToOffscreen();
@@ -249,20 +283,22 @@
 					});
 					currentResizeObserver.observe(mainContainer);
 
-					mainContainer.addEventListener('mousemove', (e) => {
+					// Store handler reference so it can be cleaned up
+					currentMouseMoveHandler = (e: MouseEvent) => {
 						const rect = mainContainer.getBoundingClientRect();
 						worker.postMessage({
 							type: 'mousemove',
 							x: e.clientX - rect.left,
 							y: e.clientY - rect.top
 						});
-					});
+					};
+					mainContainer.addEventListener('mousemove', currentMouseMoveHandler);
 
 					currentAnimation = {
 						start: () => {},
 						stop: () => {
 							worker.terminate();
-							URL.revokeObjectURL(workerUrl);
+							if (workerUrl) URL.revokeObjectURL(workerUrl);
 							if (currentResizeObserver) {
 								currentResizeObserver.disconnect();
 							}
@@ -270,6 +306,8 @@
 					};
 				} catch (e) {
 					console.error('Failed to start animation worker:', e);
+					// Clean up Blob URL on error to prevent memory leak
+					if (workerUrl) URL.revokeObjectURL(workerUrl);
 				}
 
 				setTimeout(() => {

@@ -3,10 +3,42 @@
  * This module strips dangerous CSS constructs that could be used for data exfiltration or phishing.
  * 
  * Defense-in-depth approach:
- * 1. Normalize CSS escape sequences so obfuscated identifiers are caught
- * 2. Strip comments to prevent hiding dangerous constructs
+ * 1. Strip comments using a linear-time scanner (immune to ReDoS)
+ * 2. Normalize CSS escape sequences so obfuscated identifiers are caught
  * 3. Remove @import rules, url() functions, and other external resource functions
  */
+
+/**
+ * Strips CSS comments using a linear-time manual scan.
+ * This replaces the regex-based approach (`/\/\*[\s\S]*?\*\//g`) which was
+ * vulnerable to ReDoS on malformed inputs like unclosed comments.
+ * 
+ * @param css - The raw CSS string
+ * @returns CSS with all block comments removed
+ */
+export const stripCSSComments = (css: string): string => {
+	let result = '';
+	let i = 0;
+	while (i < css.length) {
+		if (css[i] === '/' && i + 1 < css.length && css[i + 1] === '*') {
+			// Skip until closing */
+			i += 2;
+			while (i < css.length - 1 && !(css[i] === '*' && css[i + 1] === '/')) {
+				i++;
+			}
+			// Skip the closing */ (or end of string if unclosed)
+			if (i < css.length - 1) {
+				i += 2;
+			} else {
+				i = css.length; // Unclosed comment — skip to end
+			}
+		} else {
+			result += css[i];
+			i++;
+		}
+	}
+	return result;
+};
 
 /**
  * Normalizes CSS escape sequences to their plain-text equivalents.
@@ -76,8 +108,8 @@ export const sanitizeCSS = (css: string): string => {
 
 	let sanitized = css;
 
-	// Step 1: Remove CSS comments to prevent obfuscation
-	sanitized = sanitized.replace(/\/\*[\s\S]*?\*\//g, '');
+	// Step 1: Remove CSS comments using linear-time scanner (immune to ReDoS)
+	sanitized = stripCSSComments(sanitized);
 
 	// Step 2: Normalize CSS escape sequences to catch obfuscated identifiers
 	// e.g. \75\72\6c() → url()
@@ -105,8 +137,8 @@ export const containsDangerousCSS = (css: string): boolean => {
 		return false;
 	}
 
-	// Remove comments first to avoid false positives
-	let normalized = css.replace(/\/\*[\s\S]*?\*\//g, '');
+	// Remove comments using linear-time scanner (immune to ReDoS)
+	let normalized = stripCSSComments(css);
 
 	// Normalize escape sequences
 	normalized = normalizeCSSEscapes(normalized);

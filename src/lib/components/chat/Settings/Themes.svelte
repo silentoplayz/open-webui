@@ -497,6 +497,11 @@
 			if (!res.ok) {
 				throw new Error(`Failed to fetch theme: ${res.statusText}`);
 			}
+			// Validate Content-Type before parsing as JSON
+			const contentType = res.headers.get('content-type') || '';
+			if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+				throw new Error(`Expected JSON response but received Content-Type: ${contentType}`);
+			}
 			const theme = await res.json();
 			importQueue = Array.isArray(theme) ? [...theme] : [theme];
 			totalThemesToImport = importQueue.length;

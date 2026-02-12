@@ -11,6 +11,7 @@ import variables from '$lib/themes/variables.json';
 
 import { currentThemeStore, liveThemeStore, communityThemes, themes } from '$lib/stores/theme';
 import { sanitizeCSS, containsDangerousCSS } from '$lib/utils/css-sanitizer';
+import { sanitizeThemeId } from '$lib/utils/theme';
 
 let currentStylesheet: HTMLStyleElement | undefined;
 
@@ -40,14 +41,14 @@ const cleanupTheme = () => {
 };
 
 const _applyGlobalThemeStyles = (theme: Theme) => {
-	console.log('Applying theme:', theme);
 	if (theme.css && (!theme.toggles || theme.toggles.customCss)) {
 		// Sanitize CSS before applying to prevent malicious constructs
 		const sanitizedCSS = sanitizeCSS(theme.css);
+		const safeId = sanitizeThemeId(theme.id);
 		
 		if (!currentStylesheet) {
 			currentStylesheet = document.createElement('style');
-			currentStylesheet.id = `${theme.id}-stylesheet`;
+			currentStylesheet.id = `${safeId}-stylesheet`;
 			document.head.appendChild(currentStylesheet);
 		}
 		// Update content of existing stylesheet with sanitized CSS

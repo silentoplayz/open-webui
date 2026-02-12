@@ -16,9 +16,17 @@ import { validateTheme, isValidThemeUrl } from '$lib/utils/theme';
 import { containsDangerousCSS } from '$lib/utils/css-sanitizer';
 
 export const loadCommunityThemes = () => {
-	const themes = localStorage.getItem('communityThemes');
-	if (themes) {
-		communityThemes.set(new Map(Object.entries(JSON.parse(themes))));
+	try {
+		const raw = localStorage.getItem('communityThemes');
+		if (raw) {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				communityThemes.set(new Map(Object.entries(parsed)));
+			}
+		}
+	} catch (e) {
+		console.error('Failed to load community themes from localStorage:', e);
+		// Don't crash the app — start with empty themes
 	}
 };
 
@@ -120,6 +128,13 @@ const _fetchTheme = async (url: string): Promise<[Theme | null, string | null]> 
 		const res = await fetch(url);
 		if (!res.ok) {
 			const errorText = `${res.status} ${res.statusText}`;
+			console.error(`Failed to fetch theme from ${url}: ${errorText}`);
+			return [null, errorText];
+		}
+		// Validate Content-Type before parsing as JSON
+		const contentType = res.headers.get('content-type') || '';
+		if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+			const errorText = `Expected JSON response but received Content-Type: ${contentType}`;
 			console.error(`Failed to fetch theme from ${url}: ${errorText}`);
 			return [null, errorText];
 		}
@@ -228,8 +243,9 @@ export const retryThemeUpdateCheck = async (theme: Theme) => {
 };
 
 export const isNewerVersion = (oldVer: string, newVer: string) => {
-	const oldParts = oldVer.split('.').map(Number);
-	const newParts = newVer.split('.').map(Number);
+	const parsePart = (s: string) => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; };
+	const oldParts = oldVer.split('.').map(parsePart);
+	const newParts = newVer.split('.').map(parsePart);
 	for (let i = 0; i < Math.max(oldParts.length, newParts.length); i++) {
 		const oldPart = oldParts[i] || 0;
 		const newPart = newParts[i] || 0;
@@ -240,7 +256,11 @@ export const isNewerVersion = (oldVer: string, newVer: string) => {
 };
 
 const getDismissedThemeIds = (): string[] => {
-	return JSON.parse(sessionStorage.getItem('dismissedThemeIds') ?? '[]');
+	try {
+		return JSON.parse(sessionStorage.getItem('dismissedThemeIds') ?? '[]');
+	} catch {
+		return [];
+	}
 };
 
 const addDismissedThemeId = (id: string) => {

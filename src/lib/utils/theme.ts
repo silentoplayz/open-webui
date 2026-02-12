@@ -1,6 +1,12 @@
 import type { Theme } from '$lib/types';
-import { containsDangerousCSS } from '$lib/utils/css-sanitizer';
+import { containsDangerousCSS, stripCSSComments } from '$lib/utils/css-sanitizer';
 import { themeSchema } from '$lib/schemas/theme-schema';
+
+/**
+ * Sanitizes a theme ID for safe use in DOM element IDs, class names, and CSS selectors.
+ * Only allows alphanumeric characters, hyphens, and underscores.
+ */
+export const sanitizeThemeId = (id: string): string => id.replace(/[^a-zA-Z0-9_-]/g, '_');
 
 /**
  * Validates that a URL uses a safe protocol (http: or https:).
@@ -99,17 +105,9 @@ export const validateTheme = (theme: any): { valid: boolean; error?: string } =>
 		};
 	}
 
-	if (theme.animationScript) {
-		const forbiddenStrings = ['window.', 'document.', 'parent.', 'top.'];
-		for (const str of forbiddenStrings) {
-			if (theme.animationScript.includes(str)) {
-				return {
-					valid: false,
-					error: `Invalid theme: "animationScript" contains "${str}" which is no longer allowed for security reasons. Scripts must now run in an isolated Web Worker.`
-				};
-			}
-		}
-	}
+	// NOTE: Animation script security is enforced by the Worker sandbox (ThemeManager.svelte).
+	// String-based blocklists were removed — they are trivially bypassable via bracket notation,
+	// globalThis, self, base64 decoding, or template literals and provide false security.
 
 	// URL validation for source and background URLs
 	if (theme.sourceUrl && !isValidThemeUrl(theme.sourceUrl)) {
@@ -203,14 +201,18 @@ export const objectToCss = (obj: { [key: string]: string }): string => {
 };
 
 export const cssToObject = (css: string): { [key: string]: string } => {
-	const obj = {};
-	// Remove comments, then find all key-value pairs
-	const uncommentedCss = css.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, '$1');
+	// Use Object.create(null) to prevent prototype pollution via __proto__ keys
+	const obj: Record<string, string> = Object.create(null);
+	// Remove comments using ReDoS-immune linear-time scanner
+	const uncommentedCss = stripCSSComments(css);
 
 	const regex = /([\w-]+)\s*:\s*([^;]+);?/g;
 	let match;
 	while ((match = regex.exec(uncommentedCss)) !== null) {
-		obj[match[1].trim()] = match[2].trim();
+		const key = match[1].trim();
+		// Guard against prototype pollution keys
+		if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+		obj[key] = match[2].trim();
 	}
 
 	return obj;
