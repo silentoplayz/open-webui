@@ -131,9 +131,10 @@ const _fetchTheme = async (url: string): Promise<[Theme | null, string | null]> 
 			console.error(`Failed to fetch theme from ${url}: ${errorText}`);
 			return [null, errorText];
 		}
-		// Validate Content-Type before parsing as JSON
+		// Validate Content-Type — reject HTML responses (e.g. 404 pages, login redirects)
+		// Allow text/plain since GitHub Gist and similar services serve raw JSON with that type
 		const contentType = res.headers.get('content-type') || '';
-		if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+		if (contentType.includes('text/html') || contentType.includes('text/xml')) {
 			const errorText = `Expected JSON response but received Content-Type: ${contentType}`;
 			console.error(`Failed to fetch theme from ${url}: ${errorText}`);
 			return [null, errorText];

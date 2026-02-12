@@ -497,9 +497,10 @@
 			if (!res.ok) {
 				throw new Error(`Failed to fetch theme: ${res.statusText}`);
 			}
-			// Validate Content-Type before parsing as JSON
+			// Validate Content-Type — reject HTML responses (e.g. 404 pages, login redirects)
+			// Allow text/plain since GitHub Gist and similar services serve raw JSON with that type
 			const contentType = res.headers.get('content-type') || '';
-			if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+			if (contentType.includes('text/html') || contentType.includes('text/xml')) {
 				throw new Error(`Expected JSON response but received Content-Type: ${contentType}`);
 			}
 			const theme = await res.json();
