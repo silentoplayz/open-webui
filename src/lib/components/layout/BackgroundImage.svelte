@@ -16,6 +16,9 @@
 				if (theme.chatBackgroundImageUrl && (theme.toggles?.chatBackgroundImage ?? true)) {
 					newUrl = theme.chatBackgroundImageUrl;
 					newDarken = theme.chatBackgroundImageDarken ?? 0;
+				} else if (theme.systemBackgroundImageUrl && (theme.toggles?.systemBackgroundImage ?? true)) {
+					newUrl = theme.systemBackgroundImageUrl;
+					newDarken = theme.systemBackgroundImageDarken ?? 0;
 				}
 			} else {
 				// We are NOT on a chat page

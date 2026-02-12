@@ -673,6 +673,7 @@
 	});
 
 	onDestroy(() => {
+		isChatPage.set(false);
 		try {
 			pageSubscribe();
 			showControlsSubscribe();
