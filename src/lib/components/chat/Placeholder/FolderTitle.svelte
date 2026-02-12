@@ -173,7 +173,7 @@
 				}}
 			>
 				<button
-					class=" rounded-full bg-gray-50 dark:bg-gray-800 size-11 flex justify-center items-center"
+					class=" rounded-full transition hover:bg-gray-50 dark:hover:bg-gray-800 size-11 flex justify-center items-center"
 				>
 					{#if folder?.meta?.icon}
 						<Emoji className="size-6" shortCode={folder.meta.icon} />
