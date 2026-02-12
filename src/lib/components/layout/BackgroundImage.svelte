@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { isChatPage } from '$lib/stores';
+	import { isChatPage, selectedFolder } from '$lib/stores';
 	import { liveThemeStore } from '$lib/theme';
 
 	let backgroundImageUrl = '';
@@ -10,7 +10,10 @@
 		let newUrl = '';
 		let newDarken = 0;
 
-		if (theme) {
+		if ($selectedFolder?.meta?.background_image_url) {
+			newUrl = $selectedFolder.meta.background_image_url;
+			newDarken = 0;
+		} else if (theme) {
 			if ($isChatPage) {
 				// We are on a chat page
 				if (theme.chatBackgroundImageUrl && (theme.toggles?.chatBackgroundImage ?? true)) {
