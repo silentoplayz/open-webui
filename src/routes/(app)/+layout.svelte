@@ -6,7 +6,7 @@
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
-	import { goto } from '$app/navigation';
+	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { fade } from 'svelte/transition';
 
@@ -37,7 +37,8 @@
 		showSearch,
 		showSidebar,
 		showThemeEditor,
-		editingThemeId
+		editingThemeId,
+		selectedFolder
 	} from '$lib/stores';
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -83,7 +84,15 @@
 	} else if ($showThemeEditor && !$editingThemeId) {
 		// Creating new theme
 		isEditingTheme = false;
+		// Creating new theme
+		isEditingTheme = false;
 	}
+
+	beforeNavigate(({ to }) => {
+		if (to?.url?.pathname !== '/') {
+			selectedFolder.set(null);
+		}
+	});
 
 	const clearChatInputStorage = () => {
 		const chatInputKeys = Object.keys(localStorage).filter((key) => key.startsWith('chat-input'));

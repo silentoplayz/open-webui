@@ -674,7 +674,6 @@
 
 	onDestroy(() => {
 		isChatPage.set(false);
-		selectedFolder.set(null);
 		try {
 			pageSubscribe();
 			showControlsSubscribe();
