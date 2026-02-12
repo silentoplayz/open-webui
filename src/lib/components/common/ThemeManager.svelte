@@ -222,58 +222,69 @@
 					const sandboxPreamble = `
 						// Sandbox: prevent data exfiltration from animation scripts
 						const _blocked = () => { throw new Error('Blocked for security'); };
+						
+						const safeBlock = (obj, prop, value) => {
+							try {
+								if (prop in obj) {
+									Object.defineProperty(obj, prop, {
+										value: value, writable: false, configurable: false
+									});
+								}
+							} catch (e) {
+								// console.warn('Failed to block ' + prop, e);
+							}
+						};
+
 						for (const api of ['fetch','XMLHttpRequest','WebSocket','EventSource']) {
-							Object.defineProperty(self, api, {
-								value: undefined, writable: false, configurable: false
-							});
+							safeBlock(self, api, undefined);
 						}
-						Object.defineProperty(self, 'importScripts', {
-							value: _blocked, writable: false, configurable: false
-						});
+						
+						safeBlock(self, 'importScripts', _blocked);
 						
 						// Block Worker creation to prevent sandbox escape
-						Object.defineProperty(self, 'Worker', {
-							value: undefined, writable: false, configurable: false
-						});
-						Object.defineProperty(self, 'SharedWorker', {
-							value: undefined, writable: false, configurable: false
-						});
+						safeBlock(self, 'Worker', undefined);
+						safeBlock(self, 'SharedWorker', undefined);
+						
 						if (self.navigator) {
-							Object.defineProperty(self.navigator, 'serviceWorker', {
-								value: undefined, writable: false, configurable: false
-							});
-							Object.defineProperty(self.navigator, 'sendBeacon', {
-								value: undefined, writable: false, configurable: false
-							});
+							safeBlock(self.navigator, 'serviceWorker', undefined);
+							safeBlock(self.navigator, 'sendBeacon', undefined);
 						}
 						
+						// Block storage and communication APIs to prevent data loss/exfiltration/side-channels
+						safeBlock(self, 'indexedDB', undefined);
+						safeBlock(self, 'BroadcastChannel', undefined);
+						
 						// Block code-generation APIs that could bypass the sandbox
-						Object.defineProperty(self, 'eval', {
-							value: undefined, writable: false, configurable: false
-						});
-						Object.defineProperty(self, 'Function', {
-							value: undefined, writable: false, configurable: false
-						});
+						safeBlock(self, 'eval', undefined);
+						safeBlock(self, 'Function', undefined);
+						
 						// Override setTimeout/setInterval to only accept functions, not strings
 						const _origSetTimeout = self.setTimeout;
 						const _origSetInterval = self.setInterval;
-						Object.defineProperty(self, 'setTimeout', {
-							value: (fn, ...args) => {
+						
+						// Only wrap if original exists (it should in a worker)
+						if (_origSetTimeout) {
+							safeBlock(self, 'setTimeout', (fn, ...args) => {
 								if (typeof fn !== 'function') throw new Error('Blocked for security');
 								return _origSetTimeout(fn, ...args);
-							}, writable: false, configurable: false
-						});
-						Object.defineProperty(self, 'setInterval', {
-							value: (fn, ...args) => {
+							});
+						}
+
+						if (_origSetInterval) {
+							safeBlock(self, 'setInterval', (fn, ...args) => {
 								if (typeof fn !== 'function') throw new Error('Blocked for security');
 								return _origSetInterval(fn, ...args);
-							}, writable: false, configurable: false
-						});
+							});
+						}
+						
 						// Send heartbeat every 1 second
 						// This allows the main thread to detect if the worker is unresponsive (e.g. infinite loop)
-						const _heartbeatInterval = _origSetInterval(() => {
-							self.postMessage({ type: 'heartbeat' });
-						}, 1000);
+						// We use the original setInterval to ensure it works even if we blocked the global one
+						if (_origSetInterval) {
+							const _heartbeatInterval = _origSetInterval(() => {
+								self.postMessage({ type: 'heartbeat' });
+							}, 1000);
+						}
 					`;
 					const sandboxedScript = sandboxPreamble + '\n' + theme.animationScript;
 					const blob = new Blob([sandboxedScript], { type: 'application/javascript' });

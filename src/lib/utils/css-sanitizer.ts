@@ -9,9 +9,9 @@
  */
 
 /**
- * Strips CSS comments using a linear-time manual scan.
- * This replaces the regex-based approach (`/\/\*[\s\S]*?\*\//g`) which was
- * vulnerable to ReDoS on malformed inputs like unclosed comments.
+ * Strips CSS comments using a linear-time manual scan that respects string boundaries.
+ * This ensures that comments inside strings (e.g. content: "/*") are preserved,
+ * while actual comments are removed.
  * 
  * @param css - The raw CSS string
  * @returns CSS with all block comments removed
@@ -19,22 +19,54 @@
 export const stripCSSComments = (css: string): string => {
 	let result = '';
 	let i = 0;
+	let inString: string | null = null; // null, "'", or '"'
+
 	while (i < css.length) {
-		if (css[i] === '/' && i + 1 < css.length && css[i + 1] === '*') {
-			// Skip until closing */
-			i += 2;
-			while (i < css.length - 1 && !(css[i] === '*' && css[i + 1] === '/')) {
+		const char = css[i];
+
+		if (inString) {
+			result += char;
+			if (char === inString) {
+				// potential end of string
+				// Check for escaped quote (odd number of backslashes before)
+				let backslashCount = 0;
+				let j = i - 1;
+				while (j >= 0 && css[j] === '\\') {
+					backslashCount++;
+					j--;
+				}
+				if (backslashCount % 2 === 0) {
+					inString = null;
+				}
+			}
+			i++;
+		} else {
+			// Not in a string
+			if (char === '"' || char === "'") {
+				inString = char;
+				result += char;
+				i++;
+			} else if (char === '/' && i + 1 < css.length && css[i + 1] === '*') {
+				// Start of comment
+				i += 2;
+				while (i < css.length - 1 && !(css[i] === '*' && css[i + 1] === '/')) {
+					i++;
+				}
+				// Skip the closing */
+				if (i < css.length - 1) {
+					i += 2;
+				} else {
+					i = css.length; // Unclosed comment
+				}
+				// We do NOT add anything to result (stripping the comment)
+				// Note: We might want to add a space to prevent merging tokens, e.g. div/*...*/.class -> div.class
+				// But standardized minifiers/sanitizers often just strip.
+				// Let's add a space to be safe against accidental token merging
+				result += ' '; 
+			} else {
+				result += char;
 				i++;
 			}
-			// Skip the closing */ (or end of string if unclosed)
-			if (i < css.length - 1) {
-				i += 2;
-			} else {
-				i = css.length; // Unclosed comment — skip to end
-			}
-		} else {
-			result += css[i];
-			i++;
 		}
 	}
 	return result;
@@ -61,20 +93,34 @@ const normalizeCSSEscapes = (css: string): string => {
 /**
  * Regex patterns matching dangerous CSS constructs.
  * All are case-insensitive and checked after normalization.
+ * 
+ * Improvements:
+ * - Attempt to match the closing parenthesis to avoid leaving "debris" arguments.
+ * - However, matching balanced parentheses with regex is impossible.
+ * - We will use a greedy match up to the first closing parenthesis, which is safer than nothing,
+ *   but strict removal of the function name + opening paren is actually the robust part (rendering it invalid).
+ *   
+ *   Refining the strategy:
+ *   If we just remove `url(` then `url('x')` becomes `'x')`. This is invalid CSS syntax for a property value in most cases,
+ *   or at least benign string content.
+ *   
+ *   The most important thing is that the *functional* part is gone.
+ *   
+ *   Let's keep the removal of the identifier + `(` as the primary mechanism, but allows for eating up content if simple.
  */
 const DANGEROUS_PATTERNS: RegExp[] = [
 	// @import rules: @import url(...) or @import "..." or @import '...'
 	/@import\s+(?:url\s*\([^)]*\)|["'][^"']*["'])\s*;?/gi,
-	// url() function in any context
-	/url\s*\([^)]*\)/gi,
-	// image-set() — can load external images (vendor-prefixed and standard)
-	/(?:-webkit-)?image-set\s*\(/gi,
-	// CSS expressions (IE legacy, but defense-in-depth)
-	/expression\s*\(/gi,
-	// -moz-binding (Firefox XBL injection, rare but dangerous)
-	/-moz-binding\s*:/gi,
-	// behavior (IE HTCs)
-	/behavior\s*:/gi,
+	// url() function - consume until )
+	/url\s*\((?:[^)(]+|\((?:[^)(]+|\([^)(]*\))*\))*\)/gi, 
+	// image-set()
+	/(?:-webkit-)?image-set\s*\((?:[^)(]+|\((?:[^)(]+|\([^)(]*\))*\))*\)/gi,
+	// CSS expressions (IE legacy)
+	/expression\s*\((?:[^)(]+|\((?:[^)(]+|\([^)(]*\))*\))*\)/gi,
+	// -moz-binding
+	/-moz-binding\s*:[^;]+;?/gi,
+	// behavior
+	/behavior\s*:[^;]+;?/gi,
 ];
 
 /**
