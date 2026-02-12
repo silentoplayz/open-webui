@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, getContext, tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
+	import { DropdownMenu } from 'bits-ui';
 	import { v4 as uuidv4 } from 'uuid';
 	import { WEBUI_VERSION } from '$lib/constants';
 	import {
@@ -46,6 +47,7 @@
 	import DocumentArrowUp from '$lib/components/icons/DocumentArrowUp.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
+	import Funnel from '$lib/components/icons/Funnel.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import emojiGroups from '$lib/emoji-groups.json';
 	import { config, user } from '$lib/stores';
@@ -76,6 +78,7 @@
 	let pendingThemeImport: Theme | null = null;
 	let themeToEdit: Theme | null = null;
 	let sortOrder = 'default';
+	let selectedTag = '';
 	let isCheckingForUpdates = false;
 
 	let showAnimationScriptWarning = false;
@@ -310,10 +313,19 @@
 			}
 		});
 	})();
+	$: uniqueTags = (() => {
+		const tags = new Set<string>();
+		for (const theme of allThemes.values()) {
+			getActiveFeatures(theme).forEach((tag) => tags.add(tag));
+		}
+		return Array.from(tags).sort();
+	})();
+
 	$: filteredThemes = sortedThemes.filter(
 		(theme) =>
-			theme.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			(theme.author && theme.author.toLowerCase().includes(searchQuery.toLowerCase()))
+			(selectedTag === '' || getActiveFeatures(theme).includes(selectedTag)) &&
+			(theme.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+				(theme.author && theme.author.toLowerCase().includes(searchQuery.toLowerCase())))
 	);
 
 	const themeChangeHandler = (_theme: string) => {
@@ -750,6 +762,48 @@
 							bind:value={searchQuery}
 						/>
 					</div>
+
+					<DropdownMenu.Root>
+						<DropdownMenu.Trigger class="outline-none">
+							<Tooltip content={$i18n.t('Filter by Tag')} placement="top">
+								<button
+									class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 {selectedTag
+										? 'bg-gray-100 dark:bg-gray-800'
+										: ''}"
+								>
+									<Funnel class="w-4 h-4" />
+								</button>
+							</Tooltip>
+						</DropdownMenu.Trigger>
+						<DropdownMenu.Content
+							class="w-48 p-1 z-[10000] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-lg outline-none"
+							sideOffset={8}
+							align="end"
+						>
+							<DropdownMenu.Item
+								class="flex items-center px-2 py-1.5 text-sm rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 outline-none {selectedTag ===
+								''
+									? 'font-medium bg-gray-50 dark:bg-gray-850'
+									: ''}"
+								on:click={() => (selectedTag = '')}
+							>
+								{$i18n.t('All')}
+							</DropdownMenu.Item>
+
+							{#each uniqueTags as tag}
+								<DropdownMenu.Item
+									class="flex items-center px-2 py-1.5 text-sm rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 outline-none {selectedTag ===
+									tag
+										? 'font-medium bg-gray-50 dark:bg-gray-850'
+										: ''}"
+									on:click={() => (selectedTag = tag)}
+								>
+									{tag}
+								</DropdownMenu.Item>
+							{/each}
+						</DropdownMenu.Content>
+					</DropdownMenu.Root>
+
 					<Tooltip
 						content={sortOrder === 'default'
 							? $i18n.t('Default Sort')
