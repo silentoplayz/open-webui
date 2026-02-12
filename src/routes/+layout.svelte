@@ -33,7 +33,7 @@
 		channelId,
 		showThemeEditor
 	} from '$lib/stores';
-	import { applyTheme, checkForThemeUpdates, themes, communityThemes } from '$lib/theme';
+	import { applyTheme, checkForThemeUpdates, themes, communityThemes, liveThemeStore } from '$lib/theme';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { beforeNavigate } from '$app/navigation';
@@ -639,17 +639,32 @@
 	// Reactive theme application with auth page detection
 	$: {
 		const isAuthPage = $page?.url?.pathname?.startsWith('/auth');
-		
+
 		if ($theme) {
 			(async () => {
 				await tick();
-				
+
 				if (isAuthPage) {
 					// On auth pages, apply only the base theme (no custom CSS/variables)
+					
 					const allThemes = new Map([...$themes, ...$communityThemes]);
 					const fullTheme = allThemes.get($theme);
 					
 					if (fullTheme) {
+						// Access value from store
+						let currentLiveTheme;
+						const unsubscribe = liveThemeStore.subscribe(value => {
+							currentLiveTheme = value;
+						});
+						unsubscribe(); // Unsubscribe immediately
+
+						// If we are already on the correct base theme and toggles are stripped, skip
+						if (currentLiveTheme?.id === fullTheme.id && 
+							currentLiveTheme?.toggles?.customCss === false && 
+							currentLiveTheme?.toggles?.cssVariables === false) {
+							return;
+						}
+
 						// Create a stripped version with only the base
 						const baseOnlyTheme = {
 							...fullTheme,
@@ -666,6 +681,30 @@
 				} else {
 					// On other pages, apply the full theme if not in the theme editor
 					if (!$showThemeEditor) {
+						// Only apply if the theme ID has changed or if we're coming back from a stripped state
+						let currentLiveTheme;
+						const unsubscribe = liveThemeStore.subscribe(value => {
+							currentLiveTheme = value;
+						});
+						unsubscribe();
+
+						// If IDs match AND we aren't in a stripped state
+						if (currentLiveTheme?.id === $theme) {
+							// Check if we need to restore full theme (e.g. came from auth page)
+							const allThemes = new Map([...$themes, ...$communityThemes]);
+							const fullTheme = allThemes.get($theme);
+							
+							// If the current live theme has stripped toggles but the full theme has them enabled, we need to re-apply
+							// Specifically check customCss because that's what we strip
+							const needsRestore = fullTheme && (
+								(fullTheme.toggles?.customCss && !currentLiveTheme.toggles?.customCss)
+							);
+							
+							if (!needsRestore) {
+								return; 
+							}
+						}
+
 						await applyTheme($theme);
 					}
 				}

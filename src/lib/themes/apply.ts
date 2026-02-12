@@ -125,6 +125,9 @@ export const applyTheme = async (themeInput: string | Theme, isLiveUpdate = fals
 	if (themeToApply.toggles && !themeToApply.toggles.tsParticles) {
 		themeToApply.tsparticlesConfig = undefined;
 	} else if (themeToApply.tsparticlesConfig) {
+		// Deep clone to avoid mutating the original theme object from the store
+		themeToApply.tsparticlesConfig = JSON.parse(JSON.stringify(themeToApply.tsparticlesConfig));
+		
 		themeToApply.tsparticlesConfig.fpsLimit = 120;
 		themeToApply.tsparticlesConfig.pauseOnBlur = true;
 		themeToApply.tsparticlesConfig.pauseOnOutsideViewport = true;
