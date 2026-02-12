@@ -165,7 +165,7 @@
 </script>
 
 {#if channel}
-	<div class="flex flex-col w-full h-full bg-gray-50 dark:bg-gray-850">
+	<div class="flex flex-col w-full h-full bg-transparent">
 		<div class="sticky top-0 flex items-center justify-between px-3.5 py-3">
 			<div class=" font-medium text-lg">{$i18n.t('Thread')}</div>
 
@@ -228,7 +228,7 @@
 					placeholder={!channel?.write_access
 						? $i18n.t('You do not have permission to send messages in this thread.')
 						: $i18n.t('Reply to thread...')}
-					typingUsersClassName="from-gray-50 dark:from-gray-850"
+					typingUsersClassName="from-transparent"
 					{typingUsers}
 					userSuggestions={true}
 					channelSuggestions={true}
