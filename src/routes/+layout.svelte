@@ -821,6 +821,10 @@
 				const userSettings = await getUserSettings(localStorage.token);
 				if (userSettings) {
 					settings.set(userSettings.ui);
+					if (userSettings.ui?.theme && userSettings.ui.theme !== localStorage.theme) {
+						theme.set(userSettings.ui.theme);
+						localStorage.setItem('theme', userSettings.ui.theme);
+					}
 				} else {
 					settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
 				}

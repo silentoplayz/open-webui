@@ -26,6 +26,7 @@
 		editingThemeId,
 		mobile
 	} from '$lib/stores';
+	import { updateUserSettings } from '$lib/apis/users';
 	import type { Theme } from '$lib/types';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
@@ -328,7 +329,7 @@
 				(theme.author && theme.author.toLowerCase().includes(searchQuery.toLowerCase())))
 	);
 
-	const themeChangeHandler = (_theme: string) => {
+	const themeChangeHandler = async (_theme: string) => {
 		if (_theme === selectedThemeId) {
 			return;
 		}
@@ -343,6 +344,15 @@
 		selectedThemeId = _theme;
 		themeStore.set(_theme);
 		localStorage.setItem('theme', _theme);
+
+		if (localStorage.token) {
+			const updatedSettings = {
+				...$settings,
+				theme: _theme
+			};
+			settings.set(updatedSettings);
+			await updateUserSettings(localStorage.token, { ui: updatedSettings });
+		}
 	};
 
 	onMount(() => {

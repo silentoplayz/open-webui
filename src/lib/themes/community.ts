@@ -10,43 +10,111 @@ import { toast } from 'svelte-sonner';
 import { WEBUI_VERSION } from '$lib/constants';
 
 import { communityThemes, themeUpdates, themeUpdateErrors, themes } from '$lib/stores/theme';
-import { theme as themeStore, editingThemeId } from '$lib/stores';
+import { theme as themeStore, editingThemeId, settings } from '$lib/stores';
+import { updateUserSettings } from '$lib/apis/users';
 import { applyTheme } from '$lib/themes/apply';
 import { validateTheme, isValidThemeUrl } from '$lib/utils/theme';
 import { containsDangerousCSS } from '$lib/utils/css-sanitizer';
 
-export const loadCommunityThemes = () => {
-	try {
-		const raw = localStorage.getItem('communityThemes');
-		if (raw) {
-			const parsed = JSON.parse(raw);
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				communityThemes.set(new Map(Object.entries(parsed)));
+export const loadCommunityThemes = async () => {
+	// Migration logic:
+	// 1. If we have themes in settings, use them (Single Source of Truth)
+	// 2. If settings.themes is empty BUT we have localStorage themes, migrate them to settings
+	// 3. If both empty, start fresh
+
+	// We need to wait for settings to be populated.
+	// In +layout.svelte, we initialize settings from the API.
+	// Since this module is imported, we can subscribe to the store, but we only want to trigger this logic once
+	// or reactively when settings change (e.g. sync from another device).
+
+	settings.subscribe(async (userSettings) => {
+		if (!userSettings) return;
+
+		const currentThemes = get(communityThemes);
+		const settingsThemes = userSettings?.themes;
+
+		if (settingsThemes && Object.keys(settingsThemes).length > 0) {
+			// Case 1: Settings has themes. Use them.
+			// We only update if they are different to avoid unnecessary store updates/loops
+			// (Though simplistic comparison might be enough)
+
+			// Transform object to Map
+			const newThemesMap = new Map(Object.entries(settingsThemes));
+
+			// Simple check if size changed or we just loaded for the first time
+			if (currentThemes.size !== newThemesMap.size || currentThemes.size === 0) {
+				communityThemes.set(newThemesMap);
+			}
+		} else {
+			// Case 2: Settings empty. Check localStorage for migration.
+			try {
+				const raw = localStorage.getItem('communityThemes');
+				if (raw) {
+					const parsed = JSON.parse(raw);
+					if (
+						parsed &&
+						typeof parsed === 'object' &&
+						!Array.isArray(parsed) &&
+						Object.keys(parsed).length > 0
+					) {
+						console.log('Migrating themes from localStorage to account settings...');
+						const themesMap = new Map<string, Theme>(Object.entries(parsed));
+						communityThemes.set(themesMap);
+
+						// Trigger save to backend to complete migration
+						await saveCommunityThemes(themesMap);
+
+						// Clear localStorage after successful migration (optional, but good for cleanup)
+						localStorage.removeItem('communityThemes');
+					}
+				}
+			} catch (e) {
+				console.error('Failed to load/migrate community themes from localStorage:', e);
 			}
 		}
-	} catch (e) {
-		console.error('Failed to load community themes from localStorage:', e);
-		// Don't crash the app — start with empty themes
-	}
+	});
+
+	// We don't unsubscribe here because we want to listen for updates from other devices/tabs
+	// that might update the settings store.
+	// However, be careful about circular loops: save -> settings update -> load -> ...
+	// The `saveCommunityThemes` updates the backend, which might update the store if we re-fetch,
+	// but usually we update the store locally first.
 };
 
 loadCommunityThemes();
 
-const saveCommunityThemes = (themes: Map<string, Theme>): boolean => {
+const saveCommunityThemes = async (themes: Map<string, Theme>): Promise<boolean> => {
 	try {
-		localStorage.setItem('communityThemes', JSON.stringify(Object.fromEntries(themes)));
+		// Update local store first (UI optimism)
+		// communityThemes.set(themes); // Already done by caller usually
+
+		// Convert Map to Object for JSON storage
+		const themesObj = Object.fromEntries(themes);
+
+		// Save to backend
+		if (localStorage.token) {
+			const currentSettings = get(settings) || {};
+			const updatedSettings = {
+				...currentSettings,
+				themes: themesObj
+			};
+
+			// Optimistically update the settings store so the UI reflects it immediately
+			// and so the subscription in loadCommunityThemes doesn't overwrite it with old data
+			settings.set(updatedSettings);
+
+			await updateUserSettings(localStorage.token, { ui: updatedSettings });
+		}
+
 		return true;
 	} catch (e) {
-		if (e instanceof DOMException && e.name === 'QuotaExceededError') {
-			toast.error('Storage quota exceeded. Please remove some themes to free up space.');
-		} else {
-			toast.error('An unknown error occurred while saving themes.');
-		}
+		console.error('Failed to save themes to account:', e);
+		toast.error('Failed to save themes to your account.');
 		return false;
 	}
 };
 
-export const addCommunityTheme = (theme: Theme): boolean => {
+export const addCommunityTheme = async (theme: Theme): Promise<boolean> => {
 	if (!theme.targetWebUIVersion) {
 		theme.targetWebUIVersion = WEBUI_VERSION;
 	}
@@ -55,7 +123,7 @@ export const addCommunityTheme = (theme: Theme): boolean => {
 	newThemes.set(theme.id, theme);
 	communityThemes.set(newThemes);
 
-	const success = saveCommunityThemes(newThemes);
+	const success = await saveCommunityThemes(newThemes);
 
 	if (!success) {
 		communityThemes.set(originalThemes);
@@ -63,14 +131,14 @@ export const addCommunityTheme = (theme: Theme): boolean => {
 	return success;
 };
 
-export const updateCommunityTheme = (theme: Theme): boolean => {
+export const updateCommunityTheme = async (theme: Theme): Promise<boolean> => {
 	const originalThemes = get(communityThemes);
 	if (originalThemes.has(theme.id)) {
 		const newThemes = new Map(originalThemes);
 		newThemes.set(theme.id, theme);
 		communityThemes.set(newThemes);
 
-		const success = saveCommunityThemes(newThemes);
+		const success = await saveCommunityThemes(newThemes);
 
 		if (!success) {
 			communityThemes.set(originalThemes);
@@ -80,39 +148,66 @@ export const updateCommunityTheme = (theme: Theme): boolean => {
 	return false;
 };
 
-export const removeCommunityTheme = (themeId: string) => {
-	const currentThemeId = localStorage.getItem('theme');
+export const removeCommunityTheme = async (themeId: string) => {
+	const currentThemeId = get(themeStore); // Use store, not localStorage directly if possible, but keep consistent
 	if (currentThemeId === themeId) {
 		const themeToDelete = get(communityThemes).get(themeId);
 		if (themeToDelete) {
 			const baseTheme = themeToDelete.base ?? 'system';
 			themeStore.set(baseTheme);
-			localStorage.setItem('theme', baseTheme);
+			// Update active theme in settings too
+			if (localStorage.token) {
+				const currentSettings = get(settings) || {};
+				const updatedSettings = {
+					...currentSettings,
+					theme: baseTheme
+				};
+				settings.set(updatedSettings);
+				await updateUserSettings(localStorage.token, { ui: updatedSettings });
+			}
+			localStorage.setItem('theme', baseTheme); // Keep localStorage as fallback/cache for active theme?
 			applyTheme(baseTheme);
 		}
 	}
 
-	communityThemes.update((themes) => {
-		themes.delete(themeId);
-		return themes;
-	});
-	saveCommunityThemes(get(communityThemes));
+	const originalThemes = get(communityThemes);
+	const newThemes = new Map(originalThemes);
+	newThemes.delete(themeId);
+	communityThemes.set(newThemes);
+
+	const success = await saveCommunityThemes(newThemes);
+	if (!success) {
+		communityThemes.set(originalThemes);
+	}
 };
 
-export const deleteAllCommunityThemes = () => {
-	const currentThemeId = localStorage.getItem('theme');
+export const deleteAllCommunityThemes = async () => {
+	const currentThemeId = get(themeStore);
 	const themes = get(communityThemes);
-	
+
 	// If current theme is one of the themes being deleted, reset to base
 	if (currentThemeId && themes.has(currentThemeId)) {
 		const themeToDelete = themes.get(currentThemeId);
 		const baseTheme = themeToDelete?.base ?? 'system';
 		themeStore.set(baseTheme);
+
+		if (localStorage.token) {
+			const currentSettings = get(settings) || {};
+			const updatedSettings = {
+				...currentSettings,
+				theme: baseTheme
+			};
+			settings.set(updatedSettings);
+			await updateUserSettings(localStorage.token, { ui: updatedSettings });
+		}
+
 		localStorage.setItem('theme', baseTheme);
 		applyTheme(baseTheme);
 	}
 
 	communityThemes.set(new Map());
+	await saveCommunityThemes(new Map());
+
 	localStorage.removeItem('communityThemes');
 	toast.success('All custom themes deleted successfully.');
 };
