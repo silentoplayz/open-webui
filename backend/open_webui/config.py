@@ -1300,6 +1300,11 @@ USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS = (
     os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS", "False").lower() == "true"
 )
 
+USER_PERMISSIONS_WORKSPACE_SKILLS_ACCESS = (
+    os.environ.get("USER_PERMISSIONS_WORKSPACE_SKILLS_ACCESS", "False").lower()
+    == "true"
+)
+
 USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT = (
     os.environ.get("USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT", "False").lower()
     == "true"
@@ -1521,6 +1526,7 @@ DEFAULT_USER_PERMISSIONS = {
         "knowledge": USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS,
         "prompts": USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS,
         "tools": USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS,
+        "skills": USER_PERMISSIONS_WORKSPACE_SKILLS_ACCESS,
         "models_import": USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT,
         "models_export": USER_PERMISSIONS_WORKSPACE_MODELS_EXPORT,
         "prompts_import": USER_PERMISSIONS_WORKSPACE_PROMPTS_IMPORT,
@@ -2287,7 +2293,9 @@ WEAVIATE_GRPC_PORT = int(os.environ.get("WEAVIATE_GRPC_PORT", "50051"))
 WEAVIATE_API_KEY = os.environ.get("WEAVIATE_API_KEY")
 WEAVIATE_HTTP_SECURE = os.environ.get("WEAVIATE_HTTP_SECURE", "false").lower() == "true"
 WEAVIATE_GRPC_SECURE = os.environ.get("WEAVIATE_GRPC_SECURE", "false").lower() == "true"
-WEAVIATE_SKIP_INIT_CHECKS = os.environ.get("WEAVIATE_SKIP_INIT_CHECKS", "false").lower() == "true"
+WEAVIATE_SKIP_INIT_CHECKS = (
+    os.environ.get("WEAVIATE_SKIP_INIT_CHECKS", "false").lower() == "true"
+)
 
 # OpenSearch
 OPENSEARCH_URI = os.environ.get("OPENSEARCH_URI", "https://localhost:9200")
@@ -3486,10 +3494,14 @@ IMAGE_GENERATION_MODEL = PersistentConfig(
 )
 
 # Regex pattern for models that support IMAGE_SIZE = "auto".
-IMAGE_AUTO_SIZE_MODELS_REGEX_PATTERN = os.getenv("IMAGE_AUTO_SIZE_MODELS_REGEX_PATTERN", "^gpt-image")
+IMAGE_AUTO_SIZE_MODELS_REGEX_PATTERN = os.getenv(
+    "IMAGE_AUTO_SIZE_MODELS_REGEX_PATTERN", "^gpt-image"
+)
 
 # Regex pattern for models that return URLs instead of base64 data.
-IMAGE_URL_RESPONSE_MODELS_REGEX_PATTERN = os.getenv("IMAGE_URL_RESPONSE_MODELS_REGEX_PATTERN", "^gpt-image")
+IMAGE_URL_RESPONSE_MODELS_REGEX_PATTERN = os.getenv(
+    "IMAGE_URL_RESPONSE_MODELS_REGEX_PATTERN", "^gpt-image"
+)
 
 IMAGE_SIZE = PersistentConfig(
     "IMAGE_SIZE", "image_generation.size", os.getenv("IMAGE_SIZE", "512x512")

@@ -90,6 +90,7 @@ from open_webui.routers import (
     knowledge,
     prompts,
     evaluations,
+    skills,
     tools,
     users,
     utils,
@@ -508,8 +509,8 @@ from open_webui.utils.models import (
 from open_webui.utils.chat import (
     generate_chat_completion as chat_completion_handler,
     chat_completed as chat_completed_handler,
-    chat_action as chat_action_handler,
 )
+from open_webui.utils.actions import chat_action as chat_action_handler
 from open_webui.utils.embeddings import generate_embeddings
 from open_webui.utils.middleware import (
     build_chat_response_context,
@@ -550,7 +551,6 @@ from open_webui.utils.redis import get_sentinels_from_env
 
 from open_webui.constants import ERROR_MESSAGES
 
-
 if SAFE_MODE:
     print("SAFE MODE ENABLED")
     Functions.deactivate_all_functions()
@@ -574,8 +574,7 @@ class SPAStaticFiles(StaticFiles):
                 raise ex
 
 
-print(
-    rf"""
+print(rf"""
  ██████╗ ██████╗ ███████╗███╗   ██╗    ██╗    ██╗███████╗██████╗ ██╗   ██╗██╗
 ██╔═══██╗██╔══██╗██╔════╝████╗  ██║    ██║    ██║██╔════╝██╔══██╗██║   ██║██║
 ██║   ██║██████╔╝█████╗  ██╔██╗ ██║    ██║ █╗ ██║█████╗  ██████╔╝██║   ██║██║
@@ -587,12 +586,15 @@ print(
 v{VERSION} - building the best AI user interface.
 {f"Commit: {WEBUI_BUILD_HASH}" if WEBUI_BUILD_HASH != "dev-build" else ""}
 https://github.com/open-webui/open-webui
-"""
-)
+""")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Store reference to main event loop for sync->async calls (e.g., embedding generation)
+    # This allows sync functions to schedule work on the main loop without blocking health checks
+    app.state.main_loop = asyncio.get_running_loop()
+
     app.state.instance_id = INSTANCE_ID
     start_logger()
 
@@ -1386,7 +1388,13 @@ app.add_middleware(APIKeyRestrictionMiddleware)
 async def commit_session_after_request(request: Request, call_next):
     response = await call_next(request)
     # log.debug("Commit session after request")
-    ScopedSession.commit()
+    try:
+        ScopedSession.commit()
+    finally:
+        # CRITICAL: remove() returns the connection to the pool.
+        # Without this, connections remain "checked out" and accumulate
+        # as "idle in transaction" in PostgreSQL.
+        ScopedSession.remove()
     return response
 
 
@@ -1467,6 +1475,7 @@ app.include_router(models.router, prefix="/api/v1/models", tags=["models"])
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["knowledge"])
 app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["tools"])
+app.include_router(skills.router, prefix="/api/v1/skills", tags=["skills"])
 
 app.include_router(memories.router, prefix="/api/v1/memories", tags=["memories"])
 app.include_router(folders.router, prefix="/api/v1/folders", tags=["folders"])
@@ -1843,9 +1852,7 @@ async def chat_completion(
         # Emit chat:active=true when task starts
         event_emitter = get_event_emitter(metadata, update_db=False)
         if event_emitter:
-            await event_emitter(
-                {"type": "chat:active", "data": {"active": True}}
-            )
+            await event_emitter({"type": "chat:active", "data": {"active": True}})
         return {"status": True, "task_id": task_id}
     else:
         return await process_chat(request, form_data, user, metadata, model)
