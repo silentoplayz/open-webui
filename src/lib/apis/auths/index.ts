@@ -350,6 +350,8 @@ export const userSignOut = async () => {
 	}
 
 	sessionStorage.clear();
+	localStorage.removeItem('theme');
+	localStorage.removeItem('settings');
 	return res;
 };
 
