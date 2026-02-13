@@ -69,7 +69,7 @@
 
 		// Clean up mousemove listener to prevent leaks
 		if (currentMouseMoveHandler) {
-			mainContainer.removeEventListener('mousemove', currentMouseMoveHandler);
+			window.removeEventListener('mousemove', currentMouseMoveHandler);
 			currentMouseMoveHandler = undefined;
 		}
 
@@ -339,7 +339,7 @@
 							y: e.clientY - rect.top
 						});
 					};
-					mainContainer.addEventListener('mousemove', currentMouseMoveHandler);
+					window.addEventListener('mousemove', currentMouseMoveHandler);
 
 					currentAnimation = {
 						start: () => {},
