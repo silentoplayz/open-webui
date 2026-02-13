@@ -1351,12 +1351,21 @@
 	message={$i18n.t(
 		'You are currently editing a theme. This will change which theme is applied when you close the editor. Your current preview will not be affected. Do you want to proceed?'
 	)}
-	on:confirm={() => {
+	on:confirm={async () => {
 		if (pendingActiveThemeId) {
-			// Only update selectedThemeId and localStorage, NOT the theme store
-			// This prevents visual theme change while editing, but persists the selection
+			// Update selectedThemeId and localStorage
 			selectedThemeId = pendingActiveThemeId;
 			localStorage.setItem('theme', pendingActiveThemeId);
+            
+            // Sync to backend
+            if (localStorage.token) {
+                const updatedSettings = {
+                    ...$settings,
+                    theme: pendingActiveThemeId
+                };
+                settings.set(updatedSettings);
+                await updateUserSettings(localStorage.token, { ui: updatedSettings });
+            }
 
 			// Notify the layout to update its previousThemeId so closing the editor
 			// applies the correct theme
