@@ -207,7 +207,8 @@
 			}
 
 			if (items) {
-				items = [...items, ...pageItems];
+				const existingIds = new Set(items.map((i) => i.id));
+				items = [...items, ...pageItems.filter((i) => !existingIds.has(i.id))];
 			} else {
 				items = pageItems;
 			}

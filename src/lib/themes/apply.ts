@@ -128,11 +128,6 @@ const _applyGlobalThemeStyles = (theme: Theme) => {
  * @param isLiveUpdate If true, only the live theme store is updated, for real-time previews.
  */
 export const applyTheme = async (themeInput: string | Theme, isLiveUpdate = false) => {
-	cleanupTheme();
-
-	// Reset codemirror theme to default
-	codeMirrorTheme.set('one-dark');
-
 	let theme: Theme | undefined;
 	if (typeof themeInput === 'string') {
 		theme = get(themes).get(themeInput) ?? get(communityThemes).get(themeInput);
@@ -143,6 +138,12 @@ export const applyTheme = async (themeInput: string | Theme, isLiveUpdate = fals
 	if (!theme) {
 		return;
 	}
+
+	// Only cleanup once we've confirmed the theme exists
+	cleanupTheme();
+
+	// Reset codemirror theme to default
+	codeMirrorTheme.set('one-dark');
 
 	const themeToApply = { ...theme };
 
