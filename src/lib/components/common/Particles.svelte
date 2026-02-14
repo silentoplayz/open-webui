@@ -36,6 +36,21 @@
 	$: if (options && JSON.stringify(options) !== currentOptions) {
 		currentOptions = JSON.stringify(options);
 	}
+
+	const sanitizeOptions = (opts: any) => {
+		if (!opts) return opts;
+		const newOpts = JSON.parse(JSON.stringify(opts));
+
+		// Fix CanvasMask filter error: tsparticles expects a function for pixels.filter
+		// but JSON themes provide it as a string or empty object.
+		if (newOpts.canvasMask?.pixels && typeof newOpts.canvasMask.pixels.filter !== 'function') {
+			delete newOpts.canvasMask.pixels.filter;
+		}
+
+		return newOpts;
+	};
+
+	$: sanitizedOptions = sanitizeOptions(options);
 </script>
 
 {#if ParticlesComponent}
@@ -45,7 +60,7 @@
 			id="tsparticles"
 			class="pointer-events-none absolute top-0 left-0 w-full h-full"
 			style="z-index: 4;"
-			{options}
+			options={sanitizedOptions}
 			{url}
 			on:particlesLoaded={onParticlesLoaded}
 		/>

@@ -81,7 +81,7 @@ export const loadCommunityThemes = async () => {
 	// but usually we update the store locally first.
 };
 
-loadCommunityThemes();
+
 
 // Queue for handling saves to prevent race conditions
 let saveQueue: Promise<any> = Promise.resolve();
@@ -487,3 +487,5 @@ export const checkForThemeUpdates = async (manual = false) => {
 		}
 	}
 };
+
+loadCommunityThemes();
