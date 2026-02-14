@@ -157,6 +157,7 @@
 							themeCopy.systemBackgroundImageUrl = '';
 							themeCopy.systemBackgroundImageDarken = 0;
 							systemBgInputFiles = undefined;
+							systemBgInputValue = '';
 							dispatch('update', { ...themeCopy });
 						}}
 					>
@@ -233,6 +234,7 @@
 							themeCopy.chatBackgroundImageUrl = '';
 							themeCopy.chatBackgroundImageDarken = 0;
 							chatBgInputFiles = undefined;
+							chatBgInputValue = '';
 							dispatch('update', { ...themeCopy });
 						}}
 					>
