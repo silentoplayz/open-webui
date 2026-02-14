@@ -49,7 +49,7 @@
 	}}
 />
 
-<div class="flex w-full gap-2 items-center">
+<div class="flex w-full gap-2 items-center {!(config?.enable ?? true) ? 'opacity-50' : ''}">
 	<Tooltip
 		className="w-full relative"
 		content={$i18n.t(`WebUI will make requests to "{{url}}/chat/completions"`, {
@@ -59,7 +59,7 @@
 	>
 		{#if !(config?.enable ?? true)}
 			<div
-				class="absolute top-0 bottom-0 left-0 right-0 opacity-60 bg-white dark:bg-gray-900 z-10"
+				class="absolute top-0 bottom-0 left-0 right-0 opacity-60 bg-transparent z-10"
 			></div>
 		{/if}
 		<div class="flex w-full gap-2">
