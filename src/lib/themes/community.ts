@@ -9,7 +9,7 @@ import { get } from 'svelte/store';
 import { toast } from 'svelte-sonner';
 import { WEBUI_VERSION } from '$lib/constants';
 
-import { communityThemes, themeUpdates, themeUpdateErrors, themes } from '$lib/stores/theme';
+import { communityThemes, themeUpdates, themeUpdateErrors } from '$lib/stores/theme';
 import { theme as themeStore, editingThemeId, settings } from '$lib/stores';
 import { updateUserSettings } from '$lib/apis/users';
 import { applyTheme } from '$lib/themes/apply';
@@ -83,47 +83,82 @@ export const loadCommunityThemes = async () => {
 
 loadCommunityThemes();
 
+// Queue for handling saves to prevent race conditions
+let saveQueue: Promise<any> = Promise.resolve();
+
 const saveCommunityThemes = async (themes: Map<string, Theme>): Promise<boolean> => {
-	try {
-		// Update local store first (UI optimism)
-		// communityThemes.set(themes); // Already done by caller usually
+	// We use a queue to ensure saves happen sequentially and don't overwrite each other
+	// if multiple updates happen rapidly.
+	return new Promise((resolve) => {
+		saveQueue = saveQueue
+			.then(async () => {
+				try {
+					// Convert Map to Object for JSON storage
+					const themesObj = Object.fromEntries(themes);
 
-		// Convert Map to Object for JSON storage
-		const themesObj = Object.fromEntries(themes);
+					// Save to backend
+					if (localStorage.token) {
+						const currentSettings = get(settings) || {};
+						const updatedSettings = {
+							...currentSettings,
+							themes: themesObj
+						};
 
-		// Save to backend
-		if (localStorage.token) {
-			const currentSettings = get(settings) || {};
-			const updatedSettings = {
-				...currentSettings,
-				themes: themesObj
-			};
+						// Optimistically update the settings store so the UI reflects it immediately
+						settings.set(updatedSettings);
 
-			// Optimistically update the settings store so the UI reflects it immediately
-			// and so the subscription in loadCommunityThemes doesn't overwrite it with old data
-			settings.set(updatedSettings);
-
-			await updateUserSettings(localStorage.token, { ui: updatedSettings });
-		}
-
-		return true;
-	} catch (e) {
-		console.error('Failed to save themes to account:', e);
-		toast.error('Failed to save themes to your account.');
-		return false;
-	}
+						await updateUserSettings(localStorage.token, { ui: updatedSettings });
+					}
+					resolve(true);
+				} catch (e) {
+					console.error('Failed to save themes to account:', e);
+					toast.error('Failed to save themes to your account.');
+					resolve(false);
+				}
+			})
+			.catch((e) => {
+				console.error('Save queue error:', e);
+				resolve(false);
+			});
+	});
 };
 
-export const addCommunityTheme = async (theme: Theme): Promise<boolean> => {
+export const addCommunityTheme = async (theme: Theme, skipSave: boolean = false): Promise<boolean> => {
+	const originalThemes = get(communityThemes);
+	const newThemes = new Map(originalThemes);
+
 	if (!theme.targetWebUIVersion) {
 		theme.targetWebUIVersion = WEBUI_VERSION;
 	}
-	const originalThemes = get(communityThemes);
-	const newThemes = new Map(originalThemes);
 	newThemes.set(theme.id, theme);
 	communityThemes.set(newThemes);
 
+	if (skipSave) {
+		return true;
+	}
+
 	const success = await saveCommunityThemes(newThemes);
+
+	if (!success) {
+		communityThemes.set(originalThemes);
+	}
+	return success;
+};
+
+export const addCommunityThemes = async (newThemesList: Theme[]): Promise<boolean> => {
+	const originalThemes = get(communityThemes);
+	const newThemesMap = new Map(originalThemes);
+
+	for (const theme of newThemesList) {
+		if (!theme.targetWebUIVersion) {
+			theme.targetWebUIVersion = WEBUI_VERSION;
+		}
+		newThemesMap.set(theme.id, theme);
+	}
+
+	communityThemes.set(newThemesMap);
+
+	const success = await saveCommunityThemes(newThemesMap);
 
 	if (!success) {
 		communityThemes.set(originalThemes);

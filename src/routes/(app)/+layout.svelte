@@ -229,7 +229,7 @@
 		previousThemeId = themeId;
 	};
 
-	const handleThemeEditorSave = (event: CustomEvent) => {
+	const handleThemeEditorSave = async (event: CustomEvent) => {
 		const { theme: updatedTheme, isEditing } = event.detail;
 		console.log('[+layout] Processing save for theme', updatedTheme.name, 'isEditing:', isEditing);
 
@@ -262,7 +262,7 @@
 		let success = false;
 		if (isEditing) {
 			// Update existing theme
-			if (updateCommunityTheme(updatedTheme)) {
+			if (await updateCommunityTheme(updatedTheme)) {
 				toast.success(`Theme "${updatedTheme.name}" updated successfully!`);
 				// If this is the currently selected theme, apply it
 				if (updatedTheme.id === localStorage.getItem('theme')) {
@@ -272,7 +272,7 @@
 			}
 		} else {
 			// Add new theme
-			if (addCommunityTheme(updatedTheme)) {
+			if (await addCommunityTheme(updatedTheme)) {
 				toast.success(`Theme "${updatedTheme.name}" added successfully!`);
 				success = true;
 			}

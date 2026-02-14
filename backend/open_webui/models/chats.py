@@ -40,7 +40,7 @@ class Chat(Base):
     id = Column(String, primary_key=True, unique=True)
     user_id = Column(String)
     title = Column(Text)
-    chat = Column(JSON)
+    chat = Column(JSONField)
 
     created_at = Column(BigInteger)
     updated_at = Column(BigInteger)
@@ -49,7 +49,7 @@ class Chat(Base):
     archived = Column(Boolean, default=False)
     pinned = Column(Boolean, default=False, nullable=True)
 
-    meta = Column(JSON, server_default="{}")
+    meta = Column(JSONField, server_default="{}")
     folder_id = Column(Text, nullable=True)
 
     __table_args__ = (

@@ -67,11 +67,11 @@ class User(Base):
     status_message = Column(Text, nullable=True)
     status_expires_at = Column(BigInteger, nullable=True)
 
-    info = Column(JSON, nullable=True)
-    settings = Column(JSON, nullable=True)
+    info = Column(JSONField, nullable=True)
+    settings = Column(JSONField, nullable=True)
 
-    oauth = Column(JSON, nullable=True)
-    scim = Column(JSON, nullable=True)
+    oauth = Column(JSONField, nullable=True)
+    scim = Column(JSONField, nullable=True)
 
     last_active_at = Column(BigInteger)
     updated_at = Column(BigInteger)

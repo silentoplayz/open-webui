@@ -8,6 +8,7 @@
 		themes,
 		communityThemes,
 		addCommunityTheme,
+		addCommunityThemes,
 		updateCommunityTheme,
 		removeCommunityTheme,
 		applyTheme,
@@ -90,6 +91,7 @@
 	let totalThemesToImport = 0;
 	let importSuccessCount = 0;
 	let importErrorCount = 0;
+	let successfullyProcessedThemes: Theme[] = [];
 
 	let themesScrollContainer: HTMLDivElement;
 	let isScrolling = false;
@@ -409,11 +411,11 @@
 		}
 	});
 
-	const _finalizeAddTheme = (
+	const _finalizeAddTheme = async (
 		theme: Theme,
 		source: string = '',
 		isDuplicate: boolean = false
-	): boolean => {
+	): Promise<boolean> => {
 		// Version compatibility check - skip for duplicates as they are already installed
 		const versionMismatch =
 			!isDuplicate &&
@@ -428,16 +430,20 @@
 			if (source) {
 				theme.sourceUrl = source;
 			}
-			const success = addCommunityTheme(theme);
+			const success = await addCommunityTheme(theme, totalThemesToImport > 1);
 			if (success && !isDuplicate) {
-				toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: theme.name }));
-				themeUrl = ''; // Clear input on success
+				if (totalThemesToImport > 1) {
+					successfullyProcessedThemes.push(theme);
+				} else {
+					toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: theme.name }));
+					themeUrl = ''; // Clear input on success
+				}
 			}
 			return success;
 		}
 	};
 
-	const processAndAddTheme = (theme: any, source: string = '', force: boolean = false): boolean => {
+	const processAndAddTheme = async (theme: any, source: string = '', force: boolean = false): Promise<boolean> => {
 		try {
 			// Version compatibility check
 			const versionMismatch =
@@ -478,7 +484,10 @@
 				theme.sourceUrl = source;
 			}
 
-			const success = addCommunityTheme(theme);
+			const success = await addCommunityTheme(theme, totalThemesToImport > 1);
+			if (success && totalThemesToImport > 1) {
+				successfullyProcessedThemes.push(theme);
+			}
 			return success;
 		} catch (e) {
 			console.error('Error processing theme:', e);
@@ -525,6 +534,7 @@
 			totalThemesToImport = importQueue.length;
 			importSuccessCount = 0;
 			importErrorCount = 0;
+			successfullyProcessedThemes = [];
 			skipAnimationScriptWarning = false;
 			acceptAllScriptWarning = false;
 			processNextThemeInQueue();
@@ -538,13 +548,17 @@
 		}
 	};
 
-	const processNextThemeInQueue = () => {
+	const processNextThemeInQueue = async () => {
 		// If a warning modal is active, wait for it to be resolved before continuing or showing summary
 		if (showAnimationScriptWarning || showThemeImportWarning) {
 			return;
 		}
 
 		if (importQueue.length === 0) {
+			if (successfullyProcessedThemes.length > 0) {
+				await addCommunityThemes(successfullyProcessedThemes);
+			}
+
 			// Only show summary toast if more than one theme was processed
 			if (totalThemesToImport > 1) {
 				if (importSuccessCount > 0) {
@@ -557,12 +571,13 @@
 			importSuccessCount = 0;
 			importErrorCount = 0;
 			totalThemesToImport = 0;
+			successfullyProcessedThemes = [];
 			return;
 		}
 
 		const themeToProcess = importQueue.shift();
 		if (themeToProcess) {
-			const success = processAndAddTheme(themeToProcess);
+			const success = await processAndAddTheme(themeToProcess);
 
 			if (showAnimationScriptWarning || showThemeImportWarning) {
 				return;
@@ -573,7 +588,7 @@
 			} else {
 				importErrorCount++;
 			}
-			processNextThemeInQueue();
+			await processNextThemeInQueue();
 		}
 	};
 
@@ -589,6 +604,7 @@
 				const content = JSON.parse(reader.result as string);
 				importSuccessCount = 0;
 				importErrorCount = 0;
+				successfullyProcessedThemes = [];
 				skipAnimationScriptWarning = false;
 				acceptAllScriptWarning = false;
 				skipThemeImportWarning = false;
@@ -989,7 +1005,7 @@
 												<Tooltip content="Retry Update Check" placement="top">
 													<button
 														class="p-1.5 text-gray-500 hover:text-blue-500 dark:hover:text-blue-400 transition rounded-full"
-														on:click|stopPropagation={() => retryThemeUpdateCheck(theme)}
+														on:click|stopPropagation={async () => await retryThemeUpdateCheck(theme)}
 														aria-label={$i18n.t('Retry update check')}
 													>
 														<ArrowPath class="w-4 h-4" />
@@ -1000,7 +1016,7 @@
 												<Tooltip content="Update Theme" placement="top">
 													<button
 														class="p-1.5 text-gray-500 hover:text-green-500 dark:hover:text-green-400 transition rounded-full"
-														on:click|stopPropagation={() => updateCommunityThemeFromUrl(theme)}
+														on:click|stopPropagation={async () => await updateCommunityThemeFromUrl(theme)}
 														aria-label={$i18n.t('Update theme')}
 													>
 														<Download class="w-4 h-4" />
@@ -1057,7 +1073,7 @@
 													shareHandler={() => window.open('https://openwebui.com/', '_blank')}
 													exportHandler={() => exportTheme(theme)}
 													duplicateHandler={() => duplicateTheme(theme)}
-													checkForUpdateHandler={() => retryThemeUpdateCheck(theme)}
+													checkForUpdateHandler={async () => await retryThemeUpdateCheck(theme)}
 													hasSourceUrl={!!theme.sourceUrl}
 													onClose={() => {}}
 													onOpenChange={(open) => {
@@ -1180,14 +1196,20 @@
 	themeVersion={themeToImport?.targetWebUIVersion ?? ''}
 	webuiVersion={WEBUI_VERSION}
 	bind:skipWarning={skipThemeImportWarning}
-	on:confirm={() => {
+	on:confirm={async () => {
 		if (themeToImport) {
-			if (addCommunityTheme(themeToImport)) {
+			const success = await addCommunityTheme(themeToImport, totalThemesToImport > 1);
+			if (success) {
 				importSuccessCount++;
+				if (totalThemesToImport > 1) {
+					successfullyProcessedThemes.push(themeToImport);
+				} else {
+					toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToImport.name }));
+					themeUrl = ''; // Clear input on success
+				}
 			} else {
 				importErrorCount++;
 			}
-			themeUrl = ''; // Clear input on success
 		}
 		showThemeImportWarning = false;
 		themeToImport = null;
@@ -1205,8 +1227,8 @@
 	bind:show={showConfirmDialog}
 	title={$i18n.t('Delete Theme')}
 	message={$i18n.t('Are you sure you want to delete this theme?')}
-	on:confirm={() => {
-		removeCommunityTheme(themeToDeleteId);
+	on:confirm={async () => {
+		await removeCommunityTheme(themeToDeleteId);
 		selectedThemeId = localStorage.theme ?? 'system';
 
 		if (themesScrollContainer) {
@@ -1230,13 +1252,13 @@
 <ConfirmDialog
 	bind:show={showAnimationScriptWarning}
 	title="Security Warning"
-	on:confirm={() => {
+	on:confirm={async () => {
 		if (acceptAllScriptWarning) {
 			skipAnimationScriptWarning = true;
 		}
 
 		if (themeWithScriptToImport) {
-			const success = _finalizeAddTheme(
+			const success = await _finalizeAddTheme(
 				themeWithScriptToImport.theme,
 				themeWithScriptToImport.source,
 				themeWithScriptToImport.isDuplicate ?? false

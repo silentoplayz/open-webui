@@ -4,7 +4,7 @@ import uuid
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
-from open_webui.internal.db import Base, get_db_context
+from open_webui.internal.db import Base, JSONField, get_db_context
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -61,24 +61,24 @@ class ChatMessage(Base):
     parent_id = Column(Text, nullable=True)
 
     # Content
-    content = Column(JSON, nullable=True)  # Can be str or list of blocks
-    output = Column(JSON, nullable=True)
+    content = Column(JSONField, nullable=True)  # Can be str or list of blocks
+    output = Column(JSONField, nullable=True)
 
     # Model (for assistant messages)
     model_id = Column(Text, nullable=True, index=True)
 
     # Attachments
-    files = Column(JSON, nullable=True)
-    sources = Column(JSON, nullable=True)
-    embeds = Column(JSON, nullable=True)
+    files = Column(JSONField, nullable=True)
+    sources = Column(JSONField, nullable=True)
+    embeds = Column(JSONField, nullable=True)
 
     # Status
     done = Column(Boolean, default=True)
-    status_history = Column(JSON, nullable=True)
-    error = Column(JSON, nullable=True)
+    status_history = Column(JSONField, nullable=True)
+    error = Column(JSONField, nullable=True)
 
     # Usage (tokens, timing, etc.)
-    usage = Column(JSON, nullable=True)
+    usage = Column(JSONField, nullable=True)
 
     # Timestamps
     created_at = Column(BigInteger, index=True)
