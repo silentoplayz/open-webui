@@ -661,6 +661,14 @@
 	}
 
 	onMount(async () => {
+		// Sync theme changes across tabs
+		const themeStorageHandler = (e) => {
+			if (e.key === 'theme' && e.newValue) {
+				theme.set(e.newValue);
+			}
+		};
+		window.addEventListener('storage', themeStorageHandler);
+
 		window.addEventListener('message', windowMessageEventHandler);
 
 		let touchstartY = 0;
