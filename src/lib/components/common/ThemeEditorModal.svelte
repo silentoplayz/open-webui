@@ -33,6 +33,7 @@
 
 	let themeCopy: Theme;
 	let initialVariables: Record<string, string>;
+	let initialGradient: any;
 	let variablesText: string;
 	let cssText: string;
 	let animationScriptText: string;
@@ -129,8 +130,9 @@
 
 			originalCodeMirrorTheme = themeCopy.codeMirrorTheme ?? $codeMirrorTheme;
 
-			// Safeguard/Clone initial variables for Reset functionality
+			// Safeguard/Clone initial state for Reset functionality
 			initialVariables = JSON.parse(JSON.stringify(themeCopy.variables || {}));
+			initialGradient = JSON.parse(JSON.stringify(themeCopy.gradient));
 
 			variablesText = objectToCss(themeCopy.variables);
 			cssText = themeCopy.css ?? '';
@@ -506,6 +508,7 @@
 										bind:themeCopy
 										bind:systemBgInputValue
 										bind:chatBgInputValue
+										{initialGradient}
 										on:update
 									/>
 								{/if}

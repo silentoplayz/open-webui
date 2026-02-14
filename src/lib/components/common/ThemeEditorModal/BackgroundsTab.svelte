@@ -9,6 +9,7 @@
 	export let themeCopy: Theme;
 	export let systemBgInputValue: string | undefined;
 	export let chatBgInputValue: string | undefined;
+	export let initialGradient: any;
 
 	let systemBgInput: HTMLInputElement;
 	let chatBgInput: HTMLInputElement;
@@ -95,6 +96,7 @@
 			<div class="mt-1">
 				<GradientPicker
 					gradient={themeCopy.gradient}
+					{initialGradient}
 					on:update={(e) => {
 						themeCopy.gradient = { ...themeCopy.gradient, ...e.detail };
 						const updatedTheme = { ...themeCopy };

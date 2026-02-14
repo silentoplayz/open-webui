@@ -12,6 +12,7 @@
 		direction: 90,
 		intensity: 100
 	};
+	export let initialGradient: Theme['gradient'] | undefined = undefined;
 
 	const dispatch = createEventDispatcher();
 
@@ -49,6 +50,15 @@
 		direction = Math.floor(Math.random() * 361);
 		intensity = Math.floor(Math.random() * 101);
 		toast.success(`Generated a random ${numColors}-color gradient.`);
+	};
+
+	const resetGradient = () => {
+		if (initialGradient) {
+			colors = [...initialGradient.colors];
+			direction = initialGradient.direction;
+			intensity = initialGradient.intensity;
+			toast.success('Gradient settings reset to initial state.');
+		}
 	};
 
 	const processImageFile = async (file: File): Promise<string | null> => {
@@ -168,6 +178,14 @@
 			<input type="range" id="intensity" min="0" max="100" bind:value={intensity} class="w-full" />
 
 			<div class="flex justify-end mt-2 space-x-2">
+				{#if initialGradient}
+					<button
+						class="px-3.5 py-1.5 text-sm font-medium bg-gray-300 dark:bg-gray-800 hover:bg-gray-400 dark:hover:bg-gray-700 transition rounded-full"
+						on:click={resetGradient}
+					>
+						Reset
+					</button>
+				{/if}
 				<button
 					class="px-3.5 py-1.5 text-sm font-medium bg-gray-300 dark:bg-gray-800 hover:bg-gray-400 dark:hover:bg-gray-700 transition rounded-full"
 					on:click={generateRandomGradient}
