@@ -120,9 +120,9 @@
 			if (!themeCopy.gradient) {
 				themeCopy.gradient = {
 					enabled: false,
-					colors: ['#0d0d0d', '#333333'],
+					colors: [],
 					direction: 45,
-					intensity: 100
+					intensity: 0
 				};
 			} else if (typeof themeCopy.gradient.enabled === 'undefined') {
 				themeCopy.gradient.enabled = false;
@@ -279,9 +279,9 @@
 					if (!themeCopy.gradient) {
 						themeCopy.gradient = {
 							enabled: false,
-							colors: ['#0d0d0d', '#333333'],
+							colors: [],
 							direction: 45,
-							intensity: 100
+							intensity: 0
 						};
 					} else if (typeof themeCopy.gradient.enabled === 'undefined') {
 						themeCopy.gradient.enabled = false;

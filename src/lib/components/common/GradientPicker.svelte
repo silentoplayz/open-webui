@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import { createEventDispatcher, getContext } from 'svelte';
 	import type { Theme } from '$lib/types';
 	import ColorPicker from 'svelte-awesome-color-picker';
 	import { Vibrant } from 'node-vibrant/browser';
@@ -8,17 +8,20 @@
 	import heic2any from 'heic2any';
 
 	export let gradient: Theme['gradient'] | undefined = {
-		colors: ['#ff0000', '#0000ff'],
+		enabled: false,
+		colors: [],
 		direction: 90,
-		intensity: 100
+		intensity: 0
 	};
 	export let initialGradient: Theme['gradient'] | undefined = undefined;
 
+	const i18n = getContext('i18n');
+
 	const dispatch = createEventDispatcher();
 
-	let colors = gradient?.colors ?? ['#ff0000', '#0000ff'];
+	let colors = gradient?.colors ?? [];
 	let direction = gradient?.direction ?? 90;
-	let intensity = gradient?.intensity ?? 100;
+	let intensity = gradient?.intensity ?? 0;
 	let selectedColorIndex = 0;
 
 	$: {
@@ -158,7 +161,11 @@
 			{/if}
 		</div>
 		<div class="mt-4 color-picker-wrapper flex justify-center">
-			<ColorPicker bind:hex={colors[selectedColorIndex]} isDialog={false} />
+			{#if colors.length > 0}
+				<ColorPicker bind:hex={colors[selectedColorIndex]} isDialog={false} />
+			{:else}
+				<p class="text-sm text-gray-500 dark:text-gray-400">{$i18n ? $i18n.t('No colors selected. Add a color to start.') : 'No colors selected. Add a color to start.'}</p>
+			{/if}
 		</div>
 	</div>
 
