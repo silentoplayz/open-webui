@@ -425,7 +425,7 @@
 	<div class="py-2">
 		<div class="flex gap-2.5 items-center">
 			<div>
-				<div class=" p-2 bg-black/5 dark:bg-white/5 rounded-full">
+				<div class=" p-2 rounded-full">
 					{#if !hasPublicReadGrant(accessGrants ?? [])}
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
@@ -468,7 +468,7 @@
 				>
 					<select
 						id="models"
-						class="dark:bg-gray-900 outline-none bg-transparent text-sm font-medium block w-fit pr-10 max-w-full placeholder-gray-400"
+						class="outline-none bg-transparent text-sm font-medium block w-fit pr-10 max-w-full placeholder-gray-400"
 						value={!hasPublicReadGrant(accessGrants ?? []) ? 'private' : 'public'}
 						on:change={(e) => {
 							setPublic((e.target as HTMLSelectElement).value === 'public');

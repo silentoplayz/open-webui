@@ -82,7 +82,7 @@
 <div class="flex flex-col self-start group">
 	<div class="self-center flex">
 		<button
-			class="relative rounded-full dark:bg-gray-700"
+			class="relative rounded-full"
 			type="button"
 			on:click={() => {
 				profileImageInputElement.click();
