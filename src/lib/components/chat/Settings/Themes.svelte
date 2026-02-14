@@ -1130,7 +1130,7 @@
 					<div class="relative flex items-center flex-1">
 						<input
 							type="url"
-							class="w-full rounded-lg py-2 pl-4 pr-28 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none"
+							class="w-full rounded-lg py-2 pl-4 pr-32 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-none"
 							placeholder="https://example.com/theme.json"
 							bind:value={themeUrl}
 							disabled={isLoading}
