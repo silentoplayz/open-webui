@@ -443,7 +443,12 @@
 		}
 	};
 
-	const processAndAddTheme = async (theme: any, source: string = '', force: boolean = false): Promise<boolean> => {
+	const processAndAddTheme = async (
+		theme: any,
+		source: string = '',
+		force: boolean = false,
+		isDuplicate: boolean = false
+	): Promise<boolean> => {
 		try {
 			// Version compatibility check
 			const versionMismatch =
@@ -475,7 +480,7 @@
 			// Security Checks
 			// 1. Animation Script Check
 			if (theme.animationScript && !skipAnimationScriptWarning && !acceptAllScriptWarning) {
-				themeWithScriptToImport = { theme, source, isDuplicate: false };
+				themeWithScriptToImport = { theme, source, isDuplicate };
 				showAnimationScriptWarning = true;
 				return false;
 			}
@@ -744,7 +749,7 @@
 		URL.revokeObjectURL(url);
 	};
 
-	const duplicateTheme = (theme: Theme) => {
+	const duplicateTheme = async (theme: Theme) => {
 		// Prevent cloning theme while it's being edited
 		if ($editingThemeId === theme.id) {
 			toast.error($i18n.t('Cannot clone theme while editing it'));
@@ -757,7 +762,7 @@
 			name: `${theme.name} (Copy)`,
 			sourceUrl: undefined
 		};
-		if (processAndAddTheme(duplicatedTheme, '', true)) {
+		if (await processAndAddTheme(duplicatedTheme, '', true, true)) {
 			toast.success($i18n.t('Theme cloned successfully!'));
 		}
 	};
@@ -1073,6 +1078,15 @@
 													shareHandler={() => window.open('https://openwebui.com/', '_blank')}
 													exportHandler={() => exportTheme(theme)}
 													duplicateHandler={() => duplicateTheme(theme)}
+													deleteHandler={() => {
+														// Prevent deleting theme while it's being edited
+														if ($editingThemeId === theme.id) {
+															toast.error($i18n.t('Cannot delete theme while editing it'));
+															return;
+														}
+														themeToDeleteId = theme.id;
+														showConfirmDialog = true;
+													}}
 													checkForUpdateHandler={async () => await retryThemeUpdateCheck(theme)}
 													hasSourceUrl={!!theme.sourceUrl}
 													onClose={() => {}}
