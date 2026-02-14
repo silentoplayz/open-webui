@@ -61,12 +61,18 @@
 	};
 
 	const resetVariables = () => {
-		// Reset to initial state (either what it was when modal opened, or empty if new)
-		themeCopy.variables = JSON.parse(JSON.stringify(initialVariables));
-		variablesText = objectToCss(themeCopy.variables);
-		dispatch('update', { ...themeCopy });
-		activeVariable = null; // Close color picker if open
-		toast.success($i18n.t('Theme variables reset to initial state.'));
+		// Check if current variables are different from initial
+		const currentVars = JSON.stringify(themeCopy.variables);
+		const initialVars = JSON.stringify(initialVariables);
+
+		if (currentVars !== initialVars) {
+			// Reset to initial state (either what it was when modal opened, or empty if new)
+			themeCopy.variables = JSON.parse(initialVars);
+			variablesText = objectToCss(themeCopy.variables);
+			dispatch('update', { ...themeCopy });
+			activeVariable = null; // Close color picker if open
+			toast.success($i18n.t('Theme variables reset to initial state.'));
+		}
 	};
 
 	const generateRandomColors = () => {
@@ -95,8 +101,6 @@
 
 		const updatedTheme = { ...themeCopy };
 		dispatch('update', updatedTheme);
-
-		toast.success(`Theme variables updated with random colors.`);
 	};
 
 	const randomizeGeneratorInputs = () => {

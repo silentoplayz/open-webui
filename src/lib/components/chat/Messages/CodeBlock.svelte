@@ -50,7 +50,7 @@
 	let pyodideWorker = null;
 
 	let _code = '';
-	$: if (code) {
+	$: if (code !== undefined) {
 		updateCode();
 	}
 

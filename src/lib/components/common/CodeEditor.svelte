@@ -202,7 +202,7 @@
 		pickerUpdateCallback(pickerColor);
 	}
 
-	$: if (value) {
+	$: if (value !== undefined) {
 		updateValue();
 	}
 
