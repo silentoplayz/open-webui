@@ -760,7 +760,7 @@
 			...theme,
 			id: `theme-${uuidv4()}`,
 			name: `${theme.name} (Copy)`,
-			sourceUrl: undefined
+			// sourceUrl is preserved to allow forked themes to receive updates
 		};
 		if (await processAndAddTheme(duplicatedTheme, '', true, true)) {
 			toast.success($i18n.t('Theme cloned successfully!'));

@@ -303,10 +303,15 @@ export const updateCommunityThemeFromUrl = async (theme: Theme) => {
 			return;
 		}
 
+
 		const existingTheme = get(communityThemes).get(theme.id);
 		if (existingTheme?.toggles) {
 			latestTheme.toggles = { ...existingTheme.toggles, ...(latestTheme.toggles ?? {}) };
 		}
+
+		// Critical: Ensure we update the *current* theme ID, not the ID from the remote JSON
+		// This allows forked themes (with new IDs) to still receive updates from the original source
+		latestTheme.id = theme.id;
 
 		updateCommunityTheme(latestTheme);
 		toast.success(`Theme "${theme.name}" updated successfully to v${latestTheme.version}!`);

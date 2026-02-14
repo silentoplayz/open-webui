@@ -506,7 +506,8 @@
 			
 			// Generate new ID and treat as new theme
 			newTheme.id = `theme-${uuidv4()}`;
-			newTheme.sourceUrl = undefined;
+			// sourceUrl is preserved to allow forked themes to receive updates
+
 			
 			// Dispatch save event for Themes.svelte to handle (isEditing = false)
 			window.dispatchEvent(
