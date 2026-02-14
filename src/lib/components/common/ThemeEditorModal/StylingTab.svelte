@@ -248,6 +248,26 @@
 			neutralSeedColor = color;
 		}
 	};
+
+	const openEyeDropper = async () => {
+		// @ts-ignore
+		if (!window.EyeDropper) return;
+
+		try {
+			// @ts-ignore
+			const eyeDropper = new EyeDropper();
+			const result = await eyeDropper.open();
+			const hexColor = result.sRGBHex;
+
+			if (activeVariable) {
+				handleColorPickerInput(new CustomEvent('input', { detail: { hex: hexColor } }));
+			} else if (activeGeneratorField) {
+				handleGeneratorPickerInput(new CustomEvent('input', { detail: { hex: hexColor } }));
+			}
+		} catch (e) {
+			console.error('EyeDropper error:', e);
+		}
+	};
 </script>
 
 <input
@@ -322,11 +342,24 @@
 										class="col-span-2 mb-2 p-4 bg-gray-50 dark:bg-gray-850 rounded-xl border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-top-2 duration-200"
 									>
 										<div class="flex items-center justify-between mb-2">
-											<span class="text-sm font-medium text-gray-900 dark:text-gray-100">
-												Editing: <span class="text-blue-600 dark:text-blue-400"
-													>{activeVariable.name}</span
-												>
-											</span>
+											<div class="flex items-center gap-2">
+												<span class="text-sm font-medium text-gray-900 dark:text-gray-100">
+													Editing: <span class="text-blue-600 dark:text-blue-400"
+														>{activeVariable.name}</span
+													>
+												</span>
+
+												{#if typeof window !== 'undefined' && 'EyeDropper' in window}
+													<Tooltip content={$i18n.t('Pick color from screen')}>
+														<button
+															class="p-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition"
+															on:click={openEyeDropper}
+														>
+															<i class="fa-solid fa-eye-dropper text-xs"></i>
+														</button>
+													</Tooltip>
+												{/if}
+											</div>
 											<button
 												class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline"
 												on:click={() => {
@@ -414,12 +447,25 @@
 									on:click={() => toggleGeneratorPicker('seed')}
 								>
 								</button>
-								<div class="flex-1">
+								<div class="flex-1 flex items-center gap-2">
 									<input
 										type="text"
 										class="w-full px-3 py-1.5 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:border-blue-500"
 										bind:value={seedColor}
 									/>
+									{#if typeof window !== 'undefined' && 'EyeDropper' in window}
+										<Tooltip content={$i18n.t('Pick color from screen')}>
+											<button
+												class="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition"
+												on:click={async () => {
+													activeGeneratorField = 'seed';
+													await openEyeDropper();
+												}}
+											>
+												<i class="fa-solid fa-eye-dropper"></i>
+											</button>
+										</Tooltip>
+									{/if}
 								</div>
 							</div>
 							{#if activeGeneratorField === 'seed'}
@@ -457,12 +503,25 @@
 										on:click={() => toggleGeneratorPicker('neutral')}
 									>
 									</button>
-									<div class="flex-1">
+									<div class="flex-1 flex items-center gap-2">
 										<input
 											type="text"
 											class="w-full px-3 py-1.5 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:border-blue-500"
 											bind:value={neutralSeedColor}
 										/>
+										{#if typeof window !== 'undefined' && 'EyeDropper' in window}
+											<Tooltip content={$i18n.t('Pick color from screen')}>
+												<button
+													class="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition"
+													on:click={async () => {
+														activeGeneratorField = 'neutral';
+														await openEyeDropper();
+													}}
+												>
+													<i class="fa-solid fa-eye-dropper"></i>
+												</button>
+											</Tooltip>
+										{/if}
 									</div>
 								</div>
 								{#if activeGeneratorField === 'neutral'}
