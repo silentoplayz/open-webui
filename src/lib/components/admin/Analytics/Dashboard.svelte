@@ -182,7 +182,7 @@
 
 <!-- Header with title and period selector -->
 <div
-	class="pt-0.5 pb-1 gap-1 flex flex-row justify-between items-center sticky top-0 z-10 bg-white dark:bg-gray-900"
+	class="pt-0.5 pb-1 gap-1 flex flex-row justify-between items-center sticky top-0 z-10 bg-transparent"
 >
 	<div class="text-lg font-medium px-0.5">
 		{$i18n.t('Analytics')}
@@ -336,7 +336,7 @@
 					<tbody>
 						{#each sortedModels as model, idx (model.model_id)}
 							<tr
-								class="bg-white dark:bg-gray-900 dark:border-gray-850 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+								class="bg-transparent dark:border-gray-850 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
 								on:click={() => {
 									selectedModel = { id: model.model_id, name: model.name };
 									showModelModal = true;
@@ -427,7 +427,7 @@
 					</thead>
 					<tbody>
 						{#each sortedUsers as user, idx (user.user_id)}
-							<tr class="bg-white dark:bg-gray-900 dark:border-gray-850 text-xs">
+							<tr class="bg-transparent dark:border-gray-850 text-xs">
 								<td class="px-3 py-1 text-gray-400">{idx + 1}</td>
 								<td class="px-3 py-1 font-medium text-gray-900 dark:text-white">
 									<div class="flex items-center gap-2">

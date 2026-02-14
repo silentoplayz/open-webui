@@ -160,7 +160,7 @@
 			<div>
 				<Tooltip content={$i18n.t('Export')}>
 					<button
-						class=" p-2 rounded-xl hover:bg-gray-100 dark:bg-gray-900 dark:hover:bg-gray-850 transition font-medium text-sm flex items-center space-x-1"
+						class=" p-2 rounded-xl hover:bg-gray-100 dark:bg-transparent dark:hover:bg-gray-850 transition font-medium text-sm flex items-center space-x-1"
 						on:click={() => {
 							exportHandler();
 						}}
@@ -281,7 +281,7 @@
 				<tbody class="">
 					{#each items as feedback (feedback.id)}
 						<tr
-							class="bg-white dark:bg-gray-900 dark:border-gray-850 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850/50 transition"
+							class="bg-transparent dark:border-gray-850 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850/50 transition"
 							on:click={() => openFeedbackModal(feedback)}
 						>
 							<td class=" py-0.5 text-right font-medium">

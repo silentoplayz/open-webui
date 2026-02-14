@@ -1093,7 +1093,7 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 
 								{#if note?.write_access}
 									<button
-										class="shrink-0 bg-gray-50 hover:bg-gray-100 text-black dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-white transition px-2.5 py-1 rounded-full flex gap-1.5 items-center text-sm"
+										class="shrink-0 bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-black dark:text-white transition px-2.5 py-1 rounded-full flex gap-1.5 items-center text-sm border border-gray-50 dark:border-gray-850/30"
 										on:click={() => {
 											showAccessControlModal = true;
 										}}
@@ -1307,7 +1307,7 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 					</div>
 				{:else}
 					<div
-						class="cursor-pointer flex gap-0.5 rounded-full border border-gray-50 dark:border-gray-850/30 dark:bg-gray-850 transition shadow-xl"
+						class="cursor-pointer flex gap-0.5 rounded-full border border-gray-50 dark:border-gray-850/30 bg-transparent transition shadow-xl"
 					>
 						<Tooltip content={$i18n.t('AI')} placement="top">
 							{#if editing}
@@ -1331,7 +1331,7 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 									}}
 								>
 									<div
-										class="cursor-pointer p-2.5 flex rounded-full border border-gray-50 bg-white dark:border-none dark:bg-gray-850 hover:bg-gray-50 dark:hover:bg-gray-800 transition shadow-xl"
+										class="cursor-pointer p-2.5 flex rounded-full border border-gray-50 bg-transparent dark:border-gray-850/30 hover:bg-gray-50 dark:hover:bg-gray-800 transition shadow-xl"
 									>
 										<SparklesSolid />
 									</div>
@@ -1388,7 +1388,7 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 					>
 						<Tooltip content={$i18n.t('Record')} placement="top">
 							<div
-								class="cursor-pointer p-2.5 flex rounded-full border border-gray-50 bg-white dark:border-none dark:bg-gray-850 hover:bg-gray-50 dark:hover:bg-gray-800 transition shadow-xl"
+								class="cursor-pointer p-2.5 flex rounded-full border border-gray-50 bg-transparent dark:border-gray-850/30 hover:bg-gray-50 dark:hover:bg-gray-800 transition shadow-xl"
 							>
 								<MicSolid className="size-4.5" />
 							</div>
