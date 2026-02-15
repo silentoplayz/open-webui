@@ -638,6 +638,11 @@
 		}
 	};
 
+	// Keep the theme store in sync with settings (e.g., when synced across tabs)
+	$: if ($settings?.theme && $theme !== $settings?.theme) {
+		theme.set($settings.theme);
+	}
+
 	// Reactive theme application with auth page detection
 	$: {
 		const isAuthPage = $page?.url?.pathname?.startsWith('/auth');

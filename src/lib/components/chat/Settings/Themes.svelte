@@ -56,7 +56,8 @@
 	import variables from '$lib/themes/variables.json';
 	import { validateTheme, isDuplicateTheme, isMismatchedVersion, isValidThemeUrl } from '$lib/utils/theme';
 
-	const i18n = getContext('i18n');
+	import type { Writable } from 'svelte/store';
+	const i18n = getContext<Writable<any>>('i18n');
 
 	const defaultVariables = variables.reduce((acc, curr) => {
 		acc[curr.name] = curr.defaultValue;
@@ -121,6 +122,12 @@
 		isCheckingForUpdates = true;
 		await checkForThemeUpdates(true); // Pass true for manual check
 		isCheckingForUpdates = false;
+	};
+
+	const getThemeName = (id: string | null) => {
+		if (!id) return $i18n.t('New Custom Theme');
+		const theme = $communityThemes.get(id) || $themes.get(id);
+		return theme?.name || id;
 	};
 
 	/**
@@ -644,8 +651,8 @@
 	};
 
 	const openThemeEditor = (theme: Theme) => {
-		// Check if already editing a different theme
-		if ($editingThemeId && $editingThemeId !== theme.id) {
+		// Check if already editing or creating another theme
+		if ($showThemeEditor && $editingThemeId !== theme.id) {
 			themeToEdit = theme;
 			showEditThemeWarning = true;
 			return;
@@ -1369,9 +1376,15 @@
 <!-- Edit Theme Warning Modal -->
 <ConfirmDialog
 	bind:show={showEditThemeWarning}
-	title={$i18n.t('Switch Theme Editor')}
+	title={$i18n.t($editingThemeId ? 'Switch Theme Editor' : 'Switch to Edit Theme')}
 	message={$i18n.t(
-		'You are currently editing another theme. Do you want to switch to editing this theme? Your current changes will be saved.'
+		$editingThemeId
+			? "You are currently editing '{{current}}'. Do you want to switch to editing '{{target}}'? Your current changes will be saved."
+			: "You are currently creating a new theme. Do you want to switch to editing '{{target}}'? Your changes to the new theme will be lost.",
+		{
+			current: getThemeName($editingThemeId),
+			target: themeToEdit?.name || ''
+		}
 	)}
 	on:confirm={() => {
 		showEditThemeWarning = false;
@@ -1440,8 +1453,11 @@
 	title={$i18n.t('Create New Theme')}
 	message={$i18n.t(
 		$editingThemeId
-			? 'You are currently editing a theme. Do you want to discard your current session and create a new theme? Your changes to the current theme will be saved.'
-			: 'You are currently creating a theme. Do you want to discard your current session and create a new theme? Your changes to the current theme will be saved.'
+			? "You are currently editing '{{current}}'. Do you want to discard your current session and create a new theme? Your changes to '{{current}}' will be saved."
+			: "You are currently creating a new theme. Do you want to discard your current session and start fresh? Your changes to the current session will be lost.",
+		{
+			current: getThemeName($editingThemeId)
+		}
 	)}
 	on:confirm={() => {
 		showNewThemeWarning = false;
