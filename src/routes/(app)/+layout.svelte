@@ -246,9 +246,6 @@
 			originalTheme = JSON.parse(JSON.stringify(theme));
 			// Apply the theme immediately for live preview
 			applyTheme(selectedTheme);
-		} else {
-			selectedTheme = null; 
-			originalTheme = null;
 		}
 
 		isEditingTheme = isEditing;

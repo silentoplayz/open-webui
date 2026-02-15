@@ -68,10 +68,7 @@
 
 	$: if (theme && theme.id !== lastThemeId) {
 		lastThemeId = theme.id;
-
-		if (!manualEditMode) {
-			init();
-		}
+		init();
 	}
 
 	const init = () => {

@@ -680,17 +680,15 @@
 		return String.fromCodePoint(...randomEmojiCode.split('-').map((code) => parseInt(code, 16)));
 	};
 
-	let showNewThemeWarning = false;
-
-	const _proceedCreateNewTheme = () => {
-		const newTheme = {
+	const generateNewThemeObject = (): Theme => {
+		return {
 			id: `theme-${uuidv4()}`,
-			name: 'My Custom Theme',
-			description: 'A custom theme created by me.',
+			name: $i18n.t('My Custom Theme'),
+			description: $i18n.t('A custom theme created by me.'),
 			author: $user?.name ?? 'Me',
 			version: '1.0.0',
 			targetWebUIVersion: WEBUI_VERSION,
-			base: 'dark' as 'light' | 'dark' | 'oled-dark' | 'her',
+			base: 'dark',
 			emoji: getRandomEmoji(),
 			variables: variables.reduce((acc, curr) => {
 				acc[curr.name] = curr.defaultValue;
@@ -710,7 +708,13 @@
 				systemBackgroundImage: false,
 				chatBackgroundImage: false
 			}
-		};
+		} as Theme;
+	};
+
+	let showNewThemeWarning = false;
+
+	const _proceedCreateNewTheme = () => {
+		const newTheme = generateNewThemeObject();
 
 		// Set the theme data for the layout to consume
 		window.dispatchEvent(
@@ -1477,11 +1481,13 @@
 		// In creation case, open-theme-editor always follows a check of saveChanges
 		window.dispatchEvent(new CustomEvent('active-theme-changed', { detail: { themeId: selectedThemeId } }));
 		
+		const newTheme = generateNewThemeObject();
+
 		// We'll dispatch a special event that says "save current then create new"
 		window.dispatchEvent(
 			new CustomEvent('open-theme-editor', {
 				detail: { 
-					theme: null, // Signals "Create New" to layout
+					theme: newTheme, 
 					isEditing: false, 
 					previousThemeId: selectedThemeId,
 					saveChanges
@@ -1490,7 +1496,9 @@
 		);
 		
 		editingThemeId.set(null);
+		showThemeEditor.set(true);
 		showSettings.set(false);
+		applyTheme(newTheme, true);
 	}}
 	on:cancel={() => {
 		showNewThemeWarning = false;
