@@ -47,6 +47,7 @@ export interface Theme {
 	name: string;
 	description?: string;
 	version?: string;
+	lastModified?: number;
 	author?: string;
 	repository?: string;
 	targetWebUIVersion?: string;

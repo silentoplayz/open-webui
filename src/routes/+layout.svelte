@@ -660,7 +660,15 @@
 				const allThemes = new Map([...$themes, ...$communityThemes]);
 				const themeToApply = allThemes.get($theme);
 
-				if (themeToApply && $liveThemeStore?.id !== $theme) {
+				if (
+					themeToApply &&
+					($liveThemeStore?.id !== $theme ||
+						themeToApply.lastModified !== $liveThemeStore?.lastModified)
+				) {
+					console.log('[root layout] Applying theme change detected', {
+						id: themeToApply.id,
+						lastModified: themeToApply.lastModified
+					});
 					applyTheme(themeToApply);
 				}
 			}

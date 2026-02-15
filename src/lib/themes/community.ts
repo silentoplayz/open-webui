@@ -133,7 +133,9 @@ export const addCommunityTheme = async (theme: Theme, skipSave: boolean = false)
 	if (!theme.targetWebUIVersion) {
 		theme.targetWebUIVersion = WEBUI_VERSION;
 	}
-	newThemes.set(theme.id, theme);
+	
+	const themeToAdd = { ...theme, lastModified: Date.now() };
+	newThemes.set(themeToAdd.id, themeToAdd);
 	communityThemes.set(newThemes);
 
 	if (skipSave) {
@@ -173,7 +175,8 @@ export const updateCommunityTheme = async (theme: Theme): Promise<boolean> => {
 	const originalThemes = get(communityThemes);
 	if (originalThemes.has(theme.id)) {
 		const newThemes = new Map(originalThemes);
-		newThemes.set(theme.id, theme);
+		const themeToUpdate = { ...theme, lastModified: Date.now() };
+		newThemes.set(themeToUpdate.id, themeToUpdate);
 		communityThemes.set(newThemes);
 
 		const success = await saveCommunityThemes(newThemes);
