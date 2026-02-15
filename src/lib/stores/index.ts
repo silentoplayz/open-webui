@@ -99,6 +99,8 @@ export const showChangelog = writable(false);
 export const showThemeEditor = writable(false);
 export const themeEditorCollapsed = writable(false);
 export const editingThemeId = writable<string | null>(null);
+// Global registry of themes being edited across all tabs/instances (tabId -> themeId)
+export const editingThemes = writable<Record<string, string>>({});
 
 export const showControls = writable(false);
 export const showEmbeds = writable(false);

@@ -25,6 +25,7 @@
 		showSettings,
 		showThemeEditor,
 		editingThemeId,
+		editingThemes,
 		mobile
 	} from '$lib/stores';
 	import { updateUserSettings } from '$lib/apis/users';
@@ -652,7 +653,13 @@
 	};
 
 	const openThemeEditor = (theme: Theme) => {
-		// Check if already editing or creating another theme
+		// Prevent editing if it's already being edited in another tab
+		if (Object.values($editingThemes).includes(theme.id)) {
+			toast.error($i18n.t("Cannot edit theme while it's being edited (possibly in another tab)"));
+			return;
+		}
+
+		// Check if already editing or creating another theme in the current tab
 		if ($showThemeEditor && $editingThemeId !== theme.id) {
 			themeToEdit = theme;
 			saveChanges = true;
@@ -773,9 +780,9 @@
 	};
 
 	const duplicateTheme = async (theme: Theme) => {
-		// Prevent cloning theme while it's being edited
-		if ($editingThemeId === theme.id) {
-			toast.error($i18n.t('Cannot clone theme while editing it'));
+		// Prevent cloning theme while it's being edited (globally)
+		if ($editingThemeId === theme.id || Object.values($editingThemes).includes(theme.id)) {
+			toast.error($i18n.t("Cannot clone theme while it's being edited (possibly in another tab)"));
 			return;
 		}
 
@@ -1072,9 +1079,9 @@
 													<button
 														class="p-1.5 text-gray-500 hover:text-red-500 dark:hover:text-red-400 transition rounded-full"
 														on:click|stopPropagation={() => {
-															// Prevent deleting theme while it's being edited
-															if ($editingThemeId === theme.id) {
-																toast.error($i18n.t('Cannot delete theme while editing it'));
+															// Prevent deleting theme while it's being edited (globally)
+															if ($editingThemeId === theme.id || Object.values($editingThemes).includes(theme.id)) {
+																toast.error($i18n.t("Cannot delete theme while it's being edited (possibly in another tab)"));
 																return;
 															}
 															themeToDeleteId = theme.id;
@@ -1102,9 +1109,9 @@
 													exportHandler={() => exportTheme(theme)}
 													duplicateHandler={() => duplicateTheme(theme)}
 													deleteHandler={() => {
-														// Prevent deleting theme while it's being edited
-														if ($editingThemeId === theme.id) {
-															toast.error($i18n.t('Cannot delete theme while editing it'));
+														// Prevent deleting theme while it's being edited (globally)
+														if ($editingThemeId === theme.id || Object.values($editingThemes).includes(theme.id)) {
+															toast.error($i18n.t("Cannot delete theme while it's being edited (possibly in another tab)"));
 															return;
 														}
 														themeToDeleteId = theme.id;
