@@ -63,10 +63,33 @@
 
 	const sanitizeOptions = (opts: any) => {
 		if (!opts) return opts;
+
+		// Deep clone to avoid mutating the original theme object
 		const newOpts = JSON.parse(JSON.stringify(opts));
 
-		// Fix CanvasMask filter error: tsparticles expects a function for pixels.filter
-		// but JSON themes provide it as a string or empty object.
+		/**
+		 * Recursively walks through the options object to fix known tsParticles configuration bugs.
+		 */
+		const walk = (obj: any) => {
+			if (!obj || typeof obj !== 'object') return;
+
+			for (const key in obj) {
+				const val = obj[key];
+
+				// Fix 1: "transparent" keyword crash.
+				// tsParticles' color parser handles "" as transparent, but "transparent" causes a name lookup error.
+				if (typeof val === 'string' && val.toLowerCase() === 'transparent') {
+					obj[key] = '';
+				} else if (typeof val === 'object') {
+					walk(val);
+				}
+			}
+		};
+
+		walk(newOpts);
+
+		// Fix 2: CanvasMask filter error.
+		// tsParticles expects a function for pixels.filter but JSON themes provide it as a string or empty object.
 		if (newOpts.canvasMask?.pixels && typeof newOpts.canvasMask.pixels.filter !== 'function') {
 			delete newOpts.canvasMask.pixels.filter;
 		}
