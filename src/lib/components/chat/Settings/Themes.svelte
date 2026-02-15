@@ -83,6 +83,7 @@
 	let sortOrder = 'default';
 	let selectedTag = '';
 	let isCheckingForUpdates = false;
+	let saveChanges = true;
 
 	let showAnimationScriptWarning = false;
 	let acceptAllScriptWarning = false;
@@ -654,6 +655,7 @@
 		// Check if already editing or creating another theme
 		if ($showThemeEditor && $editingThemeId !== theme.id) {
 			themeToEdit = theme;
+			saveChanges = true;
 			showEditThemeWarning = true;
 			return;
 		}
@@ -726,6 +728,7 @@
 
 	const createNewTheme = () => {
 		if ($showThemeEditor) {
+			saveChanges = true;
 			showNewThemeWarning = true;
 			return;
 		}
@@ -1377,30 +1380,45 @@
 <ConfirmDialog
 	bind:show={showEditThemeWarning}
 	title={$i18n.t($editingThemeId ? 'Switch Theme Editor' : 'Switch to Edit Theme')}
-	message={$i18n.t(
-		$editingThemeId
-			? "You are currently editing '{{current}}'. Do you want to switch to editing '{{target}}'? Your current changes will be saved."
-			: "You are currently creating a new theme. Do you want to switch to editing '{{target}}'? Your changes to the new theme will be lost.",
-		{
-			current: getThemeName($editingThemeId),
-			target: themeToEdit?.name || ''
-		}
-	)}
 	on:confirm={() => {
 		showEditThemeWarning = false;
 		if (themeToEdit) {
-			// User confirmed, dispatch the event directly to bypass the guard check
 			window.dispatchEvent(
 				new CustomEvent('open-theme-editor', {
-					detail: { theme: themeToEdit, isEditing: true, previousThemeId: selectedThemeId }
+					detail: {
+						theme: themeToEdit,
+						isEditing: true,
+						previousThemeId: selectedThemeId,
+						saveChanges
+					}
 				})
 			);
-			// Update global stores
 			editingThemeId.set(themeToEdit.id);
 			showThemeEditor.set(true);
+			showSettings.set(false);
 			themeToEdit = null;
 		}
 	}}
+>
+	<div class="flex flex-col gap-3">
+		<div class=" text-sm text-gray-500 flex-1">
+			{$i18n.t(
+				$editingThemeId
+					? "You are currently editing '{{current}}'. Do you want to switch to editing '{{target}}'?"
+					: "You are currently creating a new theme. Do you want to switch to editing '{{target}}'?",
+				{
+					current: getThemeName($editingThemeId),
+					target: themeToEdit?.name || ''
+				}
+			)}
+		</div>
+
+		<label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+			<input type="checkbox" bind:checked={saveChanges} class="rounded border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 focus:ring-gray-900" />
+			<span>{$i18n.t('Save current changes before switching')}</span>
+		</label>
+	</div>
+</ConfirmDialog>
 	on:cancel={() => {
 		showEditThemeWarning = false;
 		themeToEdit = null;
@@ -1451,18 +1469,52 @@
 <ConfirmDialog
 	bind:show={showNewThemeWarning}
 	title={$i18n.t('Create New Theme')}
-	message={$i18n.t(
-		$editingThemeId
-			? "You are currently editing '{{current}}'. Do you want to discard your current session and create a new theme? Your changes to '{{current}}' will be saved."
-			: "You are currently creating a new theme. Do you want to discard your current session and start fresh? Your changes to the current session will be lost.",
-		{
-			current: getThemeName($editingThemeId)
-		}
-	)}
 	on:confirm={() => {
 		showNewThemeWarning = false;
-		_proceedCreateNewTheme();
+		if (saveChanges && $editingThemeId) {
+			// Layout handles saving before overwrite
+		}
+		
+		// In creation case, open-theme-editor always follows a check of saveChanges
+		window.dispatchEvent(new CustomEvent('active-theme-changed', { detail: { themeId: selectedThemeId } }));
+		
+		// For create new, we need to manually call _proceed with save flag or let layout handle
+		// Actually, _proceedCreateNewTheme is local. Let's update it to respect saveChanges or just dispatch.
+		
+		// We'll dispatch a special event that says "save current then create new"
+		window.dispatchEvent(
+			new CustomEvent('open-theme-editor', {
+				detail: { 
+					theme: null, // Signals "Create New" to layout
+					isEditing: false, 
+					previousThemeId: selectedThemeId,
+					saveChanges
+				}
+			})
+		);
+		
+		editingThemeId.set(null);
+		showSettings.set(false);
 	}}
+>
+	<div class="flex flex-col gap-3">
+		<div class=" text-sm text-gray-500 flex-1">
+			{$i18n.t(
+				$editingThemeId
+					? "You are currently editing '{{current}}'. Do you want to discard your current session and create a new theme?"
+					: "You are currently creating a new theme. Do you want to discard your current session and start fresh?",
+				{
+					current: getThemeName($editingThemeId)
+				}
+			)}
+		</div>
+
+		<label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+			<input type="checkbox" bind:checked={saveChanges} class="rounded border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 focus:ring-gray-900" />
+			<span>{$i18n.t('Save current changes before starting new')}</span>
+		</label>
+	</div>
+</ConfirmDialog>
 	on:cancel={() => {
 		showNewThemeWarning = false;
 	}}

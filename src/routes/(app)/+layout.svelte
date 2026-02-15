@@ -63,7 +63,8 @@
 	import type { Theme } from '$lib/types';
 	import { validateTheme, isDuplicateTheme } from '$lib/utils/theme';
 
-	const i18n = getContext('i18n');
+	import type { Writable } from 'svelte/store';
+	const i18n = getContext<Writable<any>>('i18n');
 
 	let loaded = false;
 	let DB = null;
@@ -183,23 +184,80 @@
 		tools.set(toolsData);
 	};
 
-	// Event handlers for theme editor - defined at module level for proper cleanup
-	const handleOpenThemeEditor = (event: CustomEvent) => {
-		const { theme, isEditing, previousThemeId: prevTheme } = event.detail;
-		console.log('[+layout] Opening theme editor', { themeName: theme.name, isEditing });
-		// Create a deep copy to ensure reactivity
-		selectedTheme = JSON.parse(JSON.stringify(theme));
-		originalTheme = JSON.parse(JSON.stringify(theme));
+	// Reusable save logic for theme editor
+	const _saveTheme = async (themeToSave: Theme, isEditing: boolean) => {
+		console.log('[+layout] _saveTheme triggered', themeToSave.name, 'isEditing:', isEditing);
 
-		// Apply the theme immediately for live preview
-		applyTheme(selectedTheme);
+		// Validation
+		const validation = validateTheme(themeToSave);
+		if (!validation.valid) {
+			console.log('[+layout] Validation failed:', validation.error);
+			toast.error(validation.error ?? 'Invalid theme');
+			return false;
+		}
+
+		// Check for duplicates
+		const themesToCheck = isEditing
+			? Array.from($communityThemesStore.values()).filter((t) => t.id !== themeToSave.id)
+			: Array.from($communityThemesStore.values());
+
+		if (isDuplicateTheme(themeToSave, themesToCheck, false, themeToSave.id)) {
+			console.log('[+layout] Duplicate theme detected');
+			toast.error('A theme with the same content already exists.');
+			return false;
+		}
+
+		let success = false;
+		if (isEditing) {
+			// Update existing theme
+			if (await updateCommunityTheme(themeToSave)) {
+				toast.success(`Theme "${themeToSave.name}" updated successfully!`);
+				// If this is the currently selected theme, apply it
+				if (themeToSave.id === localStorage.getItem('theme')) {
+					applyTheme(themeToSave);
+				}
+				success = true;
+			}
+		} else {
+			// Add new theme
+			if (await addCommunityTheme(themeToSave)) {
+				toast.success(`Theme "${themeToSave.name}" added successfully!`);
+				success = true;
+			}
+		}
+		return success;
+	};
+
+	// Event handlers for theme editor - defined at module level for proper cleanup
+	const handleOpenThemeEditor = async (event: Event) => {
+		const customEvent = event as CustomEvent;
+		const { theme, isEditing, previousThemeId: prevTheme, saveChanges } = customEvent.detail;
+		console.log('[+layout] Opening theme editor', { themeName: theme?.name || 'New Theme', isEditing, saveChanges });
+
+		// AUTO-SAVE: If we're already editing a theme and saveChanges is true
+		if (saveChanges && selectedTheme) {
+			console.log('[+layout] Auto-saving previous session for:', selectedTheme.name);
+			await _saveTheme(selectedTheme, isEditingTheme);
+		}
+
+		if (theme) {
+			// Create a deep copy to ensure reactivity
+			selectedTheme = JSON.parse(JSON.stringify(theme));
+			originalTheme = JSON.parse(JSON.stringify(theme));
+			// Apply the theme immediately for live preview
+			applyTheme(selectedTheme);
+		} else {
+			selectedTheme = null; 
+			originalTheme = null;
+		}
 
 		isEditingTheme = isEditing;
 		previousThemeId = prevTheme;
 	};
 
-	const handleThemeEditorSaveComplete = (event: CustomEvent) => {
-		const { success } = event.detail;
+	const handleThemeEditorSaveComplete = (event: Event) => {
+		const customEvent = event as CustomEvent;
+		const { success } = customEvent.detail;
 		if (success) {
 			// Close the editor and reset state
 			showThemeEditor.set(false);
@@ -222,62 +280,21 @@
 		}
 	};
 
-	const handleActiveThemeChanged = (event: CustomEvent) => {
-		const { themeId } = event.detail;
+	const handleActiveThemeChanged = (event: Event) => {
+		const customEvent = event as CustomEvent;
+		const { themeId } = customEvent.detail;
 		console.log('[+layout] Active theme changed via confirmation modal:', themeId);
 		// Update previousThemeId so that when editor closes, it applies the correct theme
 		previousThemeId = themeId;
 	};
 
-	const handleThemeEditorSave = async (event: CustomEvent) => {
-		const { theme: updatedTheme, isEditing } = event.detail;
-		console.log('[+layout] Processing save for theme', updatedTheme.name, 'isEditing:', isEditing);
+	const handleThemeEditorSave = async (event: Event) => {
+		const customEvent = event as CustomEvent;
+		const { theme: updatedTheme, isEditing } = customEvent.detail;
+		console.log('[+layout] Processing save request for theme', updatedTheme.name);
 
-		// Validation
-		const validation = validateTheme(updatedTheme);
-		if (!validation.valid) {
-			console.log('[+layout] Validation failed:', validation.error);
-			toast.error(validation.error ?? 'Invalid theme');
-			window.dispatchEvent(
-				new CustomEvent('theme-editor-save-complete', { detail: { success: false } })
-			);
-			return;
-		}
-
-		// Check for duplicates
-		// When editing, filter out the theme being edited from the comparison
-		const themesToCheck = isEditing
-			? Array.from($communityThemesStore.values()).filter((t) => t.id !== updatedTheme.id)
-			: Array.from($communityThemesStore.values());
-
-		if (isDuplicateTheme(updatedTheme, themesToCheck, false, updatedTheme.id)) {
-			console.log('[+layout] Duplicate theme detected');
-			toast.error('A theme with the same content already exists.');
-			window.dispatchEvent(
-				new CustomEvent('theme-editor-save-complete', { detail: { success: false } })
-			);
-			return;
-		}
-
-		let success = false;
-		if (isEditing) {
-			// Update existing theme
-			if (await updateCommunityTheme(updatedTheme)) {
-				toast.success(`Theme "${updatedTheme.name}" updated successfully!`);
-				// If this is the currently selected theme, apply it
-				if (updatedTheme.id === localStorage.getItem('theme')) {
-					applyTheme(updatedTheme);
-				}
-				success = true;
-			}
-		} else {
-			// Add new theme
-			if (await addCommunityTheme(updatedTheme)) {
-				toast.success(`Theme "${updatedTheme.name}" added successfully!`);
-				success = true;
-			}
-		}
-
+		const success = await _saveTheme(updatedTheme, isEditing);
+		
 		console.log('[+layout] Save result:', success);
 		// Notify completion
 		window.dispatchEvent(new CustomEvent('theme-editor-save-complete', { detail: { success } }));
@@ -293,22 +310,22 @@
 		}
 
 		// Remove any existing listeners first (prevents duplicates during hot reload)
-		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
-		window.removeEventListener('theme-editor-save', handleThemeEditorSave as EventListener);
+		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as any);
+		window.removeEventListener('theme-editor-save', handleThemeEditorSave as any);
 		window.removeEventListener(
 			'theme-editor-save-complete',
-			handleThemeEditorSaveComplete as EventListener
+			handleThemeEditorSaveComplete as any
 		);
-		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as EventListener);
+		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as any);
 
 		// Now add the listeners
-		window.addEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
-		window.addEventListener('theme-editor-save', handleThemeEditorSave as EventListener);
+		window.addEventListener('open-theme-editor', handleOpenThemeEditor as any);
+		window.addEventListener('theme-editor-save', handleThemeEditorSave as any);
 		window.addEventListener(
 			'theme-editor-save-complete',
-			handleThemeEditorSaveComplete as EventListener
+			handleThemeEditorSaveComplete as any
 		);
-		window.addEventListener('active-theme-changed', handleActiveThemeChanged as EventListener);
+		window.addEventListener('active-theme-changed', handleActiveThemeChanged as any);
 
 		clearChatInputStorage();
 		await Promise.all([
@@ -456,13 +473,13 @@
 	});
 
 	onDestroy(() => {
-		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
-		window.removeEventListener('theme-editor-save', handleThemeEditorSave as EventListener);
+		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as any);
+		window.removeEventListener('theme-editor-save', handleThemeEditorSave as any);
 		window.removeEventListener(
 			'theme-editor-save-complete',
-			handleThemeEditorSaveComplete as EventListener
+			handleThemeEditorSaveComplete as any
 		);
-		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as EventListener);
+		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as any);
 	});
 
 	const checkForVersionUpdates = async () => {
@@ -518,7 +535,9 @@
 		}}
 		on:update={(e) => {
 			selectedTheme = e.detail;
-			applyTheme(e.detail, true);
+			if (selectedTheme) {
+				applyTheme(selectedTheme, true);
+			}
 		}}
 		on:cancel={() => {
 			showThemeEditor.set(false);
