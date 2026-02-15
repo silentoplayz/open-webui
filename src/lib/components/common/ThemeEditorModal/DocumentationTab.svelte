@@ -87,6 +87,9 @@
 					<strong>name:</strong> The display name of the theme.
 				</li>
 				<li>
+					<strong>id:</strong> The unique identifier for the theme.
+				</li>
+				<li>
 					<strong>description:</strong> A brief description of the theme.
 				</li>
 				<li>
@@ -216,39 +219,35 @@
 
 	<Collapsible title="Available CSS Variables">
 		<div slot="content" class="pt-2">
-			<p class="text-gray-500">
+			<p class="text-gray-500 mb-4">
 				Here is a list of all the available CSS variables that you can use to customize your theme.
 			</p>
 
-			<div
-				class="mt-4 overflow-y-auto overflow-x-auto max-h-96 rounded-lg border border-gray-200 dark:border-gray-700"
-			>
-				<table class="w-full text-sm text-left">
-					<thead
-						class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400"
-					>
+			<div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+				<table class="w-full text-xs text-left">
+					<thead class="text-gray-700 bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
 						<tr>
-							<th scope="col" class="px-6 py-3 whitespace-nowrap"> Variable </th>
-							<th scope="col" class="px-6 py-3 whitespace-nowrap"> Default Value </th>
-							<th scope="col" class="px-6 py-3 min-w-[200px]"> Description </th>
+							<th scope="col" class="px-4 py-3">Variable</th>
+							<th scope="col" class="px-4 py-3">Default</th>
+							<th scope="col" class="px-4 py-3">Description</th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each variables as variable}
 							<tr class="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-								<td class="px-6 py-4 font-mono whitespace-nowrap"> {variable.name} </td>
-								<td class="px-6 py-4 font-mono whitespace-nowrap">
+								<td class="px-4 py-3 font-mono text-blue-600 dark:text-blue-400">{variable.name}</td>
+								<td class="px-4 py-3">
 									<div class="flex items-center gap-2">
 										{#if /^#[0-9A-Fa-f]{3,8}$/.test(variable.defaultValue)}
 											<div
-												class="w-4 h-4 rounded-full border border-gray-200 dark:border-gray-600 shadow-sm"
+												class="w-3 h-3 rounded-full border border-gray-300 shadow-sm"
 												style="background-color: {variable.defaultValue}"
 											></div>
 										{/if}
-										<span>{variable.defaultValue}</span>
+										<span class="font-mono">{variable.defaultValue}</span>
 									</div>
 								</td>
-								<td class="px-6 py-4 min-w-[200px]"> {variable.description} </td>
+								<td class="px-4 py-3 text-gray-500">{variable.description}</td>
 							</tr>
 						{/each}
 					</tbody>
