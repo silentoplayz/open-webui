@@ -15,6 +15,35 @@ import { updateUserSettings } from '$lib/apis/users';
 import { applyTheme } from '$lib/themes/apply';
 import { validateTheme, isValidThemeUrl } from '$lib/utils/theme';
 import { containsDangerousCSS } from '$lib/utils/css-sanitizer';
+import { browser } from '$app/environment';
+
+// BroadcastChannel for theme synchronization
+const communityThemesBc = browser ? new BroadcastChannel('community-themes-sync') : null;
+
+/**
+ * Broadcasts the current community themes to all other tabs.
+ * This should be called after any manual mutation (add, update, delete).
+ */
+export const broadcastCommunityThemes = () => {
+	if (communityThemesBc) {
+		const currentThemes = get(communityThemes);
+		console.log('[community] Broadcasting community themes sync', { count: currentThemes.size });
+		communityThemesBc.postMessage({
+			type: 'sync',
+			themes: Array.from(currentThemes.entries())
+		});
+	}
+};
+
+// Listen for theme requests from new tabs
+if (communityThemesBc) {
+	communityThemesBc.onmessage = (event) => {
+		if (event.data?.type === 'request-themes') {
+			console.log('[community] Received theme request from another tab, responding...');
+			broadcastCommunityThemes();
+		}
+	};
+}
 
 export const loadCommunityThemes = async () => {
 	// Migration logic:
@@ -87,7 +116,7 @@ export const loadCommunityThemes = async () => {
 
 
 // Queue for handling saves to prevent race conditions
-let saveQueue: Promise<any> = Promise.resolve();
+let saveQueue: Promise<boolean> = Promise.resolve(true);
 
 const saveCommunityThemes = async (themes: Map<string, Theme>): Promise<boolean> => {
 	// We use a queue to ensure saves happen sequentially and don't overwrite each other
@@ -137,6 +166,7 @@ export const addCommunityTheme = async (theme: Theme, skipSave: boolean = false)
 	const themeToAdd = { ...theme, lastModified: Date.now() };
 	newThemes.set(themeToAdd.id, themeToAdd);
 	communityThemes.set(newThemes);
+	broadcastCommunityThemes();
 
 	if (skipSave) {
 		return true;
@@ -162,6 +192,7 @@ export const addCommunityThemes = async (newThemesList: Theme[]): Promise<boolea
 	}
 
 	communityThemes.set(newThemesMap);
+	broadcastCommunityThemes();
 
 	const success = await saveCommunityThemes(newThemesMap);
 
@@ -178,6 +209,7 @@ export const updateCommunityTheme = async (theme: Theme): Promise<boolean> => {
 		const themeToUpdate = { ...theme, lastModified: Date.now() };
 		newThemes.set(themeToUpdate.id, themeToUpdate);
 		communityThemes.set(newThemes);
+		broadcastCommunityThemes();
 
 		const success = await saveCommunityThemes(newThemes);
 
@@ -215,6 +247,7 @@ export const removeCommunityTheme = async (themeId: string) => {
 	const newThemes = new Map(originalThemes);
 	newThemes.delete(themeId);
 	communityThemes.set(newThemes);
+	broadcastCommunityThemes();
 
 	const success = await saveCommunityThemes(newThemes);
 	if (!success) {
@@ -247,6 +280,7 @@ export const deleteAllCommunityThemes = async () => {
 	}
 
 	communityThemes.set(new Map());
+	broadcastCommunityThemes();
 	await saveCommunityThemes(new Map());
 
 	localStorage.removeItem('communityThemes');
@@ -277,9 +311,9 @@ const _fetchTheme = async (url: string): Promise<[Theme | null, string | null]> 
 		}
 		const theme = await res.json();
 		return [theme, null];
-	} catch (error) {
+	} catch (error: any) {
 		console.error(`Failed to fetch theme from ${url}:`, error);
-		return [null, error.message];
+		return [null, error.message || 'Unknown error'];
 	}
 };
 
@@ -320,6 +354,7 @@ export const updateCommunityThemeFromUrl = async (theme: Theme) => {
 		latestTheme.id = theme.id;
 
 		updateCommunityTheme(latestTheme);
+		broadcastCommunityThemes();
 		toast.success(`Theme "${theme.name}" updated successfully to v${latestTheme.version}!`);
 
 		const currentThemeId = localStorage.getItem('theme');
@@ -331,7 +366,7 @@ export const updateCommunityThemeFromUrl = async (theme: Theme) => {
 		updates.delete(theme.id);
 		themeUpdates.set(updates);
 	} else {
-		toast.error(`Failed to update theme "${theme.name}": ${error}`);
+		toast.error(`Failed to update theme "${theme.name}": ${error ?? 'Unknown error'}`);
 	}
 };
 
@@ -459,9 +494,9 @@ export const checkForThemeUpdates = async (manual = false) => {
 					}
 				}
 			} else {
-				errors.set(id, error);
+				errors.set(id, error ?? 'Unknown error');
 				if (manual) {
-					toast.error(`Failed to check for update for theme "${theme.name}": ${error}`);
+					toast.error(`Failed to check for update for theme "${theme.name}": ${error ?? 'Unknown error'}`);
 				}
 			}
 		}

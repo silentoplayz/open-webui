@@ -73,16 +73,22 @@
 			currentMouseMoveHandler = undefined;
 		}
 
-		const safeId = sanitizeThemeId(themeId);
-		const canvas = mainContainer.querySelector(`[id$='-canvas']`);
-		if (canvas) {
-			canvas.remove();
-		}
+		// Aggressively remove any lingering theme-related canvases from the container.
+		// This prevents "ghost" animations or overlaps when switching themes rapidly.
+		const canvases = mainContainer.querySelectorAll('canvas');
+		canvases.forEach((canvas) => {
+			if (canvas.id.endsWith('-canvas') || canvas.id.startsWith('tsparticles-')) {
+				console.log(`[ThemeManager] Removing orphaned canvas: ${canvas.id}`);
+				canvas.remove();
+			}
+		});
 
 		if (currentResizeObserver) {
 			currentResizeObserver.disconnect();
 			currentResizeObserver = undefined;
 		}
+
+		const safeId = sanitizeThemeId(themeId);
 
 		const script = document.getElementById(`${safeId}-script`);
 		if (script) {
@@ -133,10 +139,10 @@
 						if (c.length === 3) {
 							c = [c[0], c[0], c[1], c[1], c[2], c[2]];
 						}
-						c = '0x' + c.join('');
-						const r = (c >> 16) & 255;
-						const g = (c >> 8) & 255;
-						const b = c & 255;
+						const cVal = parseInt(c.join(''), 16);
+						const r = (cVal >> 16) & 255;
+						const g = (cVal >> 8) & 255;
+						const b = cVal & 255;
 						return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 					}
 					return `rgba(0, 0, 0, ${alpha})`;
