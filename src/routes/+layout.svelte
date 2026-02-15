@@ -9,6 +9,7 @@
 	});
 
 	import { onMount, tick, setContext, onDestroy } from 'svelte';
+	import { get } from 'svelte/store';
 	import {
 		config,
 		user,
@@ -88,6 +89,7 @@
 	setContext('i18n', i18n);
 
 	const bc = new BroadcastChannel('active-tab-channel');
+	const settingsBc = new BroadcastChannel('settings-sync');
 
 	let loaded = false;
 	let tokenTimer = null;
@@ -732,6 +734,24 @@
 				isLastActiveTab.set(false); // Another tab became active
 			}
 		};
+
+		settingsBc.onmessage = (event) => {
+			if (event.data?.type === 'sync' && event.data?.settings) {
+				console.log('Syncing settings from another tab');
+				const currentSettings = JSON.stringify(get(settings));
+				const newSettings = JSON.stringify(event.data.settings);
+
+				if (currentSettings !== newSettings) {
+					settings.set(event.data.settings);
+				}
+			}
+		};
+
+		const unsubscribeSettings = settings.subscribe((value) => {
+			if (value && Object.keys(value).length > 0) {
+				settingsBc.postMessage({ type: 'sync', settings: value });
+			}
+		});
 
 		// Set yourself as the last active tab when this tab is focused
 		const handleVisibilityChange = () => {

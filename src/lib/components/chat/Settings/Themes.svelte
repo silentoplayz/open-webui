@@ -63,7 +63,7 @@
 		return acc;
 	}, {});
 
-	let selectedThemeId = 'system';
+	$: selectedThemeId = $themeStore ?? 'system';
 	let themeUrl = '';
 	let isLoading = false;
 	let fileInput: HTMLInputElement;
@@ -97,6 +97,25 @@
 	let isScrolling = false;
 	let scrollTimeout: NodeJS.Timeout;
 	let openMenuThemeId: string | null = null;
+	let lastScrolledThemeId: string | null = null;
+
+	const scrollToSelectedTheme = async (behavior: ScrollBehavior = 'auto') => {
+		if (!selectedThemeId || selectedThemeId === lastScrolledThemeId) return;
+
+		await tick();
+		const selectedThemeElement = document.getElementById(`theme-${selectedThemeId}`);
+		if (selectedThemeElement) {
+			selectedThemeElement.scrollIntoView({
+				behavior,
+				block: 'center'
+			});
+			lastScrolledThemeId = selectedThemeId;
+		}
+	};
+
+	$: if (selectedThemeId && lastScrolledThemeId !== null) {
+		scrollToSelectedTheme('smooth');
+	}
 
 	const handleCheckForUpdates = async () => {
 		isCheckingForUpdates = true;
@@ -343,7 +362,6 @@
 			return;
 		}
 
-		selectedThemeId = _theme;
 		themeStore.set(_theme);
 		localStorage.setItem('theme', _theme);
 
@@ -358,19 +376,10 @@
 	};
 
 	onMount(() => {
-		selectedThemeId = localStorage.theme ?? 'system';
 
 
 		// Scroll to the selected theme immediately after DOM is ready
-		tick().then(() => {
-			const selectedThemeElement = document.getElementById(`theme-${selectedThemeId}`);
-			if (selectedThemeElement) {
-				selectedThemeElement.scrollIntoView({
-					behavior: 'auto',
-					block: 'center'
-});
-			}
-		});
+		scrollToSelectedTheme('auto');
 
 		const handleScroll = () => {
 			// Hide tooltips

@@ -33,19 +33,22 @@ export const loadCommunityThemes = async () => {
 		const currentThemes = get(communityThemes);
 		const settingsThemes = userSettings?.themes;
 
-		if (settingsThemes && Object.keys(settingsThemes).length > 0) {
-			// Case 1: Settings has themes. Use them.
-			// We only update if they are different to avoid unnecessary store updates/loops
-			// (Though simplistic comparison might be enough)
+			if (settingsThemes !== undefined) {
+				// Case 1: Settings has themes (even if empty). Use them.
+				// Transform object to Map
+				const newThemesMap = new Map(Object.entries(settingsThemes));
 
-			// Transform object to Map
-			const newThemesMap = new Map(Object.entries(settingsThemes));
+				// Check if the content actually changed
+				const currentThemesObj = Object.fromEntries(currentThemes);
+				const newThemesObj = Object.fromEntries(newThemesMap);
 
-			// Simple check if size changed or we just loaded for the first time
-			if (currentThemes.size !== newThemesMap.size || currentThemes.size === 0) {
-				communityThemes.set(newThemesMap);
-			}
-		} else {
+				if (JSON.stringify(currentThemesObj) !== JSON.stringify(newThemesObj)) {
+					console.log(
+						`Syncing community themes: ${currentThemes.size} -> ${newThemesMap.size} themes`
+					);
+					communityThemes.set(newThemesMap);
+				}
+			} else {
 			// Case 2: Settings empty. Check localStorage for migration.
 			try {
 				const raw = localStorage.getItem('communityThemes');
