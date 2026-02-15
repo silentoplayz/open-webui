@@ -17,11 +17,11 @@
 			this.color = color;
 		}
 
-		eq(other: ColorSwatchWidget) {
+		override eq(other: ColorSwatchWidget) {
 			return other.color === this.color;
 		}
 
-		toDOM() {
+		override toDOM() {
 			const swatch = document.createElement('span');
 			swatch.className = 'cm-color-swatch';
 			swatch.style.display = 'inline-block';
@@ -34,7 +34,7 @@
 			return swatch;
 		}
 
-		ignoreEvent() {
+		override ignoreEvent() {
 			return false;
 		}
 	}
@@ -179,6 +179,7 @@
 	import { user, codeMirrorTheme } from '$lib/stores';
 	import * as themes from '@uiw/codemirror-themes-all';
 	import { oneDark } from '@codemirror/theme-one-dark';
+	import { formatCSS } from '$lib/utils/css-formatter';
 
 	const dispatch = createEventDispatcher();
 	const i18n = getContext('i18n');
@@ -400,6 +401,26 @@ print("${endTag}")
 		return false;
 	};
 
+	export const formatCSSCodeHandler = async () => {
+		if (codeEditor) {
+			const formattedCode = formatCSS(_value);
+			if (formattedCode !== _value) {
+				codeEditor.dispatch({
+					changes: [{ from: 0, to: codeEditor.state.doc.length, insert: formattedCode }]
+				});
+
+				_value = formattedCode;
+				onChange(_value);
+				await tick();
+
+				toast.success($i18n.t('CSS formatted successfully'));
+				return true;
+			}
+			return false;
+		}
+		return false;
+	};
+
 	// Fix for fold placeholder styling in non-default themes
 	const fixedTheme = EditorView.theme({
 		'.cm-foldPlaceholder': {
@@ -489,7 +510,11 @@ print("${endTag}")
 			// Format code when Ctrl + Shift + F is pressed
 			if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'f') {
 				e.preventDefault();
-				await formatPythonCodeHandler();
+				if (lang === 'python') {
+					await formatPythonCodeHandler();
+				} else if (lang === 'css') {
+					await formatCSSCodeHandler();
+				}
 			}
 		};
 

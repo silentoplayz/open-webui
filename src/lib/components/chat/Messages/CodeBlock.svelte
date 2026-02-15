@@ -26,6 +26,8 @@
 	const i18n = getContext('i18n');
 	const dispatch = createEventDispatcher();
 
+	let codeEditorChild: any;
+
 	export let id = '';
 	export let edit = true;
 
@@ -511,6 +513,21 @@
 							</div>
 						</button>
 					{/if}
+
+					{#if edit && lang === 'css'}
+						<button
+							class="flex gap-1 items-center bg-none border-none rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+							on:click={async () => {
+								if (codeEditorChild) {
+									await codeEditorChild.formatCSSCodeHandler();
+								}
+							}}
+						>
+							<div>
+								{$i18n.t('Format')}
+							</div>
+						</button>
+					{/if}
 				</div>
 			</div>
 
@@ -526,6 +543,7 @@
 				{#if !collapsed}
 					{#if edit}
 						<CodeEditor
+							bind:this={codeEditorChild}
 							value={code}
 							{id}
 							{lang}

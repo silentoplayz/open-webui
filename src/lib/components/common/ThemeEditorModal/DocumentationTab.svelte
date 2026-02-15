@@ -66,9 +66,7 @@
 			<div class="mt-2">
 				<CodeBlock
 					code={JSON.stringify(fullThemeSchema, null, 2)}
-					language="json"
-					header={false}
-					canCopy={true}
+					lang="json"
 					edit={false}
 				/>
 			</div>
@@ -145,63 +143,57 @@
 		</div>
 	</Collapsible>
 
-	<Collapsible title="Using Custom Fonts" open={false}>
+	<Collapsible title="Using System Fonts" open={false}>
 		<div slot="content" class="pt-2">
 			<p>
-				The current theme system allows you to embed custom fonts in your theme using the <code
-					>css</code
-				> property to override the default font family in two ways:
+				For security reasons, the theme system <strong>blocks external resources</strong> such as
+				<code>@import</code> and <code>url()</code>. This prevents data exfiltration and tracking.
 			</p>
-			<ol class="mt-2 list-decimal list-inside space-y-1">
-				<li>A fast, self-hosted <code>@font-face</code> declaration</li>
-				<li>A convenient Google Fonts <code>@import</code> statement</li>
-			</ol>
-			<p class="mt-2">Both snippets go into the <strong>Custom CSS</strong> field of your theme.</p>
+			<p class="mt-2">
+				You can still customize your theme's typography by using <strong>system font stacks</strong>.
+				These utilize fonts already installed on the user's device, ensuring privacy and instant
+				loading.
+			</p>
 
 			<hr class="my-4 border-gray-200 dark:border-gray-700" />
 
-			<h4 class="font-semibold mb-2">Option 1 – self-hosted</h4>
+			<h4 class="font-semibold mb-2">How to Apply</h4>
 			<p class="mb-2">
-				If you want the smallest possible file and full control over privacy, reference the raw font
-				file directly (<code>.woff2</code> recommended):
+				Add the following to your <strong>Custom CSS</strong> field to override the global font
+				family:
 			</p>
 			<CodeBlock
-				code={`@font-face {
-  font-family: 'Roboto';
-  src: url('https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxK.woff2') format('woff2');
-}
-
-body, button, input, textarea {
-  font-family: 'Roboto', sans-serif;
+				code={`body, button, input, textarea {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }`}
-				language="css"
-				header={false}
-				canCopy={true}
+				lang="css"
 				edit={false}
 			/>
 
 			<hr class="my-4 border-gray-200 dark:border-gray-700" />
 
-			<h4 class="font-semibold mb-2">Option 2 – Google Fonts import</h4>
-			<p class="mb-2">
-				The quickest way to add a Google font is the standard <code>@import</code> statement:
+			<h4 class="font-semibold mb-2">Recommended Font Stacks</h4>
+			<p class="mb-2 text-gray-500">
+				Copy/paste these into the <code>font-family</code> rule above:
 			</p>
-			<CodeBlock
-				code={`@import url('https://fonts.googleapis.com/css2?family=Orbitron&display=swap');
 
-body {
-  font-family: 'Orbitron', sans-serif;
-}`}
-				language="css"
-				header={false}
-				canCopy={true}
-				edit={false}
-			/>
-
-			<p class="mt-4">
-				Either block can be used independently; both override the default font for every visible
-				part of Open WebUI.
-			</p>
+			<ul class="list-disc list-inside space-y-2">
+				<li>
+					<strong>Modern Sans:</strong> <code>'Inter', system-ui, sans-serif</code>
+				</li>
+				<li>
+					<strong>Monospace (Code):</strong> <code>'Fira Code', 'JetBrains Mono', monospace</code>
+				</li>
+				<li>
+					<strong>Serif (Classic):</strong> <code>'Georgia', 'Times New Roman', serif</code>
+				</li>
+				<li>
+					<strong>Native MacOS:</strong> <code>-apple-system, BlinkMacSystemFont</code>
+				</li>
+				<li>
+					<strong>Native Windows:</strong> <code>"Segoe UI", "Tahoma"</code>
+				</li>
+			</ul>
 		</div>
 	</Collapsible>
 
