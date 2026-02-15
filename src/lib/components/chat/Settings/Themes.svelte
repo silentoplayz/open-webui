@@ -1399,6 +1399,10 @@
 			themeToEdit = null;
 		}
 	}}
+	on:cancel={() => {
+		showEditThemeWarning = false;
+		themeToEdit = null;
+	}}
 >
 	<div class="flex flex-col gap-3">
 		<div class=" text-sm text-gray-500 flex-1">
@@ -1419,11 +1423,6 @@
 		</label>
 	</div>
 </ConfirmDialog>
-	on:cancel={() => {
-		showEditThemeWarning = false;
-		themeToEdit = null;
-	}}
-/>
 
 <!-- Active Theme Change Confirmation Modal -->
 <ConfirmDialog
@@ -1478,9 +1477,6 @@
 		// In creation case, open-theme-editor always follows a check of saveChanges
 		window.dispatchEvent(new CustomEvent('active-theme-changed', { detail: { themeId: selectedThemeId } }));
 		
-		// For create new, we need to manually call _proceed with save flag or let layout handle
-		// Actually, _proceedCreateNewTheme is local. Let's update it to respect saveChanges or just dispatch.
-		
 		// We'll dispatch a special event that says "save current then create new"
 		window.dispatchEvent(
 			new CustomEvent('open-theme-editor', {
@@ -1495,6 +1491,9 @@
 		
 		editingThemeId.set(null);
 		showSettings.set(false);
+	}}
+	on:cancel={() => {
+		showNewThemeWarning = false;
 	}}
 >
 	<div class="flex flex-col gap-3">
@@ -1515,7 +1514,3 @@
 		</label>
 	</div>
 </ConfirmDialog>
-	on:cancel={() => {
-		showNewThemeWarning = false;
-	}}
-/>
