@@ -42,6 +42,7 @@
 		if (event.key === 'Escape') {
 			console.log('Escape');
 			show = false;
+			dispatch('cancel');
 		}
 
 		if (event.key === 'Enter') {
@@ -102,6 +103,7 @@
 		in:fade={{ duration: 10 }}
 		on:mousedown={() => {
 			show = false;
+			dispatch('cancel');
 		}}
 	>
 		<div

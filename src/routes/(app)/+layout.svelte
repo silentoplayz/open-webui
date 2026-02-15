@@ -14,7 +14,7 @@
 	import { getModels, getToolServersData, getVersionUpdates } from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
 	import { getBanners } from '$lib/apis/configs';
-	import { getUserSettings } from '$lib/apis/users';
+	import { getUserSettings, updateUserSettings } from '$lib/apis/users';
 
 	import { WEBUI_VERSION } from '$lib/constants';
 	import { compareVersion } from '$lib/utils';
@@ -64,6 +64,7 @@
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
 	import type { Theme } from '$lib/types';
 	import { validateTheme, isDuplicateTheme } from '$lib/utils/theme';
+	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
 	import type { Writable } from 'svelte/store';
 	const i18n = getContext<Writable<any>>('i18n');
@@ -119,13 +120,14 @@
 	let isEditingTheme = false;
 	let previousThemeId = '';
 
+	let showApplyThemeConfirm = false;
+	let themeToApply: Theme | null = null;
+
 	// Watch for theme editor changes
 	$: if ($showThemeEditor && $editingThemeId) {
 		// Editing existing theme
 		isEditingTheme = true;
 	} else if ($showThemeEditor && !$editingThemeId) {
-		// Creating new theme
-		isEditingTheme = false;
 		// Creating new theme
 		isEditingTheme = false;
 	}
@@ -261,11 +263,10 @@
 		} else {
 			// Add new theme
 			if (await addCommunityTheme(themeToSave)) {
-				toast.success(`Theme "${themeToSave.name}" added successfully!`);
-				success = true;
+				return themeToSave;
 			}
 		}
-		return success;
+		return isEditing ? themeToSave : null;
 	};
 
 	// Event handlers for theme editor - defined at module level for proper cleanup
@@ -294,24 +295,30 @@
 
 	const handleThemeEditorSaveComplete = (event: Event) => {
 		const customEvent = event as CustomEvent;
-		const { success } = customEvent.detail;
+		const { success, isEditing, theme: savedTheme } = customEvent.detail;
+
 		if (success) {
-			// Close the editor and reset state
+			console.log('[+layout] handleThemeEditorSaveComplete - Success intercepted', { isEditing, themeName: savedTheme?.name });
+			// If it was a NEW theme creation, ask if user wants to apply it
+			if (!isEditing && savedTheme) {
+				themeToApply = savedTheme;
+				showApplyThemeConfirm = true;
+				
+				// Reset local editor state but don't close yet (ConfirmDialog handles the close)
+				editingThemeId.set(null);
+				return;
+			}
+
 			showThemeEditor.set(false);
 			editingThemeId.set(null);
 			selectedTheme = null;
 
-			// Apply the user's active theme.
-			// Use previousThemeId as source of truth for the intended active theme, 
-			// which includes updates from handleActiveThemeChanged.
-			console.log('[+layout] Save Complete. previousThemeId:', previousThemeId, 'localStorage:', localStorage.getItem('theme'));
+			// Apply the user's active theme (for updates to existing themes)
 			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
-			
+			console.log('[+layout] Applying active theme after update:', activeThemeId);
 			applyTheme(activeThemeId);
 
-			// CRITICAL: Sync global theme store if it differs (same fix as cancel handler).
 			if ($theme !== activeThemeId) {
-				console.log('[+layout] Syncing global theme store after save to:', activeThemeId);
 				theme.set(activeThemeId);
 			}
 		}
@@ -330,11 +337,16 @@
 		const { theme: updatedTheme, isEditing } = customEvent.detail;
 		console.log('[+layout] Processing save request for theme', updatedTheme.name);
 
-		const success = await _saveTheme(updatedTheme, isEditing);
+		const savedTheme = await _saveTheme(updatedTheme, isEditing);
+		const success = !!savedTheme;
 		
-		console.log('[+layout] Save result:', success);
-		// Notify completion
-		window.dispatchEvent(new CustomEvent('theme-editor-save-complete', { detail: { success } }));
+		console.log('[+layout] Save result:', success, savedTheme ? 'Theme object returned' : 'No theme object');
+		// Notify completion with more metadata
+		window.dispatchEvent(
+			new CustomEvent('theme-editor-save-complete', {
+				detail: { success, isEditing, theme: savedTheme }
+			})
+		);
 	};
 
 	onMount(async () => {
@@ -541,6 +553,62 @@
 
 <SettingsModal bind:show={$showSettings} />
 <ChangelogModal bind:show={$showChangelog} />
+
+<ConfirmDialog
+	bind:show={showApplyThemeConfirm}
+	title={$i18n.t('Apply New Theme?')}
+	message={$i18n.t("Theme '{{name}}' has been created successfully. Would you like to apply it now?", {
+		name: themeToApply?.name
+	})}
+	confirmLabel={$i18n.t('Apply Theme')}
+	cancelLabel={$i18n.t('Keep Current')}
+	onConfirm={async () => {
+		if (themeToApply) {
+			const themeId = themeToApply.id;
+			console.log('[+layout] Confirmation confirmed - Applying new theme:', themeId);
+			
+			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
+			
+			// 1. Update localStorage fallback
+			localStorage.setItem('theme', themeId);
+			
+			// 2. Update settings store (critical to prevent reactive revert)
+			if (localStorage.token) {
+				const updatedSettings = {
+					...$settings,
+					theme: themeId
+				};
+				settings.set(updatedSettings);
+				// We don't await the backend update here to keep UI responsive, 
+				// but it runs in parallel.
+				updateUserSettings(localStorage.token, { ui: updatedSettings });
+			}
+
+			// 3. Update active theme ID and apply visual styles
+			theme.set(themeId);
+			applyTheme(themeToApply);
+
+			console.log('[+layout] Persistence complete. Theme applied successfully.');
+		}
+		
+		// 4. Close editor state COMPLETELY
+		showThemeEditor.set(false);
+		selectedTheme = null;
+		themeToApply = null;
+	}}
+	on:cancel={() => {
+		console.log('[+layout] Confirmation canceled - Keeping current theme');
+		if (themeToApply) {
+			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
+			// Apply the user's previous active theme
+			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+			applyTheme(activeThemeId);
+		}
+		showThemeEditor.set(false);
+		selectedTheme = null;
+		themeToApply = null;
+	}}
+/>
 
 {#if $showThemeEditor && selectedTheme}
 	<ThemeEditorModal
