@@ -654,7 +654,12 @@
 
 	const openThemeEditor = (theme: Theme) => {
 		// Prevent editing if it's already being edited in another tab
-		if (Object.values($editingThemes).includes(theme.id)) {
+		// We check if the theme ID is present in editingThemes values.
+		// If it is, and it's NOT the theme we are CURRENTLY editing in this tab (which would be $editingThemeId),
+		// then it must be open in another tab.
+		const isBusyElsewhere = Object.values($editingThemes).some((tId) => tId === theme.id) && $editingThemeId !== theme.id;
+
+		if (isBusyElsewhere) {
 			toast.error($i18n.t("Cannot edit theme while it's being edited (possibly in another tab)"));
 			return;
 		}
@@ -1394,6 +1399,20 @@
 	on:confirm={() => {
 		showEditThemeWarning = false;
 		if (themeToEdit) {
+			// PREVENT BYPASS: Re-verify that the target theme isn't busy in another tab
+			// (as it might have become busy while the modal was open)
+			const isBusyElsewhere = Object.values($editingThemes).some((tId) => tId === themeToEdit.id) && $editingThemeId !== themeToEdit.id;
+
+			if (isBusyElsewhere) {
+				toast.error(
+					$i18n.t("Theme '{{name}}' is currently being edited in another tab.", {
+						name: themeToEdit.name
+					})
+				);
+				themeToEdit = null;
+				return;
+			}
+
 			window.dispatchEvent(
 				new CustomEvent('open-theme-editor', {
 					detail: {
