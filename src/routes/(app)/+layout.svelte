@@ -70,11 +70,11 @@
 	const i18n = getContext<Writable<any>>('i18n');
 
 	let loaded = false;
-	let DB = null;
-	let localDBChats = [];
+	let DB: any = null;
+	let localDBChats: any[] = [];
 	let mainContainer: HTMLElement;
 
-	let version;
+	let version: any;
 
 	// Cross-tab theme editing sync
 	const tabId = uuidv4();
@@ -157,7 +157,7 @@
 			}
 
 			const chats = await DB.getAllFromIndex('chats', 'timestamp');
-			localDBChats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
+			localDBChats = chats.map((item: any, idx: number) => chats[chats.length - 1 - idx]);
 
 			if (localDBChats.length === 0) {
 				await deleteDB('Chats');

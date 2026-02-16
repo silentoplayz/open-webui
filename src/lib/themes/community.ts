@@ -35,14 +35,34 @@ export const broadcastCommunityThemes = () => {
 	}
 };
 
-// Listen for theme requests from new tabs
+// Listen for theme requests and sync messages from other tabs
 if (communityThemesBc) {
 	communityThemesBc.onmessage = (event) => {
 		if (event.data?.type === 'request-themes') {
 			console.log('[community] Received theme request from another tab, responding...');
 			broadcastCommunityThemes();
+		} else if (event.data?.type === 'sync' && event.data?.themes) {
+			console.log('[community] Received community themes sync from another tab', {
+				count: event.data.themes.length
+			});
+			const newThemesMap = new Map<string, Theme>(event.data.themes);
+
+			// Check if the content actually changed before updating store to avoid loops
+			const currentThemesObj = Object.fromEntries(get(communityThemes));
+			const newThemesObj = Object.fromEntries(newThemesMap);
+
+			if (JSON.stringify(currentThemesObj) !== JSON.stringify(newThemesObj)) {
+				communityThemes.set(newThemesMap);
+			}
 		}
 	};
+
+	// Request themes from other tabs on load to ensure we have the latest state
+	// even before settings are fetched from the backend or if they haven't synced yet.
+	setTimeout(() => {
+		console.log('[community] Requesting community themes from other tabs...');
+		communityThemesBc.postMessage({ type: 'request-themes' });
+	}, 100);
 }
 
 export const loadCommunityThemes = async () => {
@@ -141,16 +161,21 @@ const saveCommunityThemes = async (themes: Map<string, Theme>): Promise<boolean>
 
 						await updateUserSettings(localStorage.token, { ui: updatedSettings });
 					}
-					resolve(true);
+					return true;
 				} catch (e) {
 					console.error('Failed to save themes to account:', e);
 					toast.error('Failed to save themes to your account.');
-					resolve(false);
+					return false;
 				}
+			})
+			.then((success) => {
+				resolve(success);
+				return success;
 			})
 			.catch((e) => {
 				console.error('Save queue error:', e);
 				resolve(false);
+				return false;
 			});
 	});
 };
@@ -162,7 +187,7 @@ export const addCommunityTheme = async (theme: Theme, skipSave: boolean = false)
 	if (!theme.targetWebUIVersion) {
 		theme.targetWebUIVersion = WEBUI_VERSION;
 	}
-	
+
 	const themeToAdd = { ...theme, lastModified: Date.now() };
 	newThemes.set(themeToAdd.id, themeToAdd);
 	communityThemes.set(newThemes);
@@ -176,6 +201,7 @@ export const addCommunityTheme = async (theme: Theme, skipSave: boolean = false)
 
 	if (!success) {
 		communityThemes.set(originalThemes);
+		broadcastCommunityThemes();
 	}
 	return success;
 };
@@ -198,6 +224,7 @@ export const addCommunityThemes = async (newThemesList: Theme[]): Promise<boolea
 
 	if (!success) {
 		communityThemes.set(originalThemes);
+		broadcastCommunityThemes();
 	}
 	return success;
 };
@@ -215,6 +242,7 @@ export const updateCommunityTheme = async (theme: Theme): Promise<boolean> => {
 
 		if (!success) {
 			communityThemes.set(originalThemes);
+			broadcastCommunityThemes();
 		}
 		return success;
 	}
@@ -252,6 +280,7 @@ export const removeCommunityTheme = async (themeId: string) => {
 	const success = await saveCommunityThemes(newThemes);
 	if (!success) {
 		communityThemes.set(originalThemes);
+		broadcastCommunityThemes();
 	}
 };
 
@@ -309,11 +338,11 @@ const _fetchTheme = async (url: string): Promise<[Theme | null, string | null]> 
 			console.error(`Failed to fetch theme from ${url}: ${errorText}`);
 			return [null, errorText];
 		}
-		const theme = await res.json();
+		const theme = (await res.json()) as unknown as Theme;
 		return [theme, null];
-	} catch (error: any) {
+	} catch (error: unknown) {
 		console.error(`Failed to fetch theme from ${url}:`, error);
-		return [null, error.message || 'Unknown error'];
+		return [null, (error as Error).message || 'Unknown error'];
 	}
 };
 
@@ -402,7 +431,7 @@ export const retryThemeUpdateCheck = async (theme: Theme) => {
 		themeUpdateErrors.set(errors);
 
 		// Check for a new version and update the themeUpdates store
-		if (latestTheme.version && isNewerVersion(theme.version, latestTheme.version)) {
+		if (latestTheme.version && isNewerVersion(theme.version ?? '0.0.0', latestTheme.version)) {
 			const updates = get(themeUpdates);
 			updates.set(theme.id, latestTheme);
 			themeUpdates.set(updates);
@@ -413,7 +442,7 @@ export const retryThemeUpdateCheck = async (theme: Theme) => {
 	} else {
 		// Update the error message in the store
 		const errors = get(themeUpdateErrors);
-		errors.set(theme.id, error);
+		errors.set(theme.id, error ?? 'Unknown error');
 		themeUpdateErrors.set(errors);
 		toast.error(`Failed to check for update for theme "${theme.name}": ${error}`);
 	}
@@ -471,7 +500,7 @@ export const checkForThemeUpdates = async (manual = false) => {
 					continue;
 				}
 
-				if (latestTheme.version && isNewerVersion(theme.version, latestTheme.version)) {
+				if (latestTheme.version && isNewerVersion(theme.version ?? '0.0.0', latestTheme.version)) {
 					updates.set(id, latestTheme);
 					updatesFound++;
 
