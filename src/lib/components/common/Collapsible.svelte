@@ -43,7 +43,7 @@
 		'w-fit text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition';
 
 	export let id = '';
-	export let title = null;
+	export let title: string | null = null;
 	export let attributes = null;
 
 	export let chevron = false;

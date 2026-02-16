@@ -68,6 +68,7 @@
 					code={JSON.stringify(fullThemeSchema, null, 2)}
 					lang="json"
 					edit={false}
+					token={null}
 				/>
 			</div>
 		</div>
@@ -171,6 +172,7 @@
 }`}
 				lang="css"
 				edit={false}
+				token={null}
 			/>
 
 			<hr class="my-4 border-gray-200 dark:border-gray-700" />
@@ -235,7 +237,7 @@
 					<tbody>
 						{#each variables as variable}
 							<tr class="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-								<td class="px-4 py-3 font-mono text-blue-600 dark:text-blue-400">{variable.name}</td>
+								<td class="px-4 py-3 font-mono text-blue-600 dark:text-blue-400 whitespace-nowrap">{variable.name}</td>
 								<td class="px-4 py-3">
 									<div class="flex items-center gap-2">
 										{#if /^#[0-9A-Fa-f]{3,8}$/.test(variable.defaultValue)}
@@ -244,7 +246,7 @@
 												style="background-color: {variable.defaultValue}"
 											></div>
 										{/if}
-										<span class="font-mono">{variable.defaultValue}</span>
+										<span class="font-mono whitespace-nowrap">{variable.defaultValue}</span>
 									</div>
 								</td>
 								<td class="px-4 py-3 text-gray-500">{variable.description}</td>
