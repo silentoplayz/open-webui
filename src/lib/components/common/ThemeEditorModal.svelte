@@ -380,7 +380,9 @@
 							</button>
 						</Tooltip>
 						{#if !$themeEditorCollapsed}
-							<h2 class="text-lg font-medium">{$i18n.t('Edit Theme')}</h2>
+							<h2 class="text-lg font-medium">
+								{isEditing ? $i18n.t('Theme Editor') : $i18n.t('Theme Creator')}
+							</h2>
 						{/if}
 					</div>
 					{#if !$themeEditorCollapsed}
