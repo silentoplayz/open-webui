@@ -40,6 +40,18 @@
 	let tsParticleConfigText: string;
 	let manualEditMode = false;
 	let themeJsonText = '';
+	let isManualJsonValid = true;
+
+	$: {
+		try {
+			if (themeJsonText && themeJsonText.trim()) {
+				JSON.parse(themeJsonText);
+			}
+			isManualJsonValid = true;
+		} catch {
+			isManualJsonValid = false;
+		}
+	}
 
 	let activeTab = 'General';
 
@@ -86,7 +98,7 @@
 					'--color-blue-600'
 				];
 
-				const newVariables = {};
+				const newVariables: Record<string, string> = {};
 				for (const v of variables) {
 					if (importantVariables.includes(v.name)) {
 						newVariables[v.name] = v.defaultValue;
@@ -131,7 +143,7 @@
 			initialVariables = JSON.parse(JSON.stringify(themeCopy.variables || {}));
 			initialGradient = JSON.parse(JSON.stringify(themeCopy.gradient));
 
-			variablesText = objectToCss(themeCopy.variables);
+			variablesText = objectToCss(themeCopy.variables || {});
 			cssText = themeCopy.css ?? '';
 			animationScriptText = themeCopy.animationScript ?? '';
 			tsParticleConfigText = themeCopy.tsparticlesConfig
@@ -249,12 +261,14 @@
 		dispatch('save', themeCopy);
 	};
 
-	const handleManualJsonInput = (event) => {
+	const handleManualJsonInput = (event: CustomEvent<string>) => {
 		themeJsonText = event.detail;
 		try {
 			themeCopy = JSON.parse(themeJsonText);
+			isManualJsonValid = true;
 			dispatch('update', themeCopy);
 		} catch (e) {
+			isManualJsonValid = false;
 			// Do not dispatch update if JSON is invalid
 			// Ideally we would show a toast here, but it might be annoying while typing.
 			// The syntax highlighter in the editor usually handles visual feedback.
@@ -284,7 +298,7 @@
 						themeCopy.gradient.enabled = false;
 					}
 
-					variablesText = objectToCss(themeCopy.variables);
+					variablesText = objectToCss(themeCopy.variables || {});
 					cssText = themeCopy.css ?? '';
 					animationScriptText = themeCopy.animationScript ?? '';
 					tsParticleConfigText = themeCopy.tsparticlesConfig
@@ -308,7 +322,7 @@
 				}
 			} else {
 				// Codeblock is empty - re-sync form fields from themeCopy and update preview
-				variablesText = objectToCss(themeCopy.variables);
+				variablesText = objectToCss(themeCopy.variables || {});
 				cssText = themeCopy.css ?? '';
 				animationScriptText = themeCopy.animationScript ?? '';
 				tsParticleConfigText = themeCopy.tsparticlesConfig
@@ -521,7 +535,17 @@
 									lang={'json'}
 									edit={true}
 									on:change={handleManualJsonInput}
+									token={null}
 								/>
+								<div class="mt-1 flex justify-end">
+									<span
+										class="text-xs transition-colors {isManualJsonValid
+											? 'text-green-500'
+											: 'text-red-500 font-medium'}"
+									>
+										{isManualJsonValid ? 'Valid JSON' : 'Invalid JSON'}
+									</span>
+								</div>
 							</div>
 						{/if}
 					{/if}

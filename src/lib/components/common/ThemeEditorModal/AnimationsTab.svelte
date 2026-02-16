@@ -83,6 +83,7 @@
 						lang={'javascript'}
 						edit={true}
 						on:change={handleAnimationScriptInput}
+						token={null}
 					/>
 				</div>
 			{/key}
@@ -121,6 +122,7 @@
 						lang={'json'}
 						edit={true}
 						on:change={handleTsParticleConfigInput}
+						token={null}
 					/>
 				</div>
 				<div class="mt-1 flex justify-end">
