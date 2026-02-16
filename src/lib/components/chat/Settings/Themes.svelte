@@ -169,7 +169,7 @@
 			features.push('Chat BG');
 		}
 
-		return features;
+		return features.sort();
 	};
 
 	/**
