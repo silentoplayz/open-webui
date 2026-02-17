@@ -951,6 +951,7 @@
 		}
 
 		return () => {
+			unsubscribeSettings();
 			window.removeEventListener('resize', onResize);
 			window.removeEventListener('message', windowMessageEventHandler);
 			document.removeEventListener('touchstart', touchstartHandler);
@@ -962,6 +963,8 @@
 
 	onDestroy(() => {
 		bc.close();
+		settingsBc.close();
+		communityThemesBc.close();
 	});
 </script>
 
