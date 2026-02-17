@@ -294,37 +294,6 @@
 		previousThemeId = prevTheme;
 	};
 
-	const handleThemeEditorSaveComplete = (event: Event) => {
-		const customEvent = event as CustomEvent;
-		const { success, isEditing, theme: savedTheme } = customEvent.detail;
-
-		if (success) {
-			console.log('[+layout] handleThemeEditorSaveComplete - Success intercepted', { isEditing, themeName: savedTheme?.name });
-			// If it was a NEW theme creation, ask if user wants to apply it
-			if (!isEditing && savedTheme) {
-				themeToApply = savedTheme;
-				showApplyThemeConfirm = true;
-				
-				// Reset local editor state but don't close yet (ConfirmDialog handles the close)
-				editingThemeId.set(null);
-				return;
-			}
-
-			showThemeEditor.set(false);
-			editingThemeId.set(null);
-			selectedTheme = null;
-
-			// Apply the user's active theme (for updates to existing themes)
-			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
-			console.log('[+layout] Applying active theme after update:', activeThemeId);
-			applyTheme(activeThemeId);
-
-			if ($theme !== activeThemeId) {
-				theme.set(activeThemeId);
-			}
-		}
-	};
-
 	const handleActiveThemeChanged = (event: Event) => {
 		const customEvent = event as CustomEvent;
 		const { themeId } = customEvent.detail;
@@ -333,21 +302,39 @@
 		previousThemeId = themeId;
 	};
 
-	const handleThemeEditorSave = async (event: Event) => {
-		const customEvent = event as CustomEvent;
-		const { theme: updatedTheme, isEditing } = customEvent.detail;
+	const handleThemeEditorSaveRequest = async (updatedTheme: Theme, isEditing: boolean) => {
 		console.log('[+layout] Processing save request for theme', updatedTheme.name);
 
 		const savedTheme = await _saveTheme(updatedTheme, isEditing);
 		const success = !!savedTheme;
-		
 		console.log('[+layout] Save result:', success, savedTheme ? 'Theme object returned' : 'No theme object');
-		// Notify completion with more metadata
-		window.dispatchEvent(
-			new CustomEvent(THEME_EVENTS.SAVE_EDITOR_COMPLETE, {
-				detail: { success, isEditing, theme: savedTheme }
-			})
-		);
+
+		if (!success) {
+			return;
+		}
+
+		// If it was a NEW theme creation, ask if user wants to apply it
+		if (!isEditing && savedTheme) {
+			themeToApply = savedTheme;
+			showApplyThemeConfirm = true;
+
+			// Reset local editor state but don't close yet (ConfirmDialog handles the close)
+			editingThemeId.set(null);
+			return;
+		}
+
+		showThemeEditor.set(false);
+		editingThemeId.set(null);
+		selectedTheme = null;
+
+		// Apply the user's active theme (for updates to existing themes)
+		const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+		console.log('[+layout] Applying active theme after update:', activeThemeId);
+		applyTheme(activeThemeId);
+
+		if ($theme !== activeThemeId) {
+			theme.set(activeThemeId);
+		}
 	};
 
 	onMount(async () => {
@@ -361,20 +348,10 @@
 
 		// Remove any existing listeners first (prevents duplicates during hot reload)
 		window.removeEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
-		window.removeEventListener(THEME_EVENTS.SAVE_EDITOR, handleThemeEditorSave as any);
-		window.removeEventListener(
-			THEME_EVENTS.SAVE_EDITOR_COMPLETE,
-			handleThemeEditorSaveComplete as any
-		);
 		window.removeEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
 
 		// Now add the listeners
 		window.addEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
-		window.addEventListener(THEME_EVENTS.SAVE_EDITOR, handleThemeEditorSave as any);
-		window.addEventListener(
-			THEME_EVENTS.SAVE_EDITOR_COMPLETE,
-			handleThemeEditorSaveComplete as any
-		);
 		window.addEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
 
 		clearChatInputStorage();
@@ -529,11 +506,6 @@
 
 	onDestroy(() => {
 		window.removeEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
-		window.removeEventListener(THEME_EVENTS.SAVE_EDITOR, handleThemeEditorSave as any);
-		window.removeEventListener(
-			THEME_EVENTS.SAVE_EDITOR_COMPLETE,
-			handleThemeEditorSaveComplete as any
-		);
 		window.removeEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
 
 		if (themeEditingBC) {
@@ -619,13 +591,7 @@
 		on:save={(e) => {
 			const updatedTheme = e.detail;
 			console.log('[+layout] Save event received from ThemeEditorModal', updatedTheme);
-			// Dispatch save event for Themes.svelte to handle
-			window.dispatchEvent(
-				new CustomEvent(THEME_EVENTS.SAVE_EDITOR, {
-					detail: { theme: updatedTheme, isEditing: isEditingTheme }
-				})
-			);
-			console.log('[+layout] Dispatched theme-editor-save event');
+			void handleThemeEditorSaveRequest(updatedTheme, isEditingTheme);
 		}}
 		on:saveAsNew={(e) => {
 			const newTheme = e.detail;
@@ -642,12 +608,7 @@
 			// sourceUrl is preserved to allow forked themes to receive updates
 
 			
-			// Dispatch save event for Themes.svelte to handle (isEditing = false)
-			window.dispatchEvent(
-				new CustomEvent(THEME_EVENTS.SAVE_EDITOR, {
-					detail: { theme: newTheme, isEditing: false }
-				})
-			);
+			void handleThemeEditorSaveRequest(newTheme, false);
 		}}
 		on:update={(e) => {
 			selectedTheme = e.detail;
