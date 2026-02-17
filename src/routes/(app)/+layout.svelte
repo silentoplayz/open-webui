@@ -54,8 +54,6 @@
 	import {
 		liveThemeStore,
 		applyTheme,
-		addCommunityTheme,
-		updateCommunityTheme,
 		communityThemes as communityThemesStore
 	} from '$lib/theme';
 	import {
@@ -64,10 +62,10 @@
 		type ActiveThemeChangedRequest
 	} from '$lib/themes/editor-bridge';
 	import { startThemeEditingSync } from '$lib/themes/editing-sync';
+	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
 	import type { Theme } from '$lib/types';
-	import { validateTheme, isDuplicateTheme } from '$lib/utils/theme';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
 	import type { Writable } from 'svelte/store';
@@ -197,44 +195,12 @@
 	// Reusable save logic for theme editor
 	const _saveTheme = async (themeToSave: Theme, isEditing: boolean): Promise<Theme | null> => {
 		console.log('[+layout] _saveTheme triggered', themeToSave.name, 'isEditing:', isEditing);
-
-		// Validation
-		const validation = validateTheme(themeToSave);
-		if (!validation.valid) {
-			console.log('[+layout] Validation failed:', validation.error);
-			toast.error(validation.error ?? 'Invalid theme');
-			return null;
-		}
-
-		// Check for duplicates
-		const themesToCheck = isEditing
-			? Array.from($communityThemesStore.values()).filter((t) => t.id !== themeToSave.id)
-			: Array.from($communityThemesStore.values());
-
-		if (isDuplicateTheme(themeToSave, themesToCheck, false, themeToSave.id)) {
-			console.log('[+layout] Duplicate theme detected');
-			toast.error('A theme with the same content already exists.');
-			return null;
-		}
-
-		if (isEditing) {
-			// Update existing theme
-			if (await updateCommunityTheme(themeToSave)) {
-				toast.success(`Theme "${themeToSave.name}" updated successfully!`);
-				// If this is the currently selected theme, apply it
-				if (themeToSave.id === localStorage.getItem('theme')) {
-					applyTheme(themeToSave);
-				}
-				return themeToSave;
-			}
-			return null;
-		}
-
-		// Add new theme
-		if (await addCommunityTheme(themeToSave)) {
-			return themeToSave;
-		}
-		return null;
+		return saveEditorTheme({
+			themeToSave,
+			isEditing,
+			existingThemes: Array.from($communityThemesStore.values()),
+			activeThemeId: localStorage.getItem('theme')
+		});
 	};
 
 	// Event handlers for theme editor - defined at module level for proper cleanup
