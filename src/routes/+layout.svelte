@@ -34,7 +34,14 @@
 		channelId,
 		showThemeEditor
 	} from '$lib/stores';
-	import { applyTheme, checkForThemeUpdates, themes, communityThemes, liveThemeStore } from '$lib/theme';
+	import {
+		applyTheme,
+		checkForThemeUpdates,
+		themes,
+		communityThemes,
+		liveThemeStore,
+		initCommunityThemes
+	} from '$lib/theme';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { beforeNavigate } from '$app/navigation';
@@ -677,6 +684,8 @@
 	}
 
 	onMount(async () => {
+		initCommunityThemes();
+
 		// Sync theme changes across tabs
 		const themeStorageHandler = (e) => {
 			if (e.key === 'theme' && e.newValue) {

@@ -19,6 +19,7 @@ import { browser } from '$app/environment';
 
 // BroadcastChannel for theme synchronization
 const communityThemesBc = browser ? new BroadcastChannel('community-themes-sync') : null;
+let communityThemesInitialized = false;
 
 /**
  * Broadcasts the current community themes to all other tabs.
@@ -131,6 +132,15 @@ export const loadCommunityThemes = async () => {
 	// However, be careful about circular loops: save -> settings update -> load -> ...
 	// The `saveCommunityThemes` updates the backend, which might update the store if we re-fetch,
 	// but usually we update the store locally first.
+};
+
+export const initCommunityThemes = () => {
+	if (!browser || communityThemesInitialized) {
+		return;
+	}
+
+	communityThemesInitialized = true;
+	void loadCommunityThemes();
 };
 
 
@@ -557,5 +567,3 @@ export const checkForThemeUpdates = async (manual = false) => {
 		}
 	}
 };
-
-loadCommunityThemes();
