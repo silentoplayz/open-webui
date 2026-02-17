@@ -60,7 +60,11 @@
 		updateCommunityTheme,
 		communityThemes as communityThemesStore
 	} from '$lib/theme';
-	import { THEME_EVENTS } from '$lib/themes/events';
+	import {
+		setThemeEditorBridgeHandlers,
+		type OpenThemeEditorRequest,
+		type ActiveThemeChangedRequest
+	} from '$lib/themes/editor-bridge';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
 	import type { Theme } from '$lib/types';
@@ -123,6 +127,7 @@
 
 	let showApplyThemeConfirm = false;
 	let themeToApply: Theme | null = null;
+	let clearThemeEditorBridgeHandlers: (() => void) | null = null;
 
 	// Watch for theme editor changes
 	$: if ($showThemeEditor && $editingThemeId) {
@@ -271,9 +276,12 @@
 	};
 
 	// Event handlers for theme editor - defined at module level for proper cleanup
-	const handleOpenThemeEditor = async (event: Event) => {
-		const customEvent = event as CustomEvent;
-		const { theme, isEditing, previousThemeId: prevTheme, saveChanges } = customEvent.detail;
+	const handleOpenThemeEditor = async ({
+		theme,
+		isEditing,
+		previousThemeId: prevTheme,
+		saveChanges
+	}: OpenThemeEditorRequest) => {
 		console.log('[+layout] Opening theme editor', { themeName: theme?.name || 'New Theme', isEditing, saveChanges });
 
 		// AUTO-SAVE: If we're already editing a theme and saveChanges is true
@@ -294,9 +302,7 @@
 		previousThemeId = prevTheme;
 	};
 
-	const handleActiveThemeChanged = (event: Event) => {
-		const customEvent = event as CustomEvent;
-		const { themeId } = customEvent.detail;
+	const handleActiveThemeChanged = ({ themeId }: ActiveThemeChangedRequest) => {
 		console.log('[+layout] Active theme changed via confirmation modal:', themeId);
 		// Update previousThemeId so that when editor closes, it applies the correct theme
 		previousThemeId = themeId;
@@ -346,13 +352,12 @@
 			return;
 		}
 
-		// Remove any existing listeners first (prevents duplicates during hot reload)
-		window.removeEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
-		window.removeEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
-
-		// Now add the listeners
-		window.addEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
-		window.addEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
+		// Reset handlers first (prevents duplicates during hot reload)
+		clearThemeEditorBridgeHandlers?.();
+		clearThemeEditorBridgeHandlers = setThemeEditorBridgeHandlers({
+			onOpenEditor: handleOpenThemeEditor,
+			onActiveThemeChanged: handleActiveThemeChanged
+		});
 
 		clearChatInputStorage();
 		await Promise.all([
@@ -505,8 +510,8 @@
 	});
 
 	onDestroy(() => {
-		window.removeEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
-		window.removeEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
+		clearThemeEditorBridgeHandlers?.();
+		clearThemeEditorBridgeHandlers = null;
 
 		if (themeEditingBC) {
 			themeEditingBC.postMessage({ type: 'editing-update', tabId, themeId: null });
