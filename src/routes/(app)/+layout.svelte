@@ -66,6 +66,7 @@
 	import { applyCreatedTheme, restoreThemeAfterCreateCancel } from '$lib/themes/editor-apply-confirm';
 	import { openThemeEditorSession } from '$lib/themes/editor-open-session';
 	import { processEditorSaveRequest, restoreThemeAfterEditorSave } from '$lib/themes/editor-save-request';
+	import { prepareThemeSaveAsNew } from '$lib/themes/editor-save-as-new';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -531,20 +532,15 @@
 			void handleThemeEditorSaveRequest(updatedTheme, isEditingTheme);
 		}}
 		on:saveAsNew={(e) => {
-			const newTheme = e.detail;
-			console.log('[+layout] Save as New event received from ThemeEditorModal', newTheme);
-			
-			// If name hasn't changed, append (Copy) to avoid duplicate error
-			// Use originalTheme to check against the state when editor was opened
-			if (originalTheme && newTheme.name === originalTheme.name) {
-				newTheme.name = `${newTheme.name} (Copy)`;
-			}
-			
-			// Generate new ID and treat as new theme
-			newTheme.id = `theme-${uuidv4()}`;
-			// sourceUrl is preserved to allow forked themes to receive updates
+			const draftTheme = e.detail;
+			console.log('[+layout] Save as New event received from ThemeEditorModal', draftTheme);
 
-			
+			const newTheme = prepareThemeSaveAsNew({
+				draftTheme,
+				originalTheme,
+				createThemeId: () => `theme-${uuidv4()}`
+			});
+
 			void handleThemeEditorSaveRequest(newTheme, false);
 		}}
 		on:update={(e) => {
