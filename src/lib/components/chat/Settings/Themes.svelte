@@ -37,7 +37,6 @@
 	import Pencil from '$lib/components/icons/Pencil.svelte';
 	import Share from '$lib/components/icons/Share.svelte';
 	import EllipsisVertical from '$lib/components/icons/EllipsisVertical.svelte';
-	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
 	import ThemeImportWarningModal from '$lib/components/common/ThemeImportWarningModal.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import ThemeMenu from './ThemeMenu.svelte';
