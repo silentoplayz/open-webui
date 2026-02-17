@@ -125,13 +125,13 @@ export const validateTheme = (theme: any): { valid: boolean; error?: string } =>
 	if (theme.systemBackgroundImageUrl && !isValidThemeUrl(theme.systemBackgroundImageUrl, true)) {
 		return {
 			valid: false,
-			error: 'Invalid theme: "systemBackgroundImageUrl" must be a valid HTTP/HTTPS URL or data URI (max 500KB).'
+			error: 'Invalid theme: "systemBackgroundImageUrl" must be a valid HTTP/HTTPS URL or data URI (max 5MB).'
 		};
 	}
 	if (theme.chatBackgroundImageUrl && !isValidThemeUrl(theme.chatBackgroundImageUrl, true)) {
 		return {
 			valid: false,
-			error: 'Invalid theme: "chatBackgroundImageUrl" must be a valid HTTP/HTTPS URL or data URI (max 500KB).'
+			error: 'Invalid theme: "chatBackgroundImageUrl" must be a valid HTTP/HTTPS URL or data URI (max 5MB).'
 		};
 	}
 	return { valid: true };

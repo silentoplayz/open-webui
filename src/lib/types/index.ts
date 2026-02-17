@@ -51,7 +51,7 @@ export interface Theme {
 	author?: string;
 	repository?: string;
 	targetWebUIVersion?: string;
-	base: 'light' | 'dark' | 'oled-dark' | 'her';
+	base: 'system' | 'light' | 'dark' | 'oled-dark' | 'her';
 	emoji?: string;
 	metaThemeColor?: string;
 	systemBackgroundImageUrl?: string;
