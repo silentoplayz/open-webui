@@ -62,7 +62,8 @@
 		type ActiveThemeChangedRequest
 	} from '$lib/themes/editor-bridge';
 	import { startThemeEditingSync } from '$lib/themes/editing-sync';
-	import { restoreEditorActiveTheme, resolveEditorActiveThemeId } from '$lib/themes/editor-active-theme';
+	import { restoreEditorActiveTheme } from '$lib/themes/editor-active-theme';
+	import { applyCreatedTheme, restoreThemeAfterCreateCancel } from '$lib/themes/editor-apply-confirm';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -273,6 +274,54 @@
 		console.log('[+layout] Applying active theme after update:', activeThemeId);
 	};
 
+	const resetThemeEditorAfterCreateConfirm = () => {
+		showThemeEditor.set(false);
+		selectedTheme = null;
+		themeToApply = null;
+	};
+
+	const handleApplyThemeConfirm = () => {
+		if (themeToApply) {
+			const nextThemeToApply = themeToApply;
+			console.log('[+layout] Confirmation confirmed - Applying new theme:', nextThemeToApply.id);
+
+			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: nextThemeToApply.name }));
+
+			const themeId = applyCreatedTheme({
+				themeToApply: nextThemeToApply,
+				token: localStorage.token,
+				currentSettings: $settings,
+				setSettings: (nextSettings) => settings.set(nextSettings),
+				persistSettings: (token, payload) => {
+					void updateUserSettings(token, payload);
+				},
+				setLocalThemeId: (themeId) => localStorage.setItem('theme', themeId),
+				setActiveThemeId: (themeId) => theme.set(themeId),
+				applyTheme
+			});
+
+			console.log('[+layout] Persistence complete. Theme applied successfully.', themeId);
+		}
+
+		resetThemeEditorAfterCreateConfirm();
+	};
+
+	const handleKeepCurrentThemeAfterCreate = () => {
+		console.log('[+layout] Confirmation canceled - Keeping current theme');
+		if (themeToApply) {
+			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
+
+			const activeThemeId = restoreThemeAfterCreateCancel({
+				previousThemeId,
+				fallbackThemeId: localStorage.getItem('theme'),
+				applyThemeById: (themeId) => applyTheme(themeId)
+			});
+			console.log('[+layout] Restored active theme after create cancel:', activeThemeId);
+		}
+
+		resetThemeEditorAfterCreateConfirm();
+	};
+
 	onMount(async () => {
 		if ($user === undefined || $user === null) {
 			await goto('/auth');
@@ -465,55 +514,8 @@
 	})}
 	confirmLabel={$i18n.t('Apply Theme')}
 	cancelLabel={$i18n.t('Keep Current')}
-	onConfirm={async () => {
-		if (themeToApply) {
-			const themeId = themeToApply.id;
-			console.log('[+layout] Confirmation confirmed - Applying new theme:', themeId);
-			
-			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
-			
-			// 1. Update localStorage fallback
-			localStorage.setItem('theme', themeId);
-			
-			// 2. Update settings store (critical to prevent reactive revert)
-			if (localStorage.token) {
-				const updatedSettings = {
-					...$settings,
-					theme: themeId
-				};
-				settings.set(updatedSettings);
-				// We don't await the backend update here to keep UI responsive, 
-				// but it runs in parallel.
-				updateUserSettings(localStorage.token, { ui: updatedSettings });
-			}
-
-			// 3. Update active theme ID and apply visual styles
-			theme.set(themeId);
-			applyTheme(themeToApply);
-
-			console.log('[+layout] Persistence complete. Theme applied successfully.');
-		}
-		
-		// 4. Close editor state COMPLETELY
-		showThemeEditor.set(false);
-		selectedTheme = null;
-		themeToApply = null;
-	}}
-	on:cancel={() => {
-		console.log('[+layout] Confirmation canceled - Keeping current theme');
-		if (themeToApply) {
-			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
-			// Apply the user's previous active theme
-			const activeThemeId = resolveEditorActiveThemeId(
-				previousThemeId,
-				localStorage.getItem('theme')
-			);
-			applyTheme(activeThemeId);
-		}
-		showThemeEditor.set(false);
-		selectedTheme = null;
-		themeToApply = null;
-	}}
+	onConfirm={handleApplyThemeConfirm}
+	on:cancel={handleKeepCurrentThemeAfterCreate}
 />
 
 {#if $showThemeEditor && selectedTheme}
