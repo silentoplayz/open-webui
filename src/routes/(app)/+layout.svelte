@@ -70,6 +70,7 @@
 	import { applyThemeEditorPreview, cancelThemeEditorSession } from '$lib/themes/editor-cancel-preview';
 	import { restartThemeEditorRuntime, cleanupThemeEditorRuntime } from '$lib/themes/editor-runtime';
 	import { handleApplyCreatedThemeConfirm, handleKeepCurrentAfterCreateConfirm } from '$lib/themes/editor-create-confirm';
+	import { resolveThemeEditorIsEditing } from '$lib/themes/editor-mode';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -98,12 +99,11 @@
 	let stopThemeEditingSync: (() => void) | null = null;
 
 	// Watch for theme editor changes
-	$: if ($showThemeEditor && $editingThemeId) {
-		// Editing existing theme
-		isEditingTheme = true;
-	} else if ($showThemeEditor && !$editingThemeId) {
-		// Creating new theme
-		isEditingTheme = false;
+	$: {
+		const nextIsEditingTheme = resolveThemeEditorIsEditing($showThemeEditor, $editingThemeId);
+		if (nextIsEditingTheme !== null) {
+			isEditingTheme = nextIsEditingTheme;
+		}
 	}
 
 	beforeNavigate(({ to }) => {
