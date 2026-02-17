@@ -97,7 +97,6 @@
 
 	const bc = new BroadcastChannel('active-tab-channel');
 	const settingsBc = new BroadcastChannel('settings-sync');
-	const communityThemesBc = new BroadcastChannel('community-themes-sync');
 
 	let loaded = false;
 	let tokenTimer = null;
@@ -770,14 +769,6 @@
 			}
 		};
 
-		communityThemesBc.onmessage = (event) => {
-			if (event.data?.type === 'sync' && event.data?.themes) {
-				console.log('Syncing community themes from another tab');
-				const newThemesMap = new Map(event.data.themes);
-				communityThemes.set(newThemesMap);
-			}
-		};
-
 		const unsubscribeSettings = settings.subscribe((value) => {
 			if (value && Object.keys(value).length > 0) {
 				settingsBc.postMessage({ type: 'sync', settings: value });
@@ -952,13 +943,6 @@
 			showSyncStatsModal = true;
 		}
 
-		// Request community themes from other tabs if we don't have any locally yet
-		// This prevents "data loss" when opening a new blank tab
-		if (get(communityThemes).size === 0) {
-			console.log('[root layout] Pulling community themes from other tabs...');
-			communityThemesBc.postMessage({ type: 'request-themes' });
-		}
-
 		return () => {
 			unsubscribeSettings();
 			window.removeEventListener('resize', onResize);
@@ -973,7 +957,6 @@
 	onDestroy(() => {
 		bc.close();
 		settingsBc.close();
-		communityThemesBc.close();
 	});
 </script>
 
