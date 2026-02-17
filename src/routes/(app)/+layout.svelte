@@ -67,6 +67,7 @@
 	import { processEditorSaveRequest, restoreThemeAfterEditorSave } from '$lib/themes/editor-save-request';
 	import { prepareThemeSaveAsNew } from '$lib/themes/editor-save-as-new';
 	import { applyThemeEditorPreview, cancelThemeEditorSession } from '$lib/themes/editor-cancel-preview';
+	import { restartThemeEditorRuntime, cleanupThemeEditorRuntime } from '$lib/themes/editor-runtime';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -368,13 +369,16 @@
 		}
 
 		// Reset handlers first (prevents duplicates during hot reload)
-		clearThemeEditorBridgeHandlers?.();
-		clearThemeEditorBridgeHandlers = setThemeEditorBridgeHandlers({
-			onOpenEditor: handleOpenThemeEditor,
-			onActiveThemeChanged: handleActiveThemeChanged
-		});
-		stopThemeEditingSync?.();
-		stopThemeEditingSync = startThemeEditingSync();
+		({ clearThemeEditorBridgeHandlers, stopThemeEditingSync } = restartThemeEditorRuntime({
+			clearThemeEditorBridgeHandlers,
+			stopThemeEditingSync,
+			setThemeEditorBridgeHandlers,
+			bridgeHandlers: {
+				onOpenEditor: handleOpenThemeEditor,
+				onActiveThemeChanged: handleActiveThemeChanged
+			},
+			startThemeEditingSync
+		}));
 
 		clearChatInputStorage();
 		await Promise.all([
@@ -523,10 +527,10 @@
 	});
 
 	onDestroy(() => {
-		clearThemeEditorBridgeHandlers?.();
-		clearThemeEditorBridgeHandlers = null;
-		stopThemeEditingSync?.();
-		stopThemeEditingSync = null;
+		({ clearThemeEditorBridgeHandlers, stopThemeEditingSync } = cleanupThemeEditorRuntime({
+			clearThemeEditorBridgeHandlers,
+			stopThemeEditingSync
+		}));
 	});
 
 	const checkForVersionUpdates = async () => {

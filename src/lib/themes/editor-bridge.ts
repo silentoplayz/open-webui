@@ -11,7 +11,7 @@ export type ActiveThemeChangedRequest = {
 	themeId: string;
 };
 
-type ThemeEditorBridgeHandlers = {
+export type ThemeEditorBridgeHandlers = {
 	onOpenEditor?: (request: OpenThemeEditorRequest) => Promise<void> | void;
 	onActiveThemeChanged?: (request: ActiveThemeChangedRequest) => void;
 };
@@ -34,4 +34,3 @@ export const requestThemeEditorOpen = async (request: OpenThemeEditorRequest) =>
 export const notifyActiveThemeChanged = (themeId: string) => {
 	handlers.onActiveThemeChanged?.({ themeId });
 };
-
