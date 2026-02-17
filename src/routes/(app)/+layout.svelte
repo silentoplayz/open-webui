@@ -68,6 +68,7 @@
 	import { prepareThemeSaveAsNew } from '$lib/themes/editor-save-as-new';
 	import { applyThemeEditorPreview, cancelThemeEditorSession } from '$lib/themes/editor-cancel-preview';
 	import { restartThemeEditorRuntime, cleanupThemeEditorRuntime } from '$lib/themes/editor-runtime';
+	import { handleApplyCreatedThemeConfirm, handleKeepCurrentAfterCreateConfirm } from '$lib/themes/editor-create-confirm';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -285,45 +286,54 @@
 	};
 
 	const handleApplyThemeConfirm = () => {
-		if (themeToApply) {
-			const nextThemeToApply = themeToApply;
-			console.log('[+layout] Confirmation confirmed - Applying new theme:', nextThemeToApply.id);
+		const themeId = handleApplyCreatedThemeConfirm({
+			themeToApply,
+			onThemeCreated: (themeName) => {
+				if (themeToApply) {
+					console.log('[+layout] Confirmation confirmed - Applying new theme:', themeToApply.id);
+				}
+				toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeName }));
+			},
+			applyCreatedTheme: (nextThemeToApply) =>
+				applyCreatedTheme({
+					themeToApply: nextThemeToApply,
+					token: localStorage.token,
+					currentSettings: $settings,
+					setSettings: (nextSettings) => settings.set(nextSettings),
+					persistSettings: (token, payload) => {
+						void updateUserSettings(token, payload);
+					},
+					setLocalThemeId: (themeId) => localStorage.setItem('theme', themeId),
+					setActiveThemeId: (themeId) => theme.set(themeId),
+					applyTheme
+				}),
+			resetEditorState: resetThemeEditorAfterCreateConfirm
+		});
 
-			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: nextThemeToApply.name }));
-
-			const themeId = applyCreatedTheme({
-				themeToApply: nextThemeToApply,
-				token: localStorage.token,
-				currentSettings: $settings,
-				setSettings: (nextSettings) => settings.set(nextSettings),
-				persistSettings: (token, payload) => {
-					void updateUserSettings(token, payload);
-				},
-				setLocalThemeId: (themeId) => localStorage.setItem('theme', themeId),
-				setActiveThemeId: (themeId) => theme.set(themeId),
-				applyTheme
-			});
-
+		if (themeId) {
 			console.log('[+layout] Persistence complete. Theme applied successfully.', themeId);
 		}
-
-		resetThemeEditorAfterCreateConfirm();
 	};
 
 	const handleKeepCurrentThemeAfterCreate = () => {
 		console.log('[+layout] Confirmation canceled - Keeping current theme');
-		if (themeToApply) {
-			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
+		const activeThemeId = handleKeepCurrentAfterCreateConfirm({
+			themeToApply,
+			onThemeCreated: (themeName) => {
+				toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeName }));
+			},
+			restorePreviousTheme: () =>
+				restoreThemeAfterCreateCancel({
+					previousThemeId,
+					fallbackThemeId: localStorage.getItem('theme'),
+					applyThemeById: (themeId) => applyTheme(themeId)
+				}),
+			resetEditorState: resetThemeEditorAfterCreateConfirm
+		});
 
-			const activeThemeId = restoreThemeAfterCreateCancel({
-				previousThemeId,
-				fallbackThemeId: localStorage.getItem('theme'),
-				applyThemeById: (themeId) => applyTheme(themeId)
-			});
+		if (activeThemeId) {
 			console.log('[+layout] Restored active theme after create cancel:', activeThemeId);
 		}
-
-		resetThemeEditorAfterCreateConfirm();
 	};
 
 	const handleThemeEditorPreviewUpdate = (nextTheme: Theme) => {
