@@ -55,6 +55,7 @@
 	import emojiGroups from '$lib/emoji-groups.json';
 	import { config, user } from '$lib/stores';
 	import variables from '$lib/themes/variables.json';
+	import { THEME_EVENTS } from '$lib/themes/events';
 	import { validateTheme, isDuplicateTheme, isMismatchedVersion, isValidThemeUrl } from '$lib/utils/theme';
 
 	import type { Writable } from 'svelte/store';
@@ -674,7 +675,7 @@
 
 		// Set the theme data for the layout to consume
 		window.dispatchEvent(
-			new CustomEvent('open-theme-editor', {
+			new CustomEvent(THEME_EVENTS.OPEN_EDITOR, {
 				detail: { theme, isEditing: true, previousThemeId: selectedThemeId }
 			})
 		);
@@ -730,7 +731,7 @@
 
 		// Set the theme data for the layout to consume
 		window.dispatchEvent(
-			new CustomEvent('open-theme-editor', {
+			new CustomEvent(THEME_EVENTS.OPEN_EDITOR, {
 				detail: { theme: newTheme, isEditing: false, previousThemeId: selectedThemeId }
 			})
 		);
@@ -760,10 +761,10 @@
 			// We don't need to do anything here as the layout handles the theme editor
 		};
 
-		window.addEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
+		window.addEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as EventListener);
 
 		return () => {
-			window.removeEventListener('open-theme-editor', handleOpenThemeEditor as EventListener);
+			window.removeEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as EventListener);
 		};
 	});
 
@@ -1414,8 +1415,8 @@
 			}
 
 			window.dispatchEvent(
-				new CustomEvent('open-theme-editor', {
-					detail: {
+				new CustomEvent(THEME_EVENTS.OPEN_EDITOR, {
+					detail: { 
 						theme: themeToEdit,
 						isEditing: true,
 						previousThemeId: selectedThemeId,
@@ -1480,7 +1481,7 @@
 			// Notify the layout to update its previousThemeId so closing the editor
 			// applies the correct theme
 			window.dispatchEvent(
-				new CustomEvent('active-theme-changed', {
+				new CustomEvent(THEME_EVENTS.ACTIVE_THEME_CHANGED, {
 					detail: { themeId: pendingActiveThemeId }
 				})
 			);
@@ -1505,13 +1506,15 @@
 		}
 		
 		// In creation case, open-theme-editor always follows a check of saveChanges
-		window.dispatchEvent(new CustomEvent('active-theme-changed', { detail: { themeId: selectedThemeId } }));
+		window.dispatchEvent(
+			new CustomEvent(THEME_EVENTS.ACTIVE_THEME_CHANGED, { detail: { themeId: selectedThemeId } })
+		);
 		
 		const newTheme = generateNewThemeObject();
 
 		// We'll dispatch a special event that says "save current then create new"
 		window.dispatchEvent(
-			new CustomEvent('open-theme-editor', {
+			new CustomEvent(THEME_EVENTS.OPEN_EDITOR, {
 				detail: { 
 					theme: newTheme, 
 					isEditing: false, 

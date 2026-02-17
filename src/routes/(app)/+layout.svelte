@@ -60,6 +60,7 @@
 		updateCommunityTheme,
 		communityThemes as communityThemesStore
 	} from '$lib/theme';
+	import { THEME_EVENTS } from '$lib/themes/events';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
 	import type { Theme } from '$lib/types';
@@ -343,7 +344,7 @@
 		console.log('[+layout] Save result:', success, savedTheme ? 'Theme object returned' : 'No theme object');
 		// Notify completion with more metadata
 		window.dispatchEvent(
-			new CustomEvent('theme-editor-save-complete', {
+			new CustomEvent(THEME_EVENTS.SAVE_EDITOR_COMPLETE, {
 				detail: { success, isEditing, theme: savedTheme }
 			})
 		);
@@ -359,22 +360,22 @@
 		}
 
 		// Remove any existing listeners first (prevents duplicates during hot reload)
-		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as any);
-		window.removeEventListener('theme-editor-save', handleThemeEditorSave as any);
+		window.removeEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
+		window.removeEventListener(THEME_EVENTS.SAVE_EDITOR, handleThemeEditorSave as any);
 		window.removeEventListener(
-			'theme-editor-save-complete',
+			THEME_EVENTS.SAVE_EDITOR_COMPLETE,
 			handleThemeEditorSaveComplete as any
 		);
-		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as any);
+		window.removeEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
 
 		// Now add the listeners
-		window.addEventListener('open-theme-editor', handleOpenThemeEditor as any);
-		window.addEventListener('theme-editor-save', handleThemeEditorSave as any);
+		window.addEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
+		window.addEventListener(THEME_EVENTS.SAVE_EDITOR, handleThemeEditorSave as any);
 		window.addEventListener(
-			'theme-editor-save-complete',
+			THEME_EVENTS.SAVE_EDITOR_COMPLETE,
 			handleThemeEditorSaveComplete as any
 		);
-		window.addEventListener('active-theme-changed', handleActiveThemeChanged as any);
+		window.addEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
 
 		clearChatInputStorage();
 		await Promise.all([
@@ -527,13 +528,13 @@
 	});
 
 	onDestroy(() => {
-		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as any);
-		window.removeEventListener('theme-editor-save', handleThemeEditorSave as any);
+		window.removeEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as any);
+		window.removeEventListener(THEME_EVENTS.SAVE_EDITOR, handleThemeEditorSave as any);
 		window.removeEventListener(
-			'theme-editor-save-complete',
+			THEME_EVENTS.SAVE_EDITOR_COMPLETE,
 			handleThemeEditorSaveComplete as any
 		);
-		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as any);
+		window.removeEventListener(THEME_EVENTS.ACTIVE_THEME_CHANGED, handleActiveThemeChanged as any);
 
 		if (themeEditingBC) {
 			themeEditingBC.postMessage({ type: 'editing-update', tabId, themeId: null });
@@ -620,7 +621,7 @@
 			console.log('[+layout] Save event received from ThemeEditorModal', updatedTheme);
 			// Dispatch save event for Themes.svelte to handle
 			window.dispatchEvent(
-				new CustomEvent('theme-editor-save', {
+				new CustomEvent(THEME_EVENTS.SAVE_EDITOR, {
 					detail: { theme: updatedTheme, isEditing: isEditingTheme }
 				})
 			);
@@ -643,7 +644,7 @@
 			
 			// Dispatch save event for Themes.svelte to handle (isEditing = false)
 			window.dispatchEvent(
-				new CustomEvent('theme-editor-save', {
+				new CustomEvent(THEME_EVENTS.SAVE_EDITOR, {
 					detail: { theme: newTheme, isEditing: false }
 				})
 			);
