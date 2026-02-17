@@ -65,6 +65,7 @@
 	import { restoreEditorActiveTheme } from '$lib/themes/editor-active-theme';
 	import { applyCreatedTheme, restoreThemeAfterCreateCancel } from '$lib/themes/editor-apply-confirm';
 	import { openThemeEditorSession } from '$lib/themes/editor-open-session';
+	import { processEditorSaveRequest, restoreThemeAfterEditorSave } from '$lib/themes/editor-save-request';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -242,21 +243,20 @@
 
 	const handleThemeEditorSaveRequest = async (updatedTheme: Theme, isEditing: boolean) => {
 		console.log('[+layout] Processing save request for theme', updatedTheme.name);
+		const outcome = await processEditorSaveRequest({
+			updatedTheme,
+			isEditing,
+			saveTheme: async (themeToSave, nextIsEditing) => _saveTheme(themeToSave, nextIsEditing)
+		});
+		console.log('[+layout] Save outcome:', outcome.action);
 
-		const savedTheme = await _saveTheme(updatedTheme, isEditing);
-		const success = !!savedTheme;
-		console.log('[+layout] Save result:', success, savedTheme ? 'Theme object returned' : 'No theme object');
-
-		if (!success) {
+		if (outcome.action === 'none') {
 			return;
 		}
 
-		// If it was a NEW theme creation, ask if user wants to apply it
-		if (!isEditing && savedTheme) {
-			themeToApply = savedTheme;
+		if (outcome.action === 'confirm-new') {
+			themeToApply = outcome.savedTheme;
 			showApplyThemeConfirm = true;
-
-			// Reset local editor state but don't close yet (ConfirmDialog handles the close)
 			editingThemeId.set(null);
 			return;
 		}
@@ -266,12 +266,12 @@
 		selectedTheme = null;
 
 		// Apply the user's active theme (for updates to existing themes)
-		const activeThemeId = restoreEditorActiveTheme({
+		const activeThemeId = restoreThemeAfterEditorSave({
 			previousThemeId,
 			fallbackThemeId: localStorage.getItem('theme'),
 			currentThemeId: $theme,
-			applyTheme,
-			setTheme: (themeId) => theme.set(themeId)
+			applyThemeById: (themeId) => applyTheme(themeId),
+			setThemeId: (themeId) => theme.set(themeId)
 		});
 		console.log('[+layout] Applying active theme after update:', activeThemeId);
 	};
