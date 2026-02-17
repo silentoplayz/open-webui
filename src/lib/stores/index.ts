@@ -1,7 +1,8 @@
+import { browser } from '$app/environment';
 import { APP_NAME } from '$lib/constants';
 import { type Writable, writable } from 'svelte/store';
 import type { ModelConfig } from '$lib/apis';
-import type { Banner } from '$lib/types';
+import type { Banner, Theme } from '$lib/types';
 import type { Socket } from 'socket.io-client';
 
 import emojiShortCodes from '$lib/emoji-shortcodes.json';
@@ -30,7 +31,15 @@ export const activeUserIds: Writable<null | string[]> = writable(null);
 export const activeChatIds: Writable<Set<string>> = writable(new Set());
 export const USAGE_POOL: Writable<null | string[]> = writable(null);
 
-export const theme = writable('system');
+const getInitialTheme = () => {
+	if (browser) {
+		return localStorage.getItem('theme') ?? 'system';
+	}
+	return 'system';
+};
+
+export const theme = writable(getInitialTheme());
+export const codeMirrorTheme = writable('one-dark');
 
 export const shortCodesToEmojis = writable(
 	Object.entries(emojiShortCodes).reduce((acc, [key, value]) => {
@@ -50,6 +59,7 @@ export const TTSWorker = writable(null);
 
 export const chatId = writable('');
 export const chatTitle = writable('');
+export const isChatPage = writable(false);
 
 export const channels = writable([]);
 export const channelId = writable(null);
@@ -85,6 +95,12 @@ export const showSettings = writable(false);
 export const showShortcuts = writable(false);
 export const showArchivedChats = writable(false);
 export const showChangelog = writable(false);
+
+export const showThemeEditor = writable(false);
+export const themeEditorCollapsed = writable(false);
+export const editingThemeId = writable<string | null>(null);
+// Global registry of themes being edited across all tabs/instances (tabId -> themeId)
+export const editingThemes = writable<Record<string, string>>({});
 
 export const showControls = writable(false);
 export const showEmbeds = writable(false);
@@ -217,6 +233,8 @@ type Settings = {
 	num_batch?: string;
 	num_keep?: string;
 	options?: ModelOptions;
+	themes?: Record<string, Theme>;
+	theme?: string;
 };
 
 type ModelOptions = {

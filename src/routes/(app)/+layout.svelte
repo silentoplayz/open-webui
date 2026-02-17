@@ -1,18 +1,20 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { onMount, tick, getContext } from 'svelte';
+	import { v4 as uuidv4 } from 'uuid';
+	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { openDB, deleteDB } from 'idb';
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
-	import { goto } from '$app/navigation';
+	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { browser } from '$app/environment';
 	import { fade } from 'svelte/transition';
 
 	import { getModels, getToolServersData, getVersionUpdates } from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
 	import { getBanners } from '$lib/apis/configs';
-	import { getUserSettings } from '$lib/apis/users';
+	import { getUserSettings, updateUserSettings } from '$lib/apis/users';
 
 	import { WEBUI_VERSION } from '$lib/constants';
 	import { compareVersion } from '$lib/utils';
@@ -34,7 +36,12 @@
 		temporaryChatEnabled,
 		toolServers,
 		showSearch,
-		showSidebar
+		showSidebar,
+		showThemeEditor,
+		editingThemeId,
+		editingThemes,
+		selectedFolder,
+		theme
 	} from '$lib/stores';
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -44,14 +51,92 @@
 	import UpdateInfoToast from '$lib/components/layout/UpdateInfoToast.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import { Shortcut, shortcuts } from '$lib/shortcuts';
+	import Particles from '$lib/components/common/Particles.svelte';
+	import BackgroundImage from '$lib/components/layout/BackgroundImage.svelte';
+	import {
+		liveThemeStore,
+		applyTheme,
+		addCommunityTheme,
+		updateCommunityTheme,
+		communityThemes as communityThemesStore
+	} from '$lib/theme';
+	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
+	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
+	import type { Theme } from '$lib/types';
+	import { validateTheme, isDuplicateTheme } from '$lib/utils/theme';
+	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
-	const i18n = getContext('i18n');
+	import type { Writable } from 'svelte/store';
+	const i18n = getContext<Writable<any>>('i18n');
 
 	let loaded = false;
-	let DB = null;
-	let localDBChats = [];
+	let DB: any = null;
+	let localDBChats: any[] = [];
+	let mainContainer: HTMLElement;
 
-	let version;
+	let version: any;
+
+	// Cross-tab theme editing sync
+	const tabId = uuidv4();
+	const themeEditingBC = browser ? new BroadcastChannel('theme-editing-sync') : null;
+
+	if (themeEditingBC) {
+		themeEditingBC.onmessage = (event) => {
+			if (event.data?.type === 'editing-update') {
+				const { tabId: senderTabId, themeId } = event.data;
+				editingThemes.update((prev) => {
+					const next = { ...prev };
+					if (themeId) {
+						next[senderTabId] = themeId;
+					} else {
+						delete next[senderTabId];
+					}
+					return next;
+				});
+			} else if (event.data?.type === 'query') {
+				// Another tab is asking for our status
+				if ($editingThemeId) {
+					themeEditingBC.postMessage({
+						type: 'editing-update',
+						tabId,
+						themeId: $editingThemeId
+					});
+				}
+			}
+		};
+	}
+
+	$: if (themeEditingBC) {
+		themeEditingBC.postMessage({
+			type: 'editing-update',
+			tabId,
+			themeId: $editingThemeId
+		});
+	}
+
+	// Theme editor state
+	let selectedTheme: Theme | null = null;
+	let originalTheme: Theme | null = null;
+	let isEditingTheme = false;
+	let previousThemeId = '';
+
+	let showApplyThemeConfirm = false;
+	let themeToApply: Theme | null = null;
+
+	// Watch for theme editor changes
+	$: if ($showThemeEditor && $editingThemeId) {
+		// Editing existing theme
+		isEditingTheme = true;
+	} else if ($showThemeEditor && !$editingThemeId) {
+		// Creating new theme
+		isEditingTheme = false;
+	}
+
+	beforeNavigate(({ to }) => {
+		if (to?.url?.pathname !== '/') {
+			selectedFolder.set(null);
+		}
+	});
 
 	const clearChatInputStorage = () => {
 		const chatInputKeys = Object.keys(localStorage).filter((key) => key.startsWith('chat-input'));
@@ -72,7 +157,7 @@
 			}
 
 			const chats = await DB.getAllFromIndex('chats', 'timestamp');
-			localDBChats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
+			localDBChats = chats.map((item: any, idx: number) => chats[chats.length - 1 - idx]);
 
 			if (localDBChats.length === 0) {
 				await deleteDB('Chats');
@@ -141,6 +226,129 @@
 		tools.set(toolsData);
 	};
 
+	// Reusable save logic for theme editor
+	const _saveTheme = async (themeToSave: Theme, isEditing: boolean) => {
+		console.log('[+layout] _saveTheme triggered', themeToSave.name, 'isEditing:', isEditing);
+
+		// Validation
+		const validation = validateTheme(themeToSave);
+		if (!validation.valid) {
+			console.log('[+layout] Validation failed:', validation.error);
+			toast.error(validation.error ?? 'Invalid theme');
+			return false;
+		}
+
+		// Check for duplicates
+		const themesToCheck = isEditing
+			? Array.from($communityThemesStore.values()).filter((t) => t.id !== themeToSave.id)
+			: Array.from($communityThemesStore.values());
+
+		if (isDuplicateTheme(themeToSave, themesToCheck, false, themeToSave.id)) {
+			console.log('[+layout] Duplicate theme detected');
+			toast.error('A theme with the same content already exists.');
+			return false;
+		}
+
+		let success = false;
+		if (isEditing) {
+			// Update existing theme
+			if (await updateCommunityTheme(themeToSave)) {
+				toast.success(`Theme "${themeToSave.name}" updated successfully!`);
+				// If this is the currently selected theme, apply it
+				if (themeToSave.id === localStorage.getItem('theme')) {
+					applyTheme(themeToSave);
+				}
+				success = true;
+			}
+		} else {
+			// Add new theme
+			if (await addCommunityTheme(themeToSave)) {
+				return themeToSave;
+			}
+		}
+		return isEditing ? themeToSave : null;
+	};
+
+	// Event handlers for theme editor - defined at module level for proper cleanup
+	const handleOpenThemeEditor = async (event: Event) => {
+		const customEvent = event as CustomEvent;
+		const { theme, isEditing, previousThemeId: prevTheme, saveChanges } = customEvent.detail;
+		console.log('[+layout] Opening theme editor', { themeName: theme?.name || 'New Theme', isEditing, saveChanges });
+
+		// AUTO-SAVE: If we're already editing a theme and saveChanges is true
+		if (saveChanges && selectedTheme) {
+			console.log('[+layout] Auto-saving previous session for:', selectedTheme.name);
+			await _saveTheme(selectedTheme, isEditingTheme);
+		}
+
+		if (theme) {
+			// Create a deep copy to ensure reactivity
+			selectedTheme = JSON.parse(JSON.stringify(theme));
+			originalTheme = JSON.parse(JSON.stringify(theme));
+			// Apply the theme immediately for live preview
+			applyTheme(selectedTheme);
+		}
+
+		isEditingTheme = isEditing;
+		previousThemeId = prevTheme;
+	};
+
+	const handleThemeEditorSaveComplete = (event: Event) => {
+		const customEvent = event as CustomEvent;
+		const { success, isEditing, theme: savedTheme } = customEvent.detail;
+
+		if (success) {
+			console.log('[+layout] handleThemeEditorSaveComplete - Success intercepted', { isEditing, themeName: savedTheme?.name });
+			// If it was a NEW theme creation, ask if user wants to apply it
+			if (!isEditing && savedTheme) {
+				themeToApply = savedTheme;
+				showApplyThemeConfirm = true;
+				
+				// Reset local editor state but don't close yet (ConfirmDialog handles the close)
+				editingThemeId.set(null);
+				return;
+			}
+
+			showThemeEditor.set(false);
+			editingThemeId.set(null);
+			selectedTheme = null;
+
+			// Apply the user's active theme (for updates to existing themes)
+			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+			console.log('[+layout] Applying active theme after update:', activeThemeId);
+			applyTheme(activeThemeId);
+
+			if ($theme !== activeThemeId) {
+				theme.set(activeThemeId);
+			}
+		}
+	};
+
+	const handleActiveThemeChanged = (event: Event) => {
+		const customEvent = event as CustomEvent;
+		const { themeId } = customEvent.detail;
+		console.log('[+layout] Active theme changed via confirmation modal:', themeId);
+		// Update previousThemeId so that when editor closes, it applies the correct theme
+		previousThemeId = themeId;
+	};
+
+	const handleThemeEditorSave = async (event: Event) => {
+		const customEvent = event as CustomEvent;
+		const { theme: updatedTheme, isEditing } = customEvent.detail;
+		console.log('[+layout] Processing save request for theme', updatedTheme.name);
+
+		const savedTheme = await _saveTheme(updatedTheme, isEditing);
+		const success = !!savedTheme;
+		
+		console.log('[+layout] Save result:', success, savedTheme ? 'Theme object returned' : 'No theme object');
+		// Notify completion with more metadata
+		window.dispatchEvent(
+			new CustomEvent('theme-editor-save-complete', {
+				detail: { success, isEditing, theme: savedTheme }
+			})
+		);
+	};
+
 	onMount(async () => {
 		if ($user === undefined || $user === null) {
 			await goto('/auth');
@@ -149,6 +357,24 @@
 		if (!['user', 'admin'].includes($user?.role)) {
 			return;
 		}
+
+		// Remove any existing listeners first (prevents duplicates during hot reload)
+		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as any);
+		window.removeEventListener('theme-editor-save', handleThemeEditorSave as any);
+		window.removeEventListener(
+			'theme-editor-save-complete',
+			handleThemeEditorSaveComplete as any
+		);
+		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as any);
+
+		// Now add the listeners
+		window.addEventListener('open-theme-editor', handleOpenThemeEditor as any);
+		window.addEventListener('theme-editor-save', handleThemeEditorSave as any);
+		window.addEventListener(
+			'theme-editor-save-complete',
+			handleThemeEditorSaveComplete as any
+		);
+		window.addEventListener('active-theme-changed', handleActiveThemeChanged as any);
 
 		clearChatInputStorage();
 		await Promise.all([
@@ -290,9 +516,29 @@
 				checkForVersionUpdates();
 			}
 		}
+
+		if (themeEditingBC) {
+			themeEditingBC.postMessage({ type: 'query' });
+		}
+
 		await tick();
 
 		loaded = true;
+	});
+
+	onDestroy(() => {
+		window.removeEventListener('open-theme-editor', handleOpenThemeEditor as any);
+		window.removeEventListener('theme-editor-save', handleThemeEditorSave as any);
+		window.removeEventListener(
+			'theme-editor-save-complete',
+			handleThemeEditorSaveComplete as any
+		);
+		window.removeEventListener('active-theme-changed', handleActiveThemeChanged as any);
+
+		if (themeEditingBC) {
+			themeEditingBC.postMessage({ type: 'editing-update', tabId, themeId: null });
+			themeEditingBC.close();
+		}
 	});
 
 	const checkForVersionUpdates = async () => {
@@ -307,6 +553,131 @@
 
 <SettingsModal bind:show={$showSettings} />
 <ChangelogModal bind:show={$showChangelog} />
+
+<ConfirmDialog
+	bind:show={showApplyThemeConfirm}
+	title={$i18n.t('Apply New Theme?')}
+	message={$i18n.t("Theme '{{name}}' has been created successfully. Would you like to apply it now?", {
+		name: themeToApply?.name
+	})}
+	confirmLabel={$i18n.t('Apply Theme')}
+	cancelLabel={$i18n.t('Keep Current')}
+	onConfirm={async () => {
+		if (themeToApply) {
+			const themeId = themeToApply.id;
+			console.log('[+layout] Confirmation confirmed - Applying new theme:', themeId);
+			
+			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
+			
+			// 1. Update localStorage fallback
+			localStorage.setItem('theme', themeId);
+			
+			// 2. Update settings store (critical to prevent reactive revert)
+			if (localStorage.token) {
+				const updatedSettings = {
+					...$settings,
+					theme: themeId
+				};
+				settings.set(updatedSettings);
+				// We don't await the backend update here to keep UI responsive, 
+				// but it runs in parallel.
+				updateUserSettings(localStorage.token, { ui: updatedSettings });
+			}
+
+			// 3. Update active theme ID and apply visual styles
+			theme.set(themeId);
+			applyTheme(themeToApply);
+
+			console.log('[+layout] Persistence complete. Theme applied successfully.');
+		}
+		
+		// 4. Close editor state COMPLETELY
+		showThemeEditor.set(false);
+		selectedTheme = null;
+		themeToApply = null;
+	}}
+	on:cancel={() => {
+		console.log('[+layout] Confirmation canceled - Keeping current theme');
+		if (themeToApply) {
+			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
+			// Apply the user's previous active theme
+			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+			applyTheme(activeThemeId);
+		}
+		showThemeEditor.set(false);
+		selectedTheme = null;
+		themeToApply = null;
+	}}
+/>
+
+{#if $showThemeEditor && selectedTheme}
+	<ThemeEditorModal
+		theme={selectedTheme}
+		bind:show={$showThemeEditor}
+		isEditing={isEditingTheme}
+		on:save={(e) => {
+			const updatedTheme = e.detail;
+			console.log('[+layout] Save event received from ThemeEditorModal', updatedTheme);
+			// Dispatch save event for Themes.svelte to handle
+			window.dispatchEvent(
+				new CustomEvent('theme-editor-save', {
+					detail: { theme: updatedTheme, isEditing: isEditingTheme }
+				})
+			);
+			console.log('[+layout] Dispatched theme-editor-save event');
+		}}
+		on:saveAsNew={(e) => {
+			const newTheme = e.detail;
+			console.log('[+layout] Save as New event received from ThemeEditorModal', newTheme);
+			
+			// If name hasn't changed, append (Copy) to avoid duplicate error
+			// Use originalTheme to check against the state when editor was opened
+			if (originalTheme && newTheme.name === originalTheme.name) {
+				newTheme.name = `${newTheme.name} (Copy)`;
+			}
+			
+			// Generate new ID and treat as new theme
+			newTheme.id = `theme-${uuidv4()}`;
+			// sourceUrl is preserved to allow forked themes to receive updates
+
+			
+			// Dispatch save event for Themes.svelte to handle (isEditing = false)
+			window.dispatchEvent(
+				new CustomEvent('theme-editor-save', {
+					detail: { theme: newTheme, isEditing: false }
+				})
+			);
+		}}
+		on:update={(e) => {
+			selectedTheme = e.detail;
+			if (selectedTheme) {
+				applyTheme(selectedTheme, true);
+			}
+		}}
+		on:cancel={() => {
+			showThemeEditor.set(false);
+			editingThemeId.set(null);
+			selectedTheme = null;
+			
+			// Use previousThemeId as source of truth for the intended active theme
+			console.log('[+layout] Theme Editor Cancelled. previousThemeId:', previousThemeId, 'localStorage:', localStorage.getItem('theme'));
+			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+			
+			// 1. Apply the theme visually (updates live/current stores)
+			applyTheme(activeThemeId);
+			
+			// 2. CRITICAL: Update the global theme selection store if it differs.
+			// Themes.svelte avoids updating this during edit to prevent jumps,
+			// but now that we are done/cancelled, we MUST ensure the global state matches our selection.
+			// This ensures other components (like Themes list) see the correct "active" theme.
+			// We access the store via the 'theme' store import.
+			if ($theme !== activeThemeId) {
+				console.log('[+layout] Syncing global theme store to:', activeThemeId);
+				theme.set(activeThemeId);
+			}
+		}}
+	/>
+{/if}
 
 {#if version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
 	<div class=" absolute bottom-8 right-8 z-50" in:fade={{ duration: 100 }}>
@@ -323,79 +694,93 @@
 {#if $user}
 	<div class="app relative">
 		<div
-			class=" text-gray-700 dark:text-gray-100 bg-white dark:bg-gray-900 h-screen max-h-[100dvh] overflow-auto flex flex-row justify-end"
+			id="main-container"
+			class="relative text-gray-700 dark:text-gray-100 h-screen max-h-[100dvh] overflow-auto flex flex-row justify-end"
+			bind:this={mainContainer}
 		>
+			{#if mainContainer}
+				<ThemeManager container={mainContainer} />
+			{/if}
+			<BackgroundImage />
+			{#if $liveThemeStore?.tsparticlesConfig && Object.keys($liveThemeStore.tsparticlesConfig).length > 0}
+				<Particles options={$liveThemeStore.tsparticlesConfig} />
+			{/if}
+
 			{#if !['user', 'admin'].includes($user?.role)}
 				<AccountPending />
 			{:else}
-				{#if localDBChats.length > 0}
-					<div class="fixed w-full h-full flex z-50">
-						<div
-							class="absolute w-full h-full backdrop-blur-md bg-white/20 dark:bg-gray-900/50 flex justify-center"
-						>
-							<div class="m-auto pb-44 flex flex-col justify-center">
-								<div class="max-w-md">
-									<div class="text-center dark:text-white text-2xl font-medium z-50">
-										{$i18n.t('Important Update')}<br />
-										{$i18n.t('Action Required for Chat Log Storage')}
-									</div>
+				<div class="relative z-10 bg-transparent w-full h-full flex flex-row justify-end">
+					{#if localDBChats.length > 0}
+						<div class="fixed w-full h-full flex z-50">
+							<div
+								class="absolute w-full h-full backdrop-blur-md bg-white/20 dark:bg-gray-900/50 flex justify-center"
+							>
+								<div class="m-auto pb-44 flex flex-col justify-center">
+									<div class="max-w-md">
+										<div class="text-center dark:text-white text-2xl font-medium z-50">
+											{$i18n.t('Important Update')}<br />
+											{$i18n.t('Action Required for Chat Log Storage')}
+										</div>
 
-									<div class=" mt-4 text-center text-sm dark:text-gray-200 w-full">
-										{$i18n.t(
-											"Saving chat logs directly to your browser's storage is no longer supported. Please take a moment to download and delete your chat logs by clicking the button below. Don't worry, you can easily re-import your chat logs to the backend through"
-										)}
-										<span class="font-medium dark:text-white"
-											>{$i18n.t('Settings')} > {$i18n.t('Chats')} > {$i18n.t('Import Chats')}</span
-										>. {$i18n.t(
-											'This ensures that your valuable conversations are securely saved to your backend database. Thank you!'
-										)}
-									</div>
+										<div class=" mt-4 text-center text-sm dark:text-gray-200 w-full">
+											{$i18n.t(
+												"Saving chat logs directly to your browser's storage is no longer supported. Please take a moment to download and delete your chat logs by clicking the button below. Don't worry, you can easily re-import your chat logs to the backend through"
+											)}
+											<span class="font-semibold dark:text-white"
+												>{$i18n.t('Settings')} > {$i18n.t('Chats')} > {$i18n.t(
+													'Import Chats'
+												)}</span
+											>. {$i18n.t(
+												'This ensures that your valuable conversations are securely saved to your backend database. Thank you!'
+											)}
+										</div>
 
-									<div class=" mt-6 mx-auto relative group w-fit">
-										<button
-											class="relative z-20 flex px-5 py-2 rounded-full bg-white border border-gray-100 dark:border-none hover:bg-gray-100 transition font-medium text-sm"
-											on:click={async () => {
-												let blob = new Blob([JSON.stringify(localDBChats)], {
-													type: 'application/json'
-												});
-												saveAs(blob, `chat-export-${Date.now()}.json`);
+										<div class=" mt-6 mx-auto relative group w-fit">
+											<button
+												class="relative z-20 flex px-5 py-2 rounded-full bg-white border border-gray-100 dark:border-none hover:bg-gray-100 transition font-medium text-sm"
+												on:click={async () => {
+													let blob = new Blob([JSON.stringify(localDBChats)], {
+														type: 'application/json'
+													});
+													saveAs(blob, `chat-export-${Date.now()}.json`);
 
-												const tx = DB.transaction('chats', 'readwrite');
-												await Promise.all([tx.store.clear(), tx.done]);
-												await deleteDB('Chats');
+													const tx = DB.transaction('chats', 'readwrite');
+													await Promise.all([tx.store.clear(), tx.done]);
+													await deleteDB('Chats');
 
-												localDBChats = [];
-											}}
-										>
-											{$i18n.t('Download & Delete')}
-										</button>
+													localDBChats = [];
+												}}
+											>
+												{$i18n.t('Download & Delete')}
+											</button>
 
-										<button
-											class="text-xs text-center w-full mt-2 text-gray-400 underline"
-											on:click={async () => {
-												localDBChats = [];
-											}}>{$i18n.t('Close')}</button
-										>
+											<button
+												class="text-xs text-center w-full mt-2 text-gray-400 underline"
+												on:click={async () => {
+													localDBChats = [];
+												}}>{$i18n.t('Close')}</button
+											>
+										</div>
 									</div>
 								</div>
 							</div>
 						</div>
-					</div>
-				{/if}
+					{/if}
 
-				<Sidebar />
+					<Sidebar />
 
-				{#if loaded}
-					<slot />
-				{:else}
-					<div
-						class="w-full flex-1 h-full flex items-center justify-center {$showSidebar
-							? '  md:max-w-[calc(100%-var(--sidebar-width))]'
-							: ' '}"
-					>
-						<Spinner className="size-5" />
-					</div>
-				{/if}
+					{#if loaded}
+						<slot />
+					{:else}
+						<div
+							class="w-full flex-1 h-full flex items-center justify-center {$showSidebar
+								? '  md:max-w-[calc(100%-var(--sidebar-width))]'
+								: ' '}"
+						>
+							<Spinner className="size-5" />
+						</div>
+					{/if}
+				</div>
 			{/if}
 		</div>
 	</div>

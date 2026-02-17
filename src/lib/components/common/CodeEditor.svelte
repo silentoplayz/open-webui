@@ -1,7 +1,168 @@
 <script lang="ts">
+	import { colord, extend } from 'colord';
+	import namesPlugin from 'colord/plugins/names';
+	import ColorPicker from 'svelte-awesome-color-picker';
 	import { basicSetup, EditorView } from 'codemirror';
-	import { keymap, placeholder } from '@codemirror/view';
+	import { keymap, placeholder, Decoration, ViewPlugin } from '@codemirror/view';
 	import { Compartment, EditorState } from '@codemirror/state';
+	import { WidgetType } from '@codemirror/view';
+
+	extend([namesPlugin]);
+
+	class ColorSwatchWidget extends WidgetType {
+		color: string;
+
+		constructor(color: string) {
+			super();
+			this.color = color;
+		}
+
+		override eq(other: ColorSwatchWidget) {
+			return other.color === this.color;
+		}
+
+		override toDOM() {
+			const swatch = document.createElement('span');
+			swatch.className = 'cm-color-swatch';
+			swatch.style.display = 'inline-block';
+			swatch.style.width = '1em';
+			swatch.style.height = '1em';
+			swatch.style.backgroundColor = this.color;
+			swatch.style.marginLeft = '0.5em';
+			swatch.style.border = '1px solid #ccc';
+			swatch.style.cursor = 'pointer';
+			return swatch;
+		}
+
+		override ignoreEvent() {
+			return false;
+		}
+	}
+
+	let originalColorFormat = 'hex';
+
+	const colorSwatchPlugin = ViewPlugin.fromClass(
+		class {
+			decorations;
+
+			constructor(view) {
+				this.decorations = this.getDecorations(view);
+			}
+
+			update(update) {
+				if (update.docChanged || update.viewportChanged) {
+					this.decorations = this.getDecorations(update.view);
+				}
+			}
+
+			getDecorations(view) {
+				const widgets = [];
+				const colorRegex =
+					/(?:#(?:[0-9a-fA-F]{3,4}){1,2}\b|rgba?\([\d\s,.\/]+\)|hsla?\([\d\s,.\/%degturnrad]+\)|\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|purple|red|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|yellowgreen)\b)/gi;
+
+				for (const { from, to } of view.visibleRanges) {
+					const text = view.state.doc.sliceString(from, to);
+					let match;
+					while ((match = colorRegex.exec(text))) {
+						const colorStr = match[0];
+						const color = colord(colorStr);
+
+						if (color.isValid()) {
+							const start = from + match.index;
+							const end = start + colorStr.length;
+							const deco = Decoration.widget({
+								widget: new ColorSwatchWidget(color.toRgbString()),
+								side: 1
+							});
+							widgets.push(deco.range(end));
+						}
+					}
+				}
+				return Decoration.set(widgets);
+			}
+		},
+		{
+			decorations: (v) => v.decorations,
+			eventHandlers: {
+				mousedown: (e, view) => {
+					const target = e.target as HTMLElement;
+					if (target.classList.contains('cm-color-swatch')) {
+						e.preventDefault();
+						e.stopPropagation();
+
+						const pos = view.posAtDOM(target);
+						const text = view.state.doc.sliceString(0, pos);
+						const colorRegex =
+							/(?:#(?:[0-9a-fA-F]{3,4}){1,2}\b|rgba?\([\d\s,.\/]+\)|hsla?\([\d\s,.\/%degturnrad]+\)|\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|purple|red|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|yellowgreen)\b)$/i;
+
+						const match = text.match(colorRegex);
+
+						if (match) {
+							const color = match[0];
+							const from = pos - color.length;
+							const to = pos;
+
+							if (color.startsWith('#')) {
+								originalColorFormat = 'hex';
+							} else if (color.startsWith('rgb')) {
+								originalColorFormat = 'rgb';
+							} else if (color.startsWith('hsl')) {
+								originalColorFormat = 'hsl';
+							} else {
+								originalColorFormat = 'name';
+							}
+
+							activeColorRange = { from, to };
+
+							const pickerWidth = 250;
+							const pickerHeight = 300;
+
+							let left = e.clientX;
+							let top = e.clientY;
+
+							if (left + pickerWidth > window.innerWidth) {
+								left = window.innerWidth - pickerWidth - 10;
+							}
+
+							if (top + pickerHeight > window.innerHeight) {
+								top = window.innerHeight - pickerHeight - 10;
+							}
+
+							pickerColor = colord(color).toHex();
+							pickerStyle = `position: fixed; left: ${left}px; top: ${top}px; z-index: 10000;`;
+							pickerUpdateCallback = (newColor) => {
+								if (activeColorRange) {
+									let newColorStr = newColor;
+
+									if (originalColorFormat === 'rgb') {
+										newColorStr = colord(newColor).toRgbString();
+									} else if (originalColorFormat === 'hsl') {
+										newColorStr = colord(newColor).toHslString();
+									} else if (originalColorFormat === 'name') {
+										const named = colord(newColor).toName({ closest: true });
+										if (named) {
+											newColorStr = named;
+										}
+									}
+
+									view.dispatch({
+										changes: {
+											from: activeColorRange.from,
+											to: activeColorRange.to,
+											insert: newColorStr
+										}
+									});
+									activeColorRange.to = activeColorRange.from + newColorStr.length;
+								}
+							};
+							showPicker = true;
+							ignoreNextClick = true;
+						}
+					}
+				}
+			}
+		}
+	);
 
 	import { acceptCompletion } from '@codemirror/autocomplete';
 	import { indentWithTab } from '@codemirror/commands';
@@ -9,15 +170,16 @@
 	import { indentUnit, LanguageDescription } from '@codemirror/language';
 	import { languages } from '@codemirror/language-data';
 
-	import { oneDark } from '@codemirror/theme-one-dark';
-
 	import { onMount, createEventDispatcher, getContext, tick, onDestroy } from 'svelte';
 
 	import PyodideWorker from '$lib/workers/pyodide.worker?worker';
 
 	import { formatPythonCode } from '$lib/apis/utils';
 	import { toast } from 'svelte-sonner';
-	import { user } from '$lib/stores';
+	import { user, codeMirrorTheme } from '$lib/stores';
+	import * as themes from '@uiw/codemirror-themes-all';
+	import { oneDark } from '@codemirror/theme-one-dark';
+	import { formatCSS } from '$lib/utils/css-formatter';
 
 	const dispatch = createEventDispatcher();
 	const i18n = getContext('i18n');
@@ -30,7 +192,18 @@
 
 	let _value = '';
 
-	$: if (value) {
+	let showPicker = false;
+	let pickerStyle = '';
+	let pickerColor = '#000000';
+	let pickerUpdateCallback = (newColor) => {};
+	let activeColorRange = null;
+	let ignoreNextClick = false;
+
+	$: if (showPicker && pickerColor) {
+		pickerUpdateCallback(pickerColor);
+	}
+
+	$: if (value !== undefined) {
 		updateValue();
 	}
 
@@ -74,6 +247,7 @@
 
 	export let id = '';
 	export let lang = '';
+	export let theme: string | null = null;
 
 	let codeEditor;
 
@@ -227,6 +401,35 @@ print("${endTag}")
 		return false;
 	};
 
+	export const formatCSSCodeHandler = async () => {
+		if (codeEditor) {
+			const formattedCode = formatCSS(_value);
+			if (formattedCode !== _value) {
+				codeEditor.dispatch({
+					changes: [{ from: 0, to: codeEditor.state.doc.length, insert: formattedCode }]
+				});
+
+				_value = formattedCode;
+				onChange(_value);
+				await tick();
+
+				toast.success($i18n.t('CSS formatted successfully'));
+				return true;
+			}
+			return false;
+		}
+		return false;
+	};
+
+	// Fix for fold placeholder styling in non-default themes
+	const fixedTheme = EditorView.theme({
+		'.cm-foldPlaceholder': {
+			backgroundColor: 'transparent',
+			border: 'none',
+			color: 'inherit'
+		}
+	});
+
 	let extensions = [
 		basicSetup,
 		keymap.of([{ key: 'Tab', run: acceptCompletion }, indentWithTab]),
@@ -235,11 +438,15 @@ print("${endTag}")
 		EditorView.updateListener.of((e) => {
 			if (e.docChanged) {
 				_value = e.state.doc.toString();
+				value = _value;
+				dispatch('input', _value);
 				onChange(_value);
 			}
 		}),
 		editorTheme.of([]),
-		editorLanguage.of([])
+		editorLanguage.of([]),
+		colorSwatchPlugin,
+		fixedTheme
 	];
 
 	$: if (lang) {
@@ -255,15 +462,32 @@ print("${endTag}")
 		}
 	};
 
+	const setEditorTheme = (themeName) => {
+		const selectedThemeStr = themeName || $codeMirrorTheme;
+		const selectedTheme =
+			selectedThemeStr === 'one-dark' ? oneDark : (themes[selectedThemeStr] ?? oneDark);
+
+		if (codeEditor) {
+			codeEditor.dispatch({
+				effects: editorTheme.reconfigure(selectedTheme)
+			});
+		}
+	};
+
+	$: setEditorTheme(theme);
+
+	const unsubscribe = codeMirrorTheme.subscribe((currentTheme) => {
+		if (!theme) {
+			setEditorTheme(currentTheme);
+		}
+	});
+
 	onMount(() => {
 		if (value === '') {
 			value = boilerplate;
 		}
 
 		_value = value;
-
-		// Check if html class has dark mode
-		isDarkMode = document.documentElement.classList.contains('dark');
 
 		// python code editor, highlight python code
 		codeEditor = new EditorView({
@@ -274,38 +498,7 @@ print("${endTag}")
 			parent: document.getElementById(`code-textarea-${id}`)
 		});
 
-		if (isDarkMode) {
-			codeEditor.dispatch({
-				effects: editorTheme.reconfigure(oneDark)
-			});
-		}
-
-		// listen to html class changes this should fire only when dark mode is toggled
-		const observer = new MutationObserver((mutations) => {
-			mutations.forEach((mutation) => {
-				if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-					const _isDarkMode = document.documentElement.classList.contains('dark');
-
-					if (_isDarkMode !== isDarkMode) {
-						isDarkMode = _isDarkMode;
-						if (_isDarkMode) {
-							codeEditor.dispatch({
-								effects: editorTheme.reconfigure(oneDark)
-							});
-						} else {
-							codeEditor.dispatch({
-								effects: editorTheme.reconfigure()
-							});
-						}
-					}
-				}
-			});
-		});
-
-		observer.observe(document.documentElement, {
-			attributes: true,
-			attributeFilter: ['class']
-		});
+		setEditorTheme(theme);
 
 		const keydownHandler = async (e) => {
 			if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -317,15 +510,32 @@ print("${endTag}")
 			// Format code when Ctrl + Shift + F is pressed
 			if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'f') {
 				e.preventDefault();
-				await formatPythonCodeHandler();
+				if (lang === 'python') {
+					await formatPythonCodeHandler();
+				} else if (lang === 'css') {
+					await formatCSSCodeHandler();
+				}
+			}
+		};
+
+		const clickOutsideHandler = (e) => {
+			if (ignoreNextClick) {
+				ignoreNextClick = false;
+				return;
+			}
+			if (showPicker && !e.target.closest('.color-picker-wrapper')) {
+				pickerUpdateCallback(pickerColor);
+				showPicker = false;
+				activeColorRange = null;
 			}
 		};
 
 		document.addEventListener('keydown', keydownHandler);
+		document.addEventListener('click', clickOutsideHandler);
 
 		return () => {
-			observer.disconnect();
 			document.removeEventListener('keydown', keydownHandler);
+			document.removeEventListener('click', clickOutsideHandler);
 		};
 	});
 
@@ -333,7 +543,34 @@ print("${endTag}")
 		if (pyodideWorkerInstance) {
 			pyodideWorkerInstance.terminate();
 		}
+		unsubscribe();
 	});
+	const portal = (node) => {
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				if (node.parentNode) {
+					node.parentNode.removeChild(node);
+				}
+			}
+		};
+	};
 </script>
 
 <div id="code-textarea-{id}" class="h-full w-full text-sm" />
+
+{#if showPicker}
+	<div use:portal class="color-picker-wrapper" style={pickerStyle}>
+		<ColorPicker bind:hex={pickerColor} isDialog={false} />
+	</div>
+{/if}
+
+<style>
+	:global(.dark .color-picker-wrapper) {
+		--cp-bg-color: #2d2d2d;
+		--cp-border-color: #4a4a4a;
+		--cp-text-color: #f0f0f0;
+		--cp-input-color: #3a3a3a;
+		--cp-button-hover-color: #5a5a5a;
+	}
+</style>

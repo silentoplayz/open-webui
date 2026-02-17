@@ -9,6 +9,7 @@
 	});
 
 	import { onMount, tick, setContext, onDestroy } from 'svelte';
+	import { get } from 'svelte/store';
 	import {
 		config,
 		user,
@@ -30,8 +31,10 @@
 		toolServers,
 		playingNotificationSound,
 		channels,
-		channelId
+		channelId,
+		showThemeEditor
 	} from '$lib/stores';
+	import { applyTheme, checkForThemeUpdates, themes, communityThemes, liveThemeStore } from '$lib/theme';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { beforeNavigate } from '$app/navigation';
@@ -42,6 +45,7 @@
 	import '../tailwind.css';
 	import '../app.css';
 	import 'tippy.js/dist/tippy.css';
+	import '@fortawesome/fontawesome-free/css/all.min.css';
 
 	import { executeToolServer, getBackendConfig, getVersion } from '$lib/apis';
 	import { getSessionUser, userSignOut } from '$lib/apis/auths';
@@ -85,6 +89,8 @@
 	setContext('i18n', i18n);
 
 	const bc = new BroadcastChannel('active-tab-channel');
+	const settingsBc = new BroadcastChannel('settings-sync');
+	const communityThemesBc = new BroadcastChannel('community-themes-sync');
 
 	let loaded = false;
 	let tokenTimer = null;
@@ -95,6 +101,12 @@
 	let syncStatsEventData = null;
 
 	let heartbeatInterval = null;
+
+	let themeUpdateCheckDone = false;
+	$: if ($user && !themeUpdateCheckDone) {
+		checkForThemeUpdates();
+		themeUpdateCheckDone = true;
+	}
 
 	const BREAKPOINT = 768;
 
@@ -187,19 +199,18 @@
 
 		let executing = true;
 		let packages = [
-			/\bimport\s+requests\b|\bfrom\s+requests\b/.test(code) ? 'requests' : null,
-			/\bimport\s+bs4\b|\bfrom\s+bs4\b/.test(code) ? 'beautifulsoup4' : null,
-			/\bimport\s+numpy\b|\bfrom\s+numpy\b/.test(code) ? 'numpy' : null,
-			/\bimport\s+pandas\b|\bfrom\s+pandas\b/.test(code) ? 'pandas' : null,
-			/\bimport\s+matplotlib\b|\bfrom\s+matplotlib\b/.test(code) ? 'matplotlib' : null,
-			/\bimport\s+seaborn\b|\bfrom\s+seaborn\b/.test(code) ? 'seaborn' : null,
-			/\bimport\s+sklearn\b|\bfrom\s+sklearn\b/.test(code) ? 'scikit-learn' : null,
-			/\bimport\s+scipy\b|\bfrom\s+scipy\b/.test(code) ? 'scipy' : null,
-			/\bimport\s+re\b|\bfrom\s+re\b/.test(code) ? 'regex' : null,
-			/\bimport\s+seaborn\b|\bfrom\s+seaborn\b/.test(code) ? 'seaborn' : null,
-			/\bimport\s+sympy\b|\bfrom\s+sympy\b/.test(code) ? 'sympy' : null,
-			/\bimport\s+tiktoken\b|\bfrom\s+tiktoken\b/.test(code) ? 'tiktoken' : null,
-			/\bimport\s+pytz\b|\bfrom\s+pytz\b/.test(code) ? 'pytz' : null
+			code.includes('requests') ? 'requests' : null,
+			code.includes('bs4') ? 'beautifulsoup4' : null,
+			code.includes('numpy') ? 'numpy' : null,
+			code.includes('pandas') ? 'pandas' : null,
+			code.includes('matplotlib') ? 'matplotlib' : null,
+			code.includes('sklearn') ? 'scikit-learn' : null,
+			code.includes('scipy') ? 'scipy' : null,
+			code.includes('re') ? 'regex' : null,
+			code.includes('seaborn') ? 'seaborn' : null,
+			code.includes('sympy') ? 'sympy' : null,
+			code.includes('tiktoken') ? 'tiktoken' : null,
+			code.includes('pytz') ? 'pytz' : null
 		].filter(Boolean);
 
 		const pyodideWorker = new PyodideWorker();
@@ -628,7 +639,52 @@
 		}
 	};
 
+	// Keep the theme store in sync with settings (e.g., when synced across tabs)
+	$: if ($settings?.theme && $theme !== $settings?.theme) {
+		theme.set($settings.theme);
+	}
+
+	// Reactive theme application with auth page detection
+	$: {
+		const isAuthPage = $page?.url?.pathname?.startsWith('/auth');
+
+		if (isAuthPage) {
+			// On auth pages, always apply the standard system theme (respects OS light/dark)
+			if ($liveThemeStore?.id !== 'system') {
+				applyTheme('system');
+			}
+		} else if ($theme) {
+			// On other pages, apply the full theme if not in the theme editor
+			if (!$showThemeEditor) {
+				// We add $communityThemes as a dependency so that when community themes load from the backend,
+				// if our current active theme is one of them, it gets applied correctly.
+				const allThemes = new Map([...$themes, ...$communityThemes]);
+				const themeToApply = allThemes.get($theme);
+
+				if (
+					themeToApply &&
+					($liveThemeStore?.id !== $theme ||
+						themeToApply.lastModified !== $liveThemeStore?.lastModified)
+				) {
+					console.log('[root layout] Applying theme change detected', {
+						id: themeToApply.id,
+						lastModified: themeToApply.lastModified
+					});
+					applyTheme(themeToApply);
+				}
+			}
+		}
+	}
+
 	onMount(async () => {
+		// Sync theme changes across tabs
+		const themeStorageHandler = (e) => {
+			if (e.key === 'theme' && e.newValue) {
+				theme.set(e.newValue);
+			}
+		};
+		window.addEventListener('storage', themeStorageHandler);
+
 		window.addEventListener('message', windowMessageEventHandler);
 
 		let touchstartY = 0;
@@ -665,11 +721,7 @@
 		document.addEventListener('touchmove', touchmoveHandler, { passive: false });
 		document.addEventListener('touchend', touchendHandler);
 
-		if (typeof window !== 'undefined') {
-			if (window.applyTheme) {
-				window.applyTheme();
-			}
-		}
+		// window.applyTheme global hook removed for security — use 'theme-applied' CustomEvent instead
 
 		if (window?.electronAPI) {
 			const info = await window.electronAPI.send({
@@ -697,6 +749,33 @@
 			}
 		};
 
+		settingsBc.onmessage = (event) => {
+			if (event.data?.type === 'sync' && event.data?.settings) {
+				console.log('Syncing settings from another tab');
+				const currentSettings = JSON.stringify(get(settings));
+				const newSettings = JSON.stringify(event.data.settings);
+
+				if (currentSettings !== newSettings) {
+					settings.set(event.data.settings);
+				}
+			}
+		};
+
+		communityThemesBc.onmessage = (event) => {
+			if (event.data?.type === 'sync' && event.data?.themes) {
+				console.log('Syncing community themes from another tab');
+				const newThemesMap = new Map(event.data.themes);
+				communityThemes.set(newThemesMap);
+			}
+		};
+
+		const unsubscribeSettings = settings.subscribe((value) => {
+			if (value && Object.keys(value).length > 0) {
+				settingsBc.postMessage({ type: 'sync', settings: value });
+			}
+		});
+
+
 		// Set yourself as the last active tab when this tab is focused
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
@@ -714,7 +793,10 @@
 		// Call visibility change handler initially to set state on load
 		handleVisibilityChange();
 
-		theme.set(localStorage.theme);
+		// Theme subscription is now handled via reactive statement below (after onMount)
+		// to allow for route-based theme modifications
+
+		// Check for community theme updates
 
 		mobile.set(window.innerWidth < BREAKPOINT);
 
@@ -738,6 +820,10 @@
 				const userSettings = await getUserSettings(localStorage.token);
 				if (userSettings) {
 					settings.set(userSettings.ui);
+					if (userSettings.ui?.theme && userSettings.ui.theme !== localStorage.theme) {
+						theme.set(userSettings.ui.theme);
+						localStorage.setItem('theme', userSettings.ui.theme);
+					}
 				} else {
 					settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
 				}
@@ -855,6 +941,13 @@
 			($config?.features?.enable_community_sharing ?? false)
 		) {
 			showSyncStatsModal = true;
+		}
+
+		// Request community themes from other tabs if we don't have any locally yet
+		// This prevents "data loss" when opening a new blank tab
+		if (get(communityThemes).size === 0) {
+			console.log('[root layout] Pulling community themes from other tabs...');
+			communityThemesBc.postMessage({ type: 'request-themes' });
 		}
 
 		return () => {
