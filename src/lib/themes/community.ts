@@ -20,6 +20,7 @@ import { browser } from '$app/environment';
 // BroadcastChannel for theme synchronization
 const communityThemesBc = browser ? new BroadcastChannel('community-themes-sync') : null;
 let communityThemesInitialized = false;
+let communityThemesUnsubscribe: (() => void) | null = null;
 
 /**
  * Broadcasts the current community themes to all other tabs.
@@ -66,7 +67,7 @@ if (communityThemesBc) {
 	}, 100);
 }
 
-export const loadCommunityThemes = async () => {
+export const loadCommunityThemes = () => {
 	// Migration logic:
 	// 1. If we have themes in settings, use them (Single Source of Truth)
 	// 2. If settings.themes is empty BUT we have localStorage themes, migrate them to settings
@@ -77,7 +78,7 @@ export const loadCommunityThemes = async () => {
 	// Since this module is imported, we can subscribe to the store, but we only want to trigger this logic once
 	// or reactively when settings change (e.g. sync from another device).
 
-	settings.subscribe(async (userSettings) => {
+	return settings.subscribe(async (userSettings) => {
 		if (!userSettings) return;
 
 		const currentThemes = get(communityThemes);
@@ -140,7 +141,16 @@ export const initCommunityThemes = () => {
 	}
 
 	communityThemesInitialized = true;
-	void loadCommunityThemes();
+	communityThemesUnsubscribe = loadCommunityThemes();
+};
+
+export const destroyCommunityThemes = () => {
+	if (communityThemesUnsubscribe) {
+		communityThemesUnsubscribe();
+		communityThemesUnsubscribe = null;
+	}
+
+	communityThemesInitialized = false;
 };
 
 
