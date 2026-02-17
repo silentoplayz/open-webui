@@ -233,7 +233,7 @@
 	};
 
 	// Reusable save logic for theme editor
-	const _saveTheme = async (themeToSave: Theme, isEditing: boolean) => {
+	const _saveTheme = async (themeToSave: Theme, isEditing: boolean): Promise<Theme | null> => {
 		console.log('[+layout] _saveTheme triggered', themeToSave.name, 'isEditing:', isEditing);
 
 		// Validation
@@ -241,7 +241,7 @@
 		if (!validation.valid) {
 			console.log('[+layout] Validation failed:', validation.error);
 			toast.error(validation.error ?? 'Invalid theme');
-			return false;
+			return null;
 		}
 
 		// Check for duplicates
@@ -252,10 +252,9 @@
 		if (isDuplicateTheme(themeToSave, themesToCheck, false, themeToSave.id)) {
 			console.log('[+layout] Duplicate theme detected');
 			toast.error('A theme with the same content already exists.');
-			return false;
+			return null;
 		}
 
-		let success = false;
 		if (isEditing) {
 			// Update existing theme
 			if (await updateCommunityTheme(themeToSave)) {
@@ -264,15 +263,16 @@
 				if (themeToSave.id === localStorage.getItem('theme')) {
 					applyTheme(themeToSave);
 				}
-				success = true;
-			}
-		} else {
-			// Add new theme
-			if (await addCommunityTheme(themeToSave)) {
 				return themeToSave;
 			}
+			return null;
 		}
-		return isEditing ? themeToSave : null;
+
+		// Add new theme
+		if (await addCommunityTheme(themeToSave)) {
+			return themeToSave;
+		}
+		return null;
 	};
 
 	// Event handlers for theme editor - defined at module level for proper cleanup
