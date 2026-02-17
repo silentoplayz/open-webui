@@ -62,6 +62,7 @@
 		type ActiveThemeChangedRequest
 	} from '$lib/themes/editor-bridge';
 	import { startThemeEditingSync } from '$lib/themes/editing-sync';
+	import { restoreEditorActiveTheme, resolveEditorActiveThemeId } from '$lib/themes/editor-active-theme';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -262,13 +263,14 @@
 		selectedTheme = null;
 
 		// Apply the user's active theme (for updates to existing themes)
-		const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+		const activeThemeId = restoreEditorActiveTheme({
+			previousThemeId,
+			fallbackThemeId: localStorage.getItem('theme'),
+			currentThemeId: $theme,
+			applyTheme,
+			setTheme: (themeId) => theme.set(themeId)
+		});
 		console.log('[+layout] Applying active theme after update:', activeThemeId);
-		applyTheme(activeThemeId);
-
-		if ($theme !== activeThemeId) {
-			theme.set(activeThemeId);
-		}
 	};
 
 	onMount(async () => {
@@ -502,7 +504,10 @@
 		if (themeToApply) {
 			toast.success($i18n.t('Theme "{{name}}" added successfully!', { name: themeToApply.name }));
 			// Apply the user's previous active theme
-			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
+			const activeThemeId = resolveEditorActiveThemeId(
+				previousThemeId,
+				localStorage.getItem('theme')
+			);
 			applyTheme(activeThemeId);
 		}
 		showThemeEditor.set(false);
@@ -551,20 +556,14 @@
 			
 			// Use previousThemeId as source of truth for the intended active theme
 			console.log('[+layout] Theme Editor Cancelled. previousThemeId:', previousThemeId, 'localStorage:', localStorage.getItem('theme'));
-			const activeThemeId = previousThemeId || localStorage.getItem('theme') || 'system';
-			
-			// 1. Apply the theme visually (updates live/current stores)
-			applyTheme(activeThemeId);
-			
-			// 2. CRITICAL: Update the global theme selection store if it differs.
-			// Themes.svelte avoids updating this during edit to prevent jumps,
-			// but now that we are done/cancelled, we MUST ensure the global state matches our selection.
-			// This ensures other components (like Themes list) see the correct "active" theme.
-			// We access the store via the 'theme' store import.
-			if ($theme !== activeThemeId) {
-				console.log('[+layout] Syncing global theme store to:', activeThemeId);
-				theme.set(activeThemeId);
-			}
+			const activeThemeId = restoreEditorActiveTheme({
+				previousThemeId,
+				fallbackThemeId: localStorage.getItem('theme'),
+				currentThemeId: $theme,
+				applyTheme,
+				setTheme: (themeId) => theme.set(themeId)
+			});
+			console.log('[+layout] Restored active theme after cancel:', activeThemeId);
 		}}
 	/>
 {/if}
