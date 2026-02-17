@@ -65,6 +65,7 @@
 	import { applyCreatedTheme, restoreThemeAfterCreateCancel } from '$lib/themes/editor-apply-confirm';
 	import { openThemeEditorSession } from '$lib/themes/editor-open-session';
 	import { processEditorSaveRequest, restoreThemeAfterEditorSave } from '$lib/themes/editor-save-request';
+	import { applyEditorSaveOutcome } from '$lib/themes/editor-save-outcome';
 	import { prepareThemeSaveAsNew } from '$lib/themes/editor-save-as-new';
 	import { applyThemeEditorPreview, cancelThemeEditorSession } from '$lib/themes/editor-cancel-preview';
 	import { restartThemeEditorRuntime, cleanupThemeEditorRuntime } from '$lib/themes/editor-runtime';
@@ -251,32 +252,32 @@
 			isEditing,
 			saveTheme: async (themeToSave, nextIsEditing) => _saveTheme(themeToSave, nextIsEditing)
 		});
-		console.log('[+layout] Save outcome:', outcome.action);
-
-		if (outcome.action === 'none') {
-			return;
-		}
-
-		if (outcome.action === 'confirm-new') {
-			themeToApply = outcome.savedTheme;
-			showApplyThemeConfirm = true;
-			editingThemeId.set(null);
-			return;
-		}
-
-		showThemeEditor.set(false);
-		editingThemeId.set(null);
-		selectedTheme = null;
-
-		// Apply the user's active theme (for updates to existing themes)
-		const activeThemeId = restoreThemeAfterEditorSave({
-			previousThemeId,
-			fallbackThemeId: localStorage.getItem('theme'),
-			currentThemeId: $theme,
-			applyThemeById: (themeId) => applyTheme(themeId),
-			setThemeId: (themeId) => theme.set(themeId)
+		const appliedOutcome = applyEditorSaveOutcome({
+			outcome,
+			setThemeToApply: (theme) => {
+				themeToApply = theme;
+			},
+			showCreateConfirm: () => {
+				showApplyThemeConfirm = true;
+			},
+			closeEditor: () => showThemeEditor.set(false),
+			clearEditingTheme: () => editingThemeId.set(null),
+			clearSelectedTheme: () => {
+				selectedTheme = null;
+			},
+			restoreThemeAfterEditSave: () =>
+				restoreThemeAfterEditorSave({
+					previousThemeId,
+					fallbackThemeId: localStorage.getItem('theme'),
+					currentThemeId: $theme,
+					applyThemeById: (themeId) => applyTheme(themeId),
+					setThemeId: (themeId) => theme.set(themeId)
+				})
 		});
-		console.log('[+layout] Applying active theme after update:', activeThemeId);
+		console.log('[+layout] Save outcome:', appliedOutcome.action);
+		if (appliedOutcome.action === 'restore-after-edit') {
+			console.log('[+layout] Applying active theme after update:', appliedOutcome.activeThemeId);
+		}
 	};
 
 	const resetThemeEditorAfterCreateConfirm = () => {
