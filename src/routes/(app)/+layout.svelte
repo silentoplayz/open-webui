@@ -8,7 +8,6 @@
 
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { browser } from '$app/environment';
 	import { fade } from 'svelte/transition';
 
 	import { getModels, getToolServersData, getVersionUpdates } from '$lib/apis';
@@ -39,7 +38,6 @@
 		showSidebar,
 		showThemeEditor,
 		editingThemeId,
-		editingThemes,
 		selectedFolder,
 		theme
 	} from '$lib/stores';
@@ -65,6 +63,7 @@
 		type OpenThemeEditorRequest,
 		type ActiveThemeChangedRequest
 	} from '$lib/themes/editor-bridge';
+	import { startThemeEditingSync } from '$lib/themes/editing-sync';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
 	import type { Theme } from '$lib/types';
@@ -81,44 +80,6 @@
 
 	let version: any;
 
-	// Cross-tab theme editing sync
-	const tabId = uuidv4();
-	const themeEditingBC = browser ? new BroadcastChannel('theme-editing-sync') : null;
-
-	if (themeEditingBC) {
-		themeEditingBC.onmessage = (event) => {
-			if (event.data?.type === 'editing-update') {
-				const { tabId: senderTabId, themeId } = event.data;
-				editingThemes.update((prev) => {
-					const next = { ...prev };
-					if (themeId) {
-						next[senderTabId] = themeId;
-					} else {
-						delete next[senderTabId];
-					}
-					return next;
-				});
-			} else if (event.data?.type === 'query') {
-				// Another tab is asking for our status
-				if ($editingThemeId) {
-					themeEditingBC.postMessage({
-						type: 'editing-update',
-						tabId,
-						themeId: $editingThemeId
-					});
-				}
-			}
-		};
-	}
-
-	$: if (themeEditingBC) {
-		themeEditingBC.postMessage({
-			type: 'editing-update',
-			tabId,
-			themeId: $editingThemeId
-		});
-	}
-
 	// Theme editor state
 	let selectedTheme: Theme | null = null;
 	let originalTheme: Theme | null = null;
@@ -128,6 +89,7 @@
 	let showApplyThemeConfirm = false;
 	let themeToApply: Theme | null = null;
 	let clearThemeEditorBridgeHandlers: (() => void) | null = null;
+	let stopThemeEditingSync: (() => void) | null = null;
 
 	// Watch for theme editor changes
 	$: if ($showThemeEditor && $editingThemeId) {
@@ -358,6 +320,8 @@
 			onOpenEditor: handleOpenThemeEditor,
 			onActiveThemeChanged: handleActiveThemeChanged
 		});
+		stopThemeEditingSync?.();
+		stopThemeEditingSync = startThemeEditingSync();
 
 		clearChatInputStorage();
 		await Promise.all([
@@ -500,10 +464,6 @@
 			}
 		}
 
-		if (themeEditingBC) {
-			themeEditingBC.postMessage({ type: 'query' });
-		}
-
 		await tick();
 
 		loaded = true;
@@ -512,11 +472,8 @@
 	onDestroy(() => {
 		clearThemeEditorBridgeHandlers?.();
 		clearThemeEditorBridgeHandlers = null;
-
-		if (themeEditingBC) {
-			themeEditingBC.postMessage({ type: 'editing-update', tabId, themeId: null });
-			themeEditingBC.close();
-		}
+		stopThemeEditingSync?.();
+		stopThemeEditingSync = null;
 	});
 
 	const checkForVersionUpdates = async () => {
