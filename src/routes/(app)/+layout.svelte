@@ -62,11 +62,11 @@
 		type ActiveThemeChangedRequest
 	} from '$lib/themes/editor-bridge';
 	import { startThemeEditingSync } from '$lib/themes/editing-sync';
-	import { restoreEditorActiveTheme } from '$lib/themes/editor-active-theme';
 	import { applyCreatedTheme, restoreThemeAfterCreateCancel } from '$lib/themes/editor-apply-confirm';
 	import { openThemeEditorSession } from '$lib/themes/editor-open-session';
 	import { processEditorSaveRequest, restoreThemeAfterEditorSave } from '$lib/themes/editor-save-request';
 	import { prepareThemeSaveAsNew } from '$lib/themes/editor-save-as-new';
+	import { applyThemeEditorPreview, cancelThemeEditorSession } from '$lib/themes/editor-cancel-preview';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -325,6 +325,39 @@
 		resetThemeEditorAfterCreateConfirm();
 	};
 
+	const handleThemeEditorPreviewUpdate = (nextTheme: Theme) => {
+		applyThemeEditorPreview({
+			theme: nextTheme,
+			setSelectedTheme: (theme) => {
+				selectedTheme = theme;
+			},
+			applyThemePreview: (theme) => applyTheme(theme, true)
+		});
+	};
+
+	const handleThemeEditorCancel = () => {
+		console.log(
+			'[+layout] Theme Editor Cancelled. previousThemeId:',
+			previousThemeId,
+			'localStorage:',
+			localStorage.getItem('theme')
+		);
+
+		const activeThemeId = cancelThemeEditorSession({
+			previousThemeId,
+			fallbackThemeId: localStorage.getItem('theme'),
+			currentThemeId: $theme,
+			closeEditor: () => showThemeEditor.set(false),
+			clearEditingTheme: () => editingThemeId.set(null),
+			clearSelectedTheme: () => {
+				selectedTheme = null;
+			},
+			applyThemeById: (themeId) => applyTheme(themeId),
+			setThemeId: (themeId) => theme.set(themeId)
+		});
+		console.log('[+layout] Restored active theme after cancel:', activeThemeId);
+	};
+
 	onMount(async () => {
 		if ($user === undefined || $user === null) {
 			await goto('/auth');
@@ -544,27 +577,9 @@
 			void handleThemeEditorSaveRequest(newTheme, false);
 		}}
 		on:update={(e) => {
-			selectedTheme = e.detail;
-			if (selectedTheme) {
-				applyTheme(selectedTheme, true);
-			}
+			handleThemeEditorPreviewUpdate(e.detail);
 		}}
-		on:cancel={() => {
-			showThemeEditor.set(false);
-			editingThemeId.set(null);
-			selectedTheme = null;
-			
-			// Use previousThemeId as source of truth for the intended active theme
-			console.log('[+layout] Theme Editor Cancelled. previousThemeId:', previousThemeId, 'localStorage:', localStorage.getItem('theme'));
-			const activeThemeId = restoreEditorActiveTheme({
-				previousThemeId,
-				fallbackThemeId: localStorage.getItem('theme'),
-				currentThemeId: $theme,
-				applyTheme,
-				setTheme: (themeId) => theme.set(themeId)
-			});
-			console.log('[+layout] Restored active theme after cancel:', activeThemeId);
-		}}
+		on:cancel={handleThemeEditorCancel}
 	/>
 {/if}
 
