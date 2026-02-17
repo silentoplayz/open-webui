@@ -752,22 +752,6 @@
 		_proceedCreateNewTheme();
 	};
 
-	// Note: Save handling is now done in +layout.svelte since this component
-	// gets unmounted when the settings modal closes
-	onMount(() => {
-		// Listen for open theme editor events to set the selected theme
-		const handleOpenThemeEditor = (event: CustomEvent) => {
-			// This event is dispatched by openThemeEditor and createNewTheme
-			// We don't need to do anything here as the layout handles the theme editor
-		};
-
-		window.addEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as EventListener);
-
-		return () => {
-			window.removeEventListener(THEME_EVENTS.OPEN_EDITOR, handleOpenThemeEditor as EventListener);
-		};
-	});
-
 	const copyTheme = (theme: Theme) => {
 		const themeJson = JSON.stringify(theme, null, 2);
 		navigator.clipboard.writeText(themeJson);
