@@ -64,6 +64,7 @@
 	import { startThemeEditingSync } from '$lib/themes/editing-sync';
 	import { restoreEditorActiveTheme } from '$lib/themes/editor-active-theme';
 	import { applyCreatedTheme, restoreThemeAfterCreateCancel } from '$lib/themes/editor-apply-confirm';
+	import { openThemeEditorSession } from '$lib/themes/editor-open-session';
 	import { saveEditorTheme } from '$lib/themes/editor-save';
 	import ThemeManager from '$lib/components/common/ThemeManager.svelte';
 	import ThemeEditorModal from '$lib/components/common/ThemeEditorModal.svelte';
@@ -206,30 +207,31 @@
 	};
 
 	// Event handlers for theme editor - defined at module level for proper cleanup
-	const handleOpenThemeEditor = async ({
-		theme,
-		isEditing,
-		previousThemeId: prevTheme,
-		saveChanges
-	}: OpenThemeEditorRequest) => {
-		console.log('[+layout] Opening theme editor', { themeName: theme?.name || 'New Theme', isEditing, saveChanges });
+	const handleOpenThemeEditor = async (request: OpenThemeEditorRequest) => {
+		console.log('[+layout] Opening theme editor', {
+			themeName: request.theme?.name || 'New Theme',
+			isEditing: request.isEditing,
+			saveChanges: request.saveChanges
+		});
 
-		// AUTO-SAVE: If we're already editing a theme and saveChanges is true
-		if (saveChanges && selectedTheme) {
+		if (request.saveChanges && selectedTheme) {
 			console.log('[+layout] Auto-saving previous session for:', selectedTheme.name);
-			await _saveTheme(selectedTheme, isEditingTheme);
 		}
 
-		if (theme) {
-			// Create a deep copy to ensure reactivity
-			selectedTheme = JSON.parse(JSON.stringify(theme));
-			originalTheme = JSON.parse(JSON.stringify(theme));
-			// Apply the theme immediately for live preview
-			applyTheme(selectedTheme);
-		}
+		const nextSession = await openThemeEditorSession({
+			request,
+			currentSelectedTheme: selectedTheme,
+			currentIsEditingTheme: isEditingTheme,
+			saveCurrentTheme: async (themeToSave, isEditing) => {
+				await _saveTheme(themeToSave, isEditing);
+			},
+			applyThemePreview: (nextTheme) => applyTheme(nextTheme)
+		});
 
-		isEditingTheme = isEditing;
-		previousThemeId = prevTheme;
+		selectedTheme = nextSession.selectedTheme;
+		originalTheme = nextSession.originalTheme;
+		isEditingTheme = nextSession.isEditingTheme;
+		previousThemeId = nextSession.previousThemeId;
 	};
 
 	const handleActiveThemeChanged = ({ themeId }: ActiveThemeChangedRequest) => {
