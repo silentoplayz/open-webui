@@ -57,6 +57,8 @@
 	import Sparkles from '../icons/Sparkles.svelte';
 
 	import { KokoroWorker } from '$lib/workers/KokoroWorker';
+	import MicSolid from '../icons/MicSolid.svelte';
+	import Stop from '../icons/Stop.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -562,7 +564,7 @@
 											atSelectedModel = undefined;
 										}}
 									>
-										<XMark />
+										<XMark className={'size-4'} />
 									</button>
 								</div>
 							</div>
@@ -697,16 +699,7 @@
 																files = files;
 															}}
 														>
-															<svg
-																xmlns="http://www.w3.org/2000/svg"
-																viewBox="0 0 20 20"
-																fill="currentColor"
-																class="size-4"
-															>
-																<path
-																	d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
-																/>
-															</svg>
+															<XMark className={'size-4'} />
 														</button>
 													</div>
 												</div>
@@ -1434,17 +1427,7 @@
 													}}
 													aria-label="Voice Input"
 												>
-													<svg
-														xmlns="http://www.w3.org/2000/svg"
-														viewBox="0 0 20 20"
-														fill="currentColor"
-														class="w-5 h-5 translate-y-[0.5px]"
-													>
-														<path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" />
-														<path
-															d="M5.5 9.643a.75.75 0 00-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-1.5v-1.546A6.001 6.001 0 0016 10v-.357a.75.75 0 00-1.5 0V10a4.5 4.5 0 01-9 0v-.357z"
-														/>
-													</svg>
+													<MicSolid class="w-5 h-5 translate-y-[0.5px]" />
 												</button>
 											</Tooltip>
 										{/if}
@@ -1458,18 +1441,7 @@
 															stopResponse();
 														}}
 													>
-														<svg
-															xmlns="http://www.w3.org/2000/svg"
-															viewBox="0 0 24 24"
-															fill="currentColor"
-															class="size-5"
-														>
-															<path
-																fill-rule="evenodd"
-																d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm6-2.438c0-.724.588-1.312 1.313-1.312h4.874c.725 0 1.313.588 1.313 1.313v4.874c0 .725-.588 1.313-1.313 1.313H9.564a1.312 1.312 0 01-1.313-1.313V9.564z"
-																clip-rule="evenodd"
-															/>
-														</svg>
+														<Stop className={'size-5'} />
 													</button>
 												</Tooltip>
 											</div>

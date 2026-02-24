@@ -1,8 +1,15 @@
 <script lang="ts">
 	export let className = 'size-4';
+	export let strokeWidth = '1.5';
 </script>
 
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class={className}>
+<svg
+	xmlns="http://www.w3.org/2000/svg"
+	viewBox="0 0 24 24"
+	stroke-width={strokeWidth}
+	fill="currentColor"
+	class={className}
+>
 	<path d="M12 9a3.75 3.75 0 1 0 0 7.5A3.75 3.75 0 0 0 12 9Z" />
 	<path
 		fill-rule="evenodd"

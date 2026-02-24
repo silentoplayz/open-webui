@@ -222,7 +222,7 @@
 						}
 					}}
 				>
-					<DocumentArrowUpSolid />
+					<DocumentArrowUpSolid className={'size-4'} />
 					<div class="line-clamp-1">{$i18n.t('Upload Files')}</div>
 				</DropdownMenu.Item>
 			</Tooltip>

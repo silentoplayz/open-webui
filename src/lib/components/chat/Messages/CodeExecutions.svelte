@@ -41,7 +41,7 @@
 					>
 						{#if execution?.result}
 							{#if execution.result?.error}
-								<XMark />
+								<XMark className={'size-4'} />
 							{:else if execution.result?.output}
 								<Check strokeWidth="3" className="size-3" />
 							{:else}

@@ -18,6 +18,8 @@
 	import FileItem from '../common/FileItem.svelte';
 	import Image from '../common/Image.svelte';
 	import FilesOverlay from '../chat/MessageInput/FilesOverlay.svelte';
+	import MicSolid from '../icons/MicSolid.svelte';
+	import XMark from '../icons/XMark.svelte';
 
 	export let placeholder = $i18n.t('Send a Message');
 	export let transparentBackground = false;
@@ -433,16 +435,7 @@
 														files = files;
 													}}
 												>
-													<svg
-														xmlns="http://www.w3.org/2000/svg"
-														viewBox="0 0 20 20"
-														fill="currentColor"
-														class="w-4 h-4"
-													>
-														<path
-															d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
-														/>
-													</svg>
+													<XMark className={'size-4'} />
 												</button>
 											</div>
 										</div>
@@ -578,17 +571,7 @@
 											}}
 											aria-label="Voice Input"
 										>
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 20 20"
-												fill="currentColor"
-												class="w-5 h-5 translate-y-[0.5px]"
-											>
-												<path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" />
-												<path
-													d="M5.5 9.643a.75.75 0 00-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-1.5v-1.546A6.001 6.001 0 0016 10v-.357a.75.75 0 00-1.5 0V10a4.5 4.5 0 01-9 0v-.357z"
-												/>
-											</svg>
+											<MicSolid className="w-5" h-5 translate-y-[0.5px] />
 										</button>
 									</Tooltip>
 								{/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	export let className = 'size-4';
+	export let strokeWidth = '1.5';
 </script>
 
 <svg
@@ -10,6 +11,7 @@
 	height="24"
 	fill="currentColor"
 	viewBox="0 0 24 24"
+	stroke-width={strokeWidth}
 >
 	<path
 		fill-rule="evenodd"

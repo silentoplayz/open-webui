@@ -12,6 +12,7 @@
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
+	import PencilSolid from '$lib/components/icons/PencilSolid.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -173,16 +174,7 @@
 								class="absolute flex justify-center rounded-full bottom-0 left-0 right-0 top-0 h-full w-full overflow-hidden bg-gray-700 bg-fixed opacity-0 transition duration-300 ease-in-out hover:opacity-50"
 							>
 								<div class="my-auto text-gray-100">
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										class="w-5 h-5"
-									>
-										<path
-											d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z"
-										/>
-									</svg>
+									<PencilSolid className="w-5 h-5" />
 								</div>
 							</div>
 						</button>

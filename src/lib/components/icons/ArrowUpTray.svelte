@@ -5,15 +5,15 @@
 
 <svg
 	xmlns="http://www.w3.org/2000/svg"
-	fill="none"
-	viewBox="0 0 24 24"
+	viewBox="0 0 16 16"
 	stroke-width={strokeWidth}
-	stroke="currentColor"
+	fill="currentColor"
 	class={className}
 >
 	<path
-		stroke-linecap="round"
-		stroke-linejoin="round"
-		d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+		d="M7.25 10.25a.75.75 0 0 0 1.5 0V4.56l2.22 2.22a.75.75 0 1 0 1.06-1.06l-3.5-3.5a.75.75 0 0 0-1.06 0l-3.5 3.5a.75.75 0 0 0 1.06 1.06l2.22-2.22v5.69Z"
+	/>
+	<path
+		d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
 	/>
 </svg>

@@ -548,7 +548,7 @@
 					show = false;
 				}}
 			>
-				<XMark className="w-5 h-5"></XMark>
+				<XMark className="w-5 h-5" />
 			</button>
 		</div>
 
