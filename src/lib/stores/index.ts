@@ -81,6 +81,7 @@ export const showCallOverlay = writable(false);
 export const artifactCode = writable(null);
 
 export const temporaryChatEnabled = writable(false);
+export const firstResponseReceived = writable(false);
 export const scrollPaginationEnabled = writable(false);
 export const currentChatPage = writable(1);
 

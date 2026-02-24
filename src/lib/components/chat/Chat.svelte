@@ -31,6 +31,7 @@
 		showCallOverlay,
 		currentChatPage,
 		temporaryChatEnabled,
+		firstResponseReceived,
 		mobile,
 		showOverview,
 		chatTitle,
@@ -88,6 +89,7 @@
 	import NotificationToast from '../NotificationToast.svelte';
 	import Spinner from '../common/Spinner.svelte';
 	import { fade } from 'svelte/transition';
+	import NewChatButton from './NewChatButton.svelte';
 
 	export let chatIdProp = '';
 
@@ -1018,7 +1020,9 @@
 		await tick();
 
 		if ($chatId == chatId) {
-			if (!$temporaryChatEnabled) {
+			if ($temporaryChatEnabled) {
+				firstResponseReceived.set(true);
+			} else {
 				chat = await updateChatById(localStorage.token, chatId, {
 					models: selectedModels,
 					messages: messages,
@@ -2115,6 +2119,10 @@
 					/>
 
 					<div class="flex flex-col flex-auto z-10 w-full @container overflow-auto">
+						{#if $temporaryChatEnabled && $firstResponseReceived}
+							<NewChatButton on:newChat={initNewChat} />
+						{/if}
+
 						{#if ($settings?.landingPageMode === 'chat' && !$selectedFolder) || createMessagesList(history, history.currentId).length > 0}
 							<div
 								class=" pb-2.5 flex flex-col justify-between w-full flex-auto overflow-auto h-0 max-w-full z-10 scrollbar-hidden"

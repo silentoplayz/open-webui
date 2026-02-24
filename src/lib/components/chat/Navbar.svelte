@@ -112,6 +112,12 @@
 					{#if showModelSelector}
 						<ModelSelector bind:selectedModels showSetDefault={!shareEnabled} />
 					{/if}
+
+					{#if $temporaryChatEnabled && $chatId === 'local'}
+						<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+							{$i18n.t('Temporary Chat')}
+						</div>
+					{/if}
 				</div>
 
 				<div class="self-start flex flex-none items-center text-gray-600 dark:text-gray-400">
@@ -213,12 +219,6 @@
 			</div>
 		</div>
 	</div>
-
-	{#if $temporaryChatEnabled && $chatId === 'local'}
-		<div class=" w-full z-30 text-center">
-			<div class="text-xs text-gray-500">{$i18n.t('Temporary Chat')}</div>
-		</div>
-	{/if}
 
 	<div class="absolute top-[100%] left-0 right-0 h-fit">
 		{#if !history.currentId && !$chatId && ($banners.length > 0 || ($config?.license_metadata?.type ?? null) === 'trial' || (($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats))}
