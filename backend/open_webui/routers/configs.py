@@ -301,6 +301,20 @@ async def set_default_suggestions(
     return request.app.state.config.DEFAULT_PROMPT_SUGGESTIONS
 
 
+class ShowDefaultSuggestionsForm(BaseModel):
+    show: bool
+
+
+@router.post("/suggestions/show", response_model=ShowDefaultSuggestionsForm)
+async def set_show_default_suggestions(
+    request: Request,
+    form_data: ShowDefaultSuggestionsForm,
+    user=Depends(get_admin_user),
+):
+    request.app.state.config.SHOW_DEFAULT_PROMPT_SUGGESTIONS = form_data.show
+    return {"show": form_data.show}
+
+
 ############################
 # SetBanners
 ############################

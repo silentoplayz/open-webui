@@ -6,7 +6,10 @@
 	import { toast } from 'svelte-sonner';
 
 	import { getBackendConfig, getModels, getTaskConfig, updateTaskConfig } from '$lib/apis';
-	import { setDefaultPromptSuggestions } from '$lib/apis/configs';
+	import {
+		setDefaultPromptSuggestions,
+		setShowDefaultPromptSuggestions
+	} from '$lib/apis/configs';
 	import { config, settings, user } from '$lib/stores';
 	import { createEventDispatcher, onMount, getContext } from 'svelte';
 
@@ -45,6 +48,7 @@
 	};
 
 	let promptSuggestions = [];
+	let showPromptSuggestions = true;
 	let banners: Banner[] = [];
 
 	const updateInterfaceHandler = async () => {
@@ -52,6 +56,11 @@
 
 		promptSuggestions = promptSuggestions.filter((p) => p.content !== '');
 		promptSuggestions = await setDefaultPromptSuggestions(localStorage.token, promptSuggestions);
+		const res = await setShowDefaultPromptSuggestions(
+			localStorage.token,
+			showPromptSuggestions
+		);
+		showPromptSuggestions = res.show;
 		await updateBanners();
 
 		await config.set(await getBackendConfig());
@@ -62,6 +71,7 @@
 		taskConfig = await getTaskConfig(localStorage.token);
 
 		promptSuggestions = $config?.default_prompt_suggestions ?? [];
+		showPromptSuggestions = $config?.show_default_prompt_suggestions ?? true;
 		banners = await getBanners(localStorage.token);
 	});
 
@@ -435,27 +445,36 @@
 							<div class=" self-center text-xs">
 								{$i18n.t('Default Prompt Suggestions')}
 							</div>
+							<div class="flex items-center space-x-2">
+								<Switch bind:state={showPromptSuggestions} />
 
-							<button
-								class="p-1 px-3 text-xs flex rounded-sm transition"
-								type="button"
-								on:click={() => {
-									if (promptSuggestions.length === 0 || promptSuggestions.at(-1).content !== '') {
-										promptSuggestions = [...promptSuggestions, { content: '', title: ['', ''] }];
-									}
-								}}
-							>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									viewBox="0 0 20 20"
-									fill="currentColor"
-									class="w-4 h-4"
+								<button
+									class="p-1 px-3 text-xs flex rounded-sm transition"
+									type="button"
+									on:click={() => {
+										if (
+											promptSuggestions.length === 0 ||
+											promptSuggestions.at(-1).content !== ''
+										) {
+											promptSuggestions = [
+												...promptSuggestions,
+												{ content: '', title: ['', ''] }
+											];
+										}
+									}}
 								>
-									<path
-										d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"
-									/>
-								</svg>
-							</button>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 20 20"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"
+										/>
+									</svg>
+								</button>
+							</div>
 						</div>
 						<div class="grid lg:grid-cols-2 flex-col gap-1.5">
 							{#each promptSuggestions as prompt, promptIdx}
