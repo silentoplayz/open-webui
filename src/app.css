@@ -770,3 +770,49 @@ body {
 	position: relative;
 	z-index: 0;
 }
+
+.scrollbar-container {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: 20px;
+  display: flex;
+  justify-content: center;
+  z-index: 10;
+}
+
+.scrollbar-track {
+  position: relative;
+  width: 4px;
+  background-color: rgba(128, 128, 128, 0.2);
+  border-radius: 2px;
+  height: 100%;
+}
+
+.scrollbar-thumb {
+  position: absolute;
+  width: 100%;
+  background-color: #a0a0a0;
+  border-radius: 2px;
+  cursor: grab;
+}
+
+.scrollbar-thumb:active {
+  cursor: grabbing;
+}
+
+.scrollbar-notch {
+  position: absolute;
+  left: -4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: #a0a0a0;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.scrollbar-notch:hover {
+  transform: scale(1.5);
+}

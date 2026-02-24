@@ -38,8 +38,7 @@
 		toolServers,
 		functions,
 		selectedFolder,
-		pinnedChats,
-		showEmbeds
+		pinnedChats
 	} from '$lib/stores';
 	import {
 		convertMessagesToHistory,
@@ -90,6 +89,7 @@
 	import Tooltip from '../common/Tooltip.svelte';
 	import Sidebar from '../icons/Sidebar.svelte';
 	import { getFunctions } from '$lib/apis/functions';
+	import Scrollbar from './Scrollbar.svelte';
 	import Image from '../common/Image.svelte';
 	import { updateFolderById } from '$lib/apis/folders';
 
@@ -369,8 +369,6 @@
 					message.content = data.content;
 				} else if (type === 'chat:message:files' || type === 'files') {
 					message.files = data.files;
-				} else if (type === 'chat:message:embeds' || type === 'embeds') {
-					message.embeds = data.embeds;
 				} else if (type === 'chat:message:error') {
 					message.error = data.error;
 				} else if (type === 'chat:message:follow_ups') {
@@ -592,7 +590,6 @@
 				showCallOverlay.set(false);
 				showOverview.set(false);
 				showArtifacts.set(false);
-				showEmbeds.set(false);
 			}
 		});
 
@@ -2282,7 +2279,7 @@
 
 <svelte:head>
 	<title>
-		{$settings.showChatTitleInTab !== false && $chatTitle
+		{$chatTitle
 			? `${$chatTitle.length > 30 ? `${$chatTitle.slice(0, 30)}...` : $chatTitle} • ${$WEBUI_NAME}`
 			: `${$WEBUI_NAME}`}
 	</title>
@@ -2404,40 +2401,44 @@
 
 					<div class="flex flex-col flex-auto z-10 w-full @container overflow-auto">
 						{#if ($settings?.landingPageMode === 'chat' && !$selectedFolder) || createMessagesList(history, history.currentId).length > 0}
-							<div
-								class=" pb-2.5 flex flex-col justify-between w-full flex-auto overflow-auto h-0 max-w-full z-10 scrollbar-hidden"
-								id="messages-container"
-								bind:this={messagesContainerElement}
-								on:scroll={(e) => {
-									autoScroll =
-										messagesContainerElement.scrollHeight - messagesContainerElement.scrollTop <=
-										messagesContainerElement.clientHeight + 5;
-								}}
-							>
-								<div class=" h-full w-full flex flex-col">
-									<Messages
-										chatId={$chatId}
-										bind:history
-										bind:autoScroll
-										bind:prompt
-										setInputText={(text) => {
-											messageInput?.setText(text);
-										}}
-										{selectedModels}
-										{atSelectedModel}
-										{sendMessage}
-										{showMessage}
-										{submitMessage}
-										{continueResponse}
-										{regenerateResponse}
-										{mergeResponses}
-										{chatActionHandler}
-										{addMessages}
-										topPadding={true}
-										bottomPadding={files.length > 0}
-										{onSelect}
-									/>
+							<div class="relative w-full flex-auto h-0">
+								<div
+									class="pb-2.5 flex flex-col justify-between w-full flex-auto overflow-auto h-full max-w-full z-10 scrollbar-hidden"
+									id="messages-container"
+									bind:this={messagesContainerElement}
+									on:scroll={(e) => {
+										autoScroll =
+											messagesContainerElement.scrollHeight -
+											messagesContainerElement.scrollTop <=
+											messagesContainerElement.clientHeight + 5;
+									}}
+								>
+									<div class="h-full w-full flex flex-col">
+										<Messages
+											chatId={$chatId}
+											bind:history
+											bind:autoScroll
+											bind:prompt
+											setInputText={(text) => {
+												messageInput?.setText(text);
+											}}
+											{selectedModels}
+											{atSelectedModel}
+											{sendMessage}
+											{showMessage}
+											{submitMessage}
+											{continueResponse}
+											{regenerateResponse}
+											{mergeResponses}
+											{chatActionHandler}
+											{addMessages}
+											topPadding={true}
+											bottomPadding={files.length > 0}
+											{onSelect}
+										/>
+									</div>
 								</div>
+								<Scrollbar {history} {messagesContainerElement} />
 							</div>
 
 							<div class=" pb-2">
