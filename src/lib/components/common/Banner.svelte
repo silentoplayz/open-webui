@@ -37,6 +37,63 @@
 	onMount(() => {
 		mounted = true;
 	});
+
+	// Configure DOMPurify to allow details and summary tags
+	const purifyOptions = {
+		ADD_TAGS: ['details', 'summary']
+		// ADD_ATTR: ['open'] // Uncomment if you use the 'open' attribute on <details>
+	};
+
+	// Function to process content: handle details, summary, and markdown
+	function processBannerContent(content: string): string {
+		const sanitizedContent = DOMPurify.sanitize(content, purifyOptions);
+
+		// Regex to find <details> tag at the beginning, capturing its full inner content
+		const detailsWrapperRegex = /^\s*<details(?:[^>]*?)>([\s\S]*?)<\/details>\s*(.*)/i;
+		const detailsMatch = sanitizedContent.match(detailsWrapperRegex);
+
+		if (detailsMatch) {
+			let detailsInnerHtml = detailsMatch[1]; // Content inside <details>...</details>
+			const remainingContentAfterDetails = detailsMatch[2]; // Content after the <details> block
+
+			// Now, parse the content *within* the details for <summary> and other Markdown
+			const summaryRegex = /^\s*<summary(?:[^>]*?)>([\s\S]*?)<\/summary>\s*(.*)/i;
+			const summaryMatch = detailsInnerHtml.match(summaryRegex);
+
+			let finalDetailsInnerContent = '';
+
+			if (summaryMatch) {
+				const summaryText = summaryMatch[1]; // Content inside <summary>...</summary>
+				const contentAfterSummary = summaryMatch[2]; // Content after the </summary> tag
+
+				// Parse Markdown in summary text
+				const parsedSummaryText = marked.parseInline(summaryText).trim(); // Use marked.parseInline for summary
+				const reconstructedSummary = `<summary>${parsedSummaryText}</summary>`;
+
+				// Parse Markdown in content after summary
+				const parsedContentAfterSummary = marked.parse(contentAfterSummary);
+
+				finalDetailsInnerContent = reconstructedSummary + parsedContentAfterSummary;
+			} else {
+				// If no <summary> found at the beginning of details content, treat all as markdown
+				finalDetailsInnerContent = marked.parse(detailsInnerHtml);
+			}
+
+			// Reconstruct the full details block
+			const fullDetailsBlock = `<details>${finalDetailsInnerContent}</details>`;
+
+			// Parse any remaining content as Markdown
+			const parsedRemainingContent = marked.parse(remainingContentAfterDetails);
+
+			// Combine them.
+			return fullDetailsBlock + parsedRemainingContent;
+		} else {
+			// If no <details> tag at the beginning, just parse the whole thing as Markdown
+			return marked.parse(sanitizedContent);
+		}
+	}
+
+	$: processedContent = processBannerContent(banner.content);
 </script>
 
 {#if !dismissed}
@@ -84,7 +141,7 @@
 				</div>
 
 				<div class="flex-1 text-xs text-gray-700 dark:text-white max-h-20 overflow-y-auto">
-					{@html marked.parse(DOMPurify.sanitize(banner.content))}
+					{@html processedContent}
 				</div>
 			</div>
 
@@ -120,7 +177,7 @@
 							dismiss(banner.id);
 						}}
 						class="  -mt-1 -mb-2 -translate-y-[1px] ml-1.5 mr-1 text-gray-400 dark:hover:text-white"
-						>&times;</button
+						>×</button
 					>
 				{/if}
 			</div>

@@ -12,6 +12,19 @@
 			console.error(err);
 			return null;
 		});
+
+		const isPendingScreen = true;
+
+		if (isPendingScreen) {
+			const interval = setInterval(() => {
+				const overlay = document.querySelector('.fixed.w-full.h-full.flex.z-999');
+				if (!overlay || !document.body.contains(overlay)) {
+					location.reload();
+				}
+			}, 2000);
+
+			return () => clearInterval(interval);
+		}
 	});
 </script>
 

@@ -39,6 +39,7 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import WebSearchResults from './ResponseMessage/WebSearchResults.svelte';
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
+	import Heart from '$lib/components/icons/Heart.svelte';
 
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
@@ -53,10 +54,17 @@
 	import { flyAndScale } from '$lib/utils/transitions';
 
 	interface MessageType {
+		citations: string[] | undefined;
+		usage: any;
 		id: string;
 		model: string;
 		content: string;
-		files?: { type: string; url: string }[];
+		files?: {
+			name: string;
+			size: number;
+			type: string;
+			url: string;
+		}[];
 		timestamp: number;
 		role: string;
 		statusHistory?: {
@@ -101,6 +109,13 @@
 			usage?: unknown;
 		};
 		annotation?: { type: string; rating: number };
+		followUps?: string[];
+		favorite?: boolean;
+		parentId?: string;
+		childrenIds?: string[];
+		selectedModelId?: string;
+		arena?: boolean;
+		feedbackId?: string;
 	}
 
 	export let chatId = '';
@@ -1222,6 +1237,32 @@
 								{/if}
 
 								{#if !readOnly}
+									{#if message.role !== 'user' && (message.done || siblings.length > 1)}
+										<Tooltip
+											content={message?.favorite ? $i18n.t('Unfavorite') : $i18n.t('Favorite')}
+											placement="bottom"
+										>
+											<button
+												type="button"
+												aria-label={message?.favorite ? $i18n.t('Unfavorite') : $i18n.t('Favorite')}
+												class="{isLastMessage
+													? 'visible'
+													: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+												on:click={() => {
+													message.favorite = !message.favorite;
+													saveMessage(message.id, message);
+												}}
+											>
+												<Heart
+													className="size-4 {message?.favorite
+														? 'fill-red-500 stroke-red-500'
+														: 'hover:fill-red-500 hover:stroke-red-500'} "
+													strokeWidth="2.5"
+												/>
+											</button>
+										</Tooltip>
+									{/if}
+
 									{#if !$temporaryChatEnabled && ($config?.features.enable_message_rating ?? true)}
 										<Tooltip content={$i18n.t('Good Response')} placement="bottom">
 											<button

@@ -28,17 +28,16 @@ export const USAGE_POOL: Writable<null | string[]> = writable(null);
 export const theme = writable('system');
 
 export const shortCodesToEmojis = writable(
-	Object.entries(emojiShortCodes).reduce((acc, [key, value]) => {
+	Object.entries(emojiShortCodes).reduce((acc: Record<string, string>, [key, value]) => {
 		if (typeof value === 'string') {
-			acc[value] = key;
+			acc[value as keyof typeof emojiShortCodes] = key;
 		} else {
 			for (const v of value) {
-				acc[v] = key;
+				acc[v as keyof typeof emojiShortCodes] = key;
 			}
 		}
-
 		return acc;
-	}, {})
+	}, {} as Record<string, string>)
 );
 
 export const TTSWorker = writable(null);
@@ -135,42 +134,41 @@ type OllamaModelDetails = {
 };
 
 type Settings = {
-	pinnedModels?: never[];
 	toolServers?: never[];
-	detectArtifacts?: boolean;
+	autoTags?: boolean;
+	autoFollowUps?: boolean;
+	responseAutoCopy?: boolean;
 	showUpdateToast?: boolean;
 	showChangelog?: boolean;
 	showEmojiInCall?: boolean;
 	voiceInterruption?: boolean;
-	collapseCodeBlocks?: boolean;
-	expandDetails?: boolean;
+	richTextInput?: boolean;
+	promptAutocomplete?: boolean;
+	largeTextAsFile?: boolean;
+	landingPageMode?: string;
+	splitLargeChunks?: boolean;
+	userLocation?: boolean;
 	notificationSound?: boolean;
 	notificationSoundAlways?: boolean;
 	stylizedPdfExport?: boolean;
-	notifications?: any;
-	imageCompression?: boolean;
-	imageCompressionSize?: any;
-	widescreenMode?: null;
-	largeTextAsFile?: boolean;
-	promptAutocomplete?: boolean;
 	hapticFeedback?: boolean;
-	responseAutoCopy?: any;
-	richTextInput?: boolean;
-	params?: any;
-	userLocation?: any;
-	webSearch?: boolean;
-	memory?: boolean;
-	autoTags?: boolean;
-	autoFollowUps?: boolean;
-	splitLargeChunks?(body: any, splitLargeChunks: any): unknown;
+	imageCompression?: boolean;
+	imageCompressionSize?: { width: string; height: string; };
 	backgroundImageUrl?: null;
-	landingPageMode?: string;
-	iframeSandboxAllowForms?: boolean;
-	iframeSandboxAllowSameOrigin?: boolean;
-	scrollOnBranchChange?: boolean;
+	webSearch?: null;
+	params?: { stream_response: null; function_calling: null; seed: null; temperature: null; reasoning_effort: null; logit_bias: null; frequency_penalty: null; presence_penalty: null; repeat_penalty: null; repeat_last_n: null; mirostat: null; mirostat_eta: null; mirostat_tau: null; top_k: null; top_p: null; min_p: null; stop: null; tfs_z: null; num_ctx: null; num_batch: null; num_keep: null; max_tokens: null; num_gpu: null; };
+	notifications?: boolean;
 	directConnections?: null;
+	pinnedModels?: never[];
 	chatBubble?: boolean;
 	copyFormatted?: boolean;
+	widescreenMode?: null;
+	scrollOnBranchChange?: boolean;
+	detectArtifacts?: boolean;
+	collapseCodeBlocks?: boolean;
+	expandDetails?: boolean;
+	iframeSandboxAllowForms?: boolean;
+	iframeSandboxAllowSameOrigin?: boolean;
 	models?: string[];
 	conversationMode?: boolean;
 	speechAutoSend?: boolean;
@@ -183,7 +181,6 @@ type Settings = {
 	splitLargeDeltas?: boolean;
 	chatDirection?: 'LTR' | 'RTL' | 'auto';
 	ctrlEnterToSend?: boolean;
-
 	system?: string;
 	seed?: number;
 	temperature?: string;
@@ -201,8 +198,7 @@ type ModelOptions = {
 };
 
 type AudioSettings = {
-	stt: any;
-	tts: any;
+	tts?: string;
 	STTEngine?: string;
 	TTSEngine?: string;
 	speaker?: string;
@@ -273,7 +269,7 @@ type PromptSuggestion = {
 };
 
 type SessionUser = {
-	permissions: any;
+	permissions: string;
 	id: string;
 	email: string;
 	name: string;
