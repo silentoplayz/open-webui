@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
+	import type { Writable } from 'svelte/store';
 	import Modal from '../common/Modal.svelte';
 	import { shortcuts } from '$lib/shortcuts';
 	import type { ShortcutDef } from '$lib/shortcuts';
@@ -11,7 +12,7 @@
 		[category: string]: ShortcutDef[];
 	};
 
-	const i18n = getContext('i18n');
+	const i18n: Writable<any> = getContext('i18n');
 
 	export let show = false;
 
