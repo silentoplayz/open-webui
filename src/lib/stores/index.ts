@@ -81,6 +81,7 @@ export const sidebarWidth = writable(260);
 export const showSidebar = writable(false);
 export const showSearch = writable(false);
 export const showSettings = writable(false);
+export const showSettingsSearch = writable(false);
 export const showShortcuts = writable(false);
 export const showArchivedChats = writable(false);
 export const showChangelog = writable(false);
@@ -99,6 +100,8 @@ export const embed = writable(null);
 export const temporaryChatEnabled = writable(false);
 export const scrollPaginationEnabled = writable(false);
 export const currentChatPage = writable(1);
+
+export const activeSettingsTab = writable('general');
 
 export const isLastActiveTab = writable(true);
 export const playingNotificationSound = writable(false);
