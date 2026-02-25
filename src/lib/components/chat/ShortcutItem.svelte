@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
+	import type { Writable } from 'svelte/store';
 	import Tooltip from '../common/Tooltip.svelte';
 	import type { ShortcutDef } from '$lib/shortcuts';
 
 	export let shortcut: ShortcutDef;
 	export let isMac: boolean;
 
-	const i18n = getContext('i18n');
+	const i18n: Writable<any> = getContext('i18n');
 	let keyboardLayoutMap: Map<string, string> | undefined;
 
 	onMount(async () => {

@@ -34,6 +34,7 @@
 		temporaryChatEnabled,
 		toolServers,
 		showSearch,
+		showSettingsSearch,
 		showSidebar
 	} from '$lib/stores';
 
