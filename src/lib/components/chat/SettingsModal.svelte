@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext, onMount, tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { config, models, settings, user } from '$lib/stores';
+	import { config, models, settings, user, activeSettingsTab } from '$lib/stores';
 	import { updateUserSettings } from '$lib/apis/users';
 	import { getModels as _getModels } from '$lib/apis';
 	import { goto } from '$app/navigation';
@@ -37,6 +37,11 @@
 		addScrollListener();
 	} else {
 		removeScrollListener();
+	}
+
+	// Deep-link from GlobalSettingsModal: jump to the requested tab when the modal opens
+	$: if ($activeSettingsTab && show) {
+		selectedTab = $activeSettingsTab;
 	}
 
 	interface SettingsTab {

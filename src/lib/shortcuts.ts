@@ -1,14 +1,16 @@
-type ShortcutRegistry = {
-	[key in Shortcut]?: {
-		name: string;
-		keys: string[];
-		category: string;
-		tooltip?: string;
-		setting?: {
-			id: string;
-			value: any;
-		};
+export type ShortcutDef = {
+	name: string;
+	keys: string[];
+	category: string;
+	tooltip?: string;
+	setting?: {
+		id: string;
+		value: any;
 	};
+};
+
+type ShortcutRegistry = {
+	[key in Shortcut]?: ShortcutDef;
 };
 
 export enum Shortcut {
@@ -21,6 +23,7 @@ export enum Shortcut {
 
 	//Global
 	SEARCH = 'search',
+	SEARCH_SETTINGS = 'searchSettings',
 	OPEN_SETTINGS = 'openSettings',
 	SHOW_SHORTCUTS = 'showShortcuts',
 	TOGGLE_SIDEBAR = 'toggleSidebar',
@@ -75,6 +78,11 @@ export const shortcuts: ShortcutRegistry = {
 	[Shortcut.SEARCH]: {
 		name: 'Search',
 		keys: ['mod', 'K'],
+		category: 'Global'
+	},
+	[Shortcut.SEARCH_SETTINGS]: {
+		name: 'Search Settings',
+		keys: ['mod', 'shift', 'F'],
 		category: 'Global'
 	},
 	[Shortcut.OPEN_SETTINGS]: {
