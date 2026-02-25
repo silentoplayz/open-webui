@@ -89,11 +89,13 @@
 			e.preventDefault();
 			if (filteredResults.length > 0) {
 				selectedIndex = (selectedIndex + 1) % filteredResults.length;
+				document.getElementById(`global-setting-item-${selectedIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 			}
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			if (filteredResults.length > 0) {
 				selectedIndex = (selectedIndex - 1 + filteredResults.length) % filteredResults.length;
+				document.getElementById(`global-setting-item-${selectedIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 			}
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
@@ -137,6 +139,7 @@
 			{#if filteredResults.length > 0}
 				{#each filteredResults as item, index}
 					<button
+						id="global-setting-item-{index}"
 						class="w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors {index === selectedIndex ? 'bg-gray-100 dark:bg-gray-800' : 'hover:bg-gray-50 dark:hover:bg-gray-850'}"
 						on:click={() => handleSelect(item)}
 						on:mouseenter={() => selectedIndex = index}
