@@ -110,13 +110,20 @@
 		}
 	};
 
+	let modelsFetchInFlight = false;
 	const setModels = async () => {
-		models.set(
-			await getModels(
-				localStorage.token,
-				$config?.features?.enable_direct_connections ? ($settings?.directConnections ?? null) : null
-			)
-		);
+		if (modelsFetchInFlight) return;
+		modelsFetchInFlight = true;
+		try {
+			models.set(
+				await getModels(
+					localStorage.token,
+					$config?.features?.enable_direct_connections ? ($settings?.directConnections ?? null) : null
+				)
+			);
+		} finally {
+			modelsFetchInFlight = false;
+		}
 	};
 
 	const setToolServers = async () => {
@@ -202,13 +209,17 @@
 		}
 
 		clearChatInputStorage();
+		const directConnectionsEnabled = $config?.features?.enable_direct_connections;
 		await Promise.all([
 			checkLocalDBChats(),
 			setBanners().catch((e) => console.error('Failed to load banners:', e)),
 			setTools().catch((e) => console.error('Failed to load tools:', e)),
+			...(directConnectionsEnabled ? [] : [setModels().catch((e) => console.error('Failed to load models:', e))]),
 			setUserSettings(async () => {
 				await Promise.all([
-					setModels().catch((e) => console.error('Failed to load models:', e)),
+					...(directConnectionsEnabled
+						? [setModels().catch((e) => console.error('Failed to load models:', e))]
+						: []),
 					setToolServers().catch((e) => console.error('Failed to load tool servers:', e))
 				]);
 			}).catch((e) => console.error('Failed to load user settings:', e))
