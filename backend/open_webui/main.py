@@ -594,7 +594,14 @@ log = logging.getLogger(__name__)
 class SPAStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
+            if "_app/immutable/" in path or "/_app/immutable/" in scope.get("path", ""):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            elif path.endswith(
+                (".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2")
+            ):
+                response.headers["Cache-Control"] = "public, max-age=86400"
+            return response
         except (HTTPException, StarletteHTTPException) as ex:
             if ex.status_code == 404:
                 if path.endswith('.js'):
