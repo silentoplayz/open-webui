@@ -110,13 +110,20 @@
 		}
 	};
 
+	let modelsFetchInFlight = false;
 	const setModels = async () => {
-		models.set(
-			await getModels(
-				localStorage.token,
-				$config?.features?.enable_direct_connections ? ($settings?.directConnections ?? null) : null
-			)
-		);
+		if (modelsFetchInFlight) return;
+		modelsFetchInFlight = true;
+		try {
+			models.set(
+				await getModels(
+					localStorage.token,
+					$config?.features?.enable_direct_connections ? ($settings?.directConnections ?? null) : null
+				)
+			);
+		} finally {
+			modelsFetchInFlight = false;
+		}
 	};
 
 	const setToolServers = async () => {
