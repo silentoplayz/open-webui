@@ -41,6 +41,7 @@ export class SocketIOCollaborationProvider {
 	private readonly awareness = new SimpleAwareness(this.doc);
 	private isConnected = false;
 	private synced = false;
+	private isInitializing = false;
 	private editor: Editor | null = null;
 	private editorContentGetter: EditorContentGetter | null = null;
 
@@ -131,6 +132,7 @@ export class SocketIOCollaborationProvider {
 							const isEmptyEditor = !this.editor?.getText().trim();
 							if (isEmptyEditor && this.editor) {
 								if (this.initialContent && (data?.sessions ?? ['']).length === 1) {
+									this.isInitializing = true;
 									// Check if initialContent is HTML (string) or JSON (object)
 									if (typeof this.initialContent === 'string') {
 										// HTML content - let the editor parse it, then sync to Yjs
@@ -146,6 +148,9 @@ export class SocketIOCollaborationProvider {
 											Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(editorYdoc));
 										}
 									}
+									setTimeout(() => {
+										this.isInitializing = false;
+									}, 100);
 								}
 							} else {
 								// If the editor already has content, we don't need to send an empty state
@@ -201,13 +206,15 @@ export class SocketIOCollaborationProvider {
 					user_id: this.user?.id,
 					socket_id: this.socket.id,
 					update: Array.from(update),
-					data: {
-						content: this.editorContentGetter?.() ?? {
-							md: '',
-							html: '',
-							json: ''
-						}
-					}
+					data: this.isInitializing
+						? undefined
+						: {
+								content: this.editorContentGetter?.() ?? {
+									md: '',
+									html: '',
+									json: ''
+								}
+							}
 				});
 			}
 		});

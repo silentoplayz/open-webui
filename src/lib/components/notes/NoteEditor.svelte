@@ -140,8 +140,13 @@
 
 	let showPanel = false;
 	let selectedPanel = 'chat';
-
 	let selectedContent = null;
+
+	let lastSavedNoteMetadata = {
+		title: null,
+		files: [],
+		access_grants: []
+	};
 
 	let showDeleteConfirm = false;
 	let showAccessControlModal = false;
@@ -181,6 +186,12 @@
 			}
 			files = res.data.files || [];
 
+			lastSavedNoteMetadata = {
+				title: note.title,
+				files: JSON.parse(JSON.stringify(files)),
+				access_grants: JSON.parse(JSON.stringify(note.access_grants))
+			};
+
 			if (note?.write_access) {
 				$socket?.emit('join-note', {
 					note_id: id,
@@ -206,15 +217,37 @@
 		}
 
 		debounceTimeout = setTimeout(async () => {
+			const currentTitle = note?.title === '' ? $i18n.t('Untitled') : note.title;
+			const currentFiles = files;
+			const currentAccessGrants = note?.access_grants ?? [];
+
+			// Check if anything actually changed
+			if (
+				currentTitle === lastSavedNoteMetadata.title &&
+				JSON.stringify(currentFiles) === JSON.stringify(lastSavedNoteMetadata.files) &&
+				JSON.stringify(currentAccessGrants) === JSON.stringify(lastSavedNoteMetadata.access_grants)
+			) {
+				console.log('No metadata changes detected, skipping update.');
+				return;
+			}
+
 			const res = await updateNoteById(localStorage.token, id, {
-				title: note?.title === '' ? $i18n.t('Untitled') : note.title,
+				title: currentTitle,
 				data: {
-					files: files
+					files: currentFiles
 				},
-				access_grants: note?.access_grants ?? []
+				access_grants: currentAccessGrants
 			}).catch((e) => {
 				toast.error(`${e}`);
 			});
+
+			if (res) {
+				lastSavedNoteMetadata = {
+					title: currentTitle,
+					files: JSON.parse(JSON.stringify(currentFiles)),
+					access_grants: JSON.parse(JSON.stringify(currentAccessGrants))
+				};
+			}
 		}, 200);
 	};
 

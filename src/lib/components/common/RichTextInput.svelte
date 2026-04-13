@@ -845,6 +845,8 @@
 			onTransaction: () => {
 				// force re-render so `editor.isActive` works as expected
 				editor = editor;
+			},
+			onUpdate: () => {
 				if (!editor) return;
 
 				htmlValue = editor.getHTML();
