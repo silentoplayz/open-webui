@@ -3,7 +3,7 @@ import time
 import uuid
 from typing import Any, Optional
 
-from open_webui.internal.db import Base, get_async_db_context
+from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.utils.response import normalize_usage
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
