@@ -127,6 +127,8 @@ class JSONField(types.TypeDecorator):
     def process_result_value(self, value: _T | None, dialect: Dialect) -> Any:
         if value is not None:
             if isinstance(value, str):
+                if not value:
+                    return None
                 return json.loads(value)
             return value
 
@@ -139,6 +141,8 @@ class JSONField(types.TypeDecorator):
     def python_value(self, value):
         if value is not None:
             if isinstance(value, str):
+                if not value:
+                    return None
                 return json.loads(value)
             return value
 
