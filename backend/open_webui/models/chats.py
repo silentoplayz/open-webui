@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Optional
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from open_webui.models.automations import AutomationRun
 from open_webui.models.chat_messages import ChatMessage, ChatMessages
 from open_webui.models.folders import Folders
@@ -50,7 +50,7 @@ class Chat(Base):
     id = Column(String, primary_key=True, unique=True)
     user_id = Column(String)
     title = Column(Text)
-    chat = Column(JSONField)
+    chat = Column(JSON)
 
     created_at = Column(BigInteger)
     updated_at = Column(BigInteger)

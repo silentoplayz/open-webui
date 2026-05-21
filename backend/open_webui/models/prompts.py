@@ -5,7 +5,7 @@ import time
 import uuid
 from typing import Optional
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.prompt_history import PromptHistories
@@ -29,9 +29,9 @@ class Prompt(Base):
     user_id = Column(String)
     name = Column(Text)
     content = Column(Text)
-    data = Column(JSONField, nullable=True)
-    meta = Column(JSONField, nullable=True)
-    tags = Column(JSONField, nullable=True)
+    data = Column(JSON, nullable=True)
+    meta = Column(JSON, nullable=True)
+    tags = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True)
     version_id = Column(Text, nullable=True)  # Points to active history entry
     created_at = Column(BigInteger, nullable=True)

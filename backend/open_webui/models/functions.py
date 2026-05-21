@@ -4,10 +4,10 @@ import logging
 import time
 from typing import Optional
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from open_webui.models.users import UserModel, UserResponse, Users
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import BigInteger, Boolean, Column, Index, String, Text, delete, select, update
+from sqlalchemy import JSON, BigInteger, Boolean, Column, Index, String, Text, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -27,8 +27,8 @@ class Function(Base):
     name = Column(Text)
     type = Column(Text)
     content = Column(Text)
-    meta = Column(JSONField)
-    valves = Column(JSONField)
+    meta = Column(JSON)
+    valves = Column(JSON)
     is_active = Column(Boolean)
     is_global = Column(Boolean)
     updated_at = Column(BigInteger)

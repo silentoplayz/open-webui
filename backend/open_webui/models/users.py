@@ -5,7 +5,7 @@ import time
 from typing import Optional
 
 from open_webui.env import DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from open_webui.utils.misc import throttle
 from open_webui.utils.validate import validate_profile_image_url
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -65,11 +65,11 @@ class User(Base):
     status_message = Column(Text, nullable=True)
     status_expires_at = Column(BigInteger, nullable=True)
 
-    info = Column(JSONField, nullable=True)
-    settings = Column(JSONField, nullable=True)
+    info = Column(JSON, nullable=True)
+    settings = Column(JSON, nullable=True)
 
-    oauth = Column(JSONField, nullable=True)
-    scim = Column(JSONField, nullable=True)
+    oauth = Column(JSON, nullable=True)
+    scim = Column(JSON, nullable=True)
 
     last_active_at = Column(BigInteger)
     updated_at = Column(BigInteger)

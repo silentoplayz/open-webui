@@ -5,12 +5,12 @@ import logging
 import time
 from typing import Optional
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.users import User, UserModel, UserResponse, Users
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import BigInteger, Boolean, Column, String, Text, cast, delete, func, or_, select, update
+from sqlalchemy import JSON, BigInteger, Boolean, Column, String, Text, cast, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,12 +78,12 @@ class Model(Base):
         The human-readable display name of the model.
     """
 
-    params = Column(JSONField)
+    params = Column(JSON)
     """
         Holds a JSON encoded blob of parameters, see `ModelParams`.
     """
 
-    meta = Column(JSONField)
+    meta = Column(JSON)
     """
         Holds a JSON encoded blob of metadata, see `ModelMeta`.
     """
