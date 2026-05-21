@@ -28,7 +28,7 @@
 		? 'md:max-w-[calc(100%-var(--sidebar-width))]'
 		: ''} max-w-full {$showThemeEditor ? ($themeEditorCollapsed ? 'pr-5' : 'pr-[600px]') : ''}"
 >
-	<nav class="   px-2.5 pt-1.5 w-full drag-region">
+	<nav class="   px-2.5 pt-1.5 backdrop-blur-xl w-full drag-region select-none">
 		<div class=" flex items-center">
 			{#if $mobile}
 				<div class="{$showSidebar ? 'md:hidden' : ''} flex flex-none items-center self-end">
@@ -56,9 +56,10 @@
 					class="flex gap-1 scrollbar-none overflow-x-auto w-fit text-center text-sm font-medium rounded-full bg-transparent pt-1"
 				>
 					<a
+						draggable="false"
 						class="min-w-fit p-1.5 {['/playground', '/playground/'].includes($page.url.pathname)
 							? ''
-							: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+							: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
 						href="/playground">{$i18n.t('Chat')}</a
 					>
 
@@ -70,16 +71,18 @@
 					> -->
 
 					<a
+						draggable="false"
 						class="min-w-fit p-1.5 {$page.url.pathname.includes('/playground/completions')
 							? ''
-							: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+							: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
 						href="/playground/completions">{$i18n.t('Completions')}</a
 					>
 
 					<a
+						draggable="false"
 						class="min-w-fit p-1.5 {$page.url.pathname.includes('/playground/images')
 							? ''
-							: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+							: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
 						href="/playground/images">{$i18n.t('Images')}</a
 					>
 				</div>

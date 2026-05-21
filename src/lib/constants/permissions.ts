@@ -24,7 +24,12 @@ export const DEFAULT_PERMISSIONS = {
 		skills: false,
 		public_skills: false,
 		notes: false,
-		public_notes: false
+		public_notes: false,
+		public_chats: false,
+		public_calendars: false
+	},
+	access_grants: {
+		allow_users: true
 	},
 	chat: {
 		controls: true,
@@ -32,6 +37,7 @@ export const DEFAULT_PERMISSIONS = {
 		system_prompt: true,
 		params: true,
 		file_upload: true,
+		web_upload: true,
 		delete: true,
 		delete_message: true,
 		continue_response: true,
@@ -56,7 +62,9 @@ export const DEFAULT_PERMISSIONS = {
 		web_search: true,
 		image_generation: true,
 		code_interpreter: true,
-		memories: true
+		memories: true,
+		automations: false,
+		calendar: true
 	},
 	settings: {
 		interface: true

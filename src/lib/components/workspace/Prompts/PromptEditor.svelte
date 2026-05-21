@@ -82,23 +82,27 @@
 		loading = true;
 
 		if (validateCommandString(command)) {
-			await onSubmit({
-				id: prompt?.id,
-				name,
-				command,
-				content,
-				tags: tags.map((tag) => tag.name),
-				access_grants: accessGrants,
-				commit_message: commitMessage || undefined,
-				is_production: isProduction
-			});
-			showEditModal = false;
-			commitMessage = '';
-			isProduction = true;
-			await loadHistory(true); // Reset and reload
-			// Select the newest version after saving
-			if (history.length > 0) {
-				selectedHistoryEntry = history[0];
+			try {
+				await onSubmit({
+					id: prompt?.id,
+					name,
+					command,
+					content,
+					tags: tags.map((tag) => tag.name),
+					access_grants: accessGrants,
+					commit_message: commitMessage || undefined,
+					is_production: isProduction
+				});
+				showEditModal = false;
+				commitMessage = '';
+				isProduction = true;
+				await loadHistory(true); // Reset and reload
+				// Select the newest version after saving
+				if (history.length > 0) {
+					selectedHistoryEntry = history[0];
+				}
+			} catch (error) {
+				toast.error(`${error}`);
 			}
 		} else {
 			toast.error(
@@ -283,6 +287,7 @@
 	accessRoles={['read', 'write']}
 	share={$user?.permissions?.sharing?.prompts || $user?.role === 'admin'}
 	sharePublic={$user?.permissions?.sharing?.public_prompts || $user?.role === 'admin'}
+	shareUsers={($user?.permissions?.access_grants?.allow_users ?? true) || $user?.role === 'admin'}
 	onChange={async () => {
 		if (edit && prompt?.id) {
 			try {
@@ -302,6 +307,7 @@
 			<div class="text-lg font-medium">{$i18n.t('Edit Prompt')}</div>
 			<button
 				class="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+				aria-label={$i18n.t('Close')}
 				on:click={() => (showEditModal = false)}
 			>
 				<XMark className="size-5" />
@@ -319,6 +325,7 @@
 						className="text-sm w-full bg-transparent outline-hidden overflow-y-hidden resize-none"
 						placeholder={$i18n.t('Write a summary in 50 words that summarizes {{topic}}.')}
 						bind:value={content}
+						aria-label={$i18n.t('Prompt Content')}
 						rows={6}
 						required
 					/>
@@ -331,6 +338,7 @@
 					<input
 						class="text-sm w-full bg-transparent outline-hidden"
 						placeholder={$i18n.t('Describe what changed...')}
+						aria-label={$i18n.t('Commit Message')}
 						bind:value={commitMessage}
 					/>
 				</div>
@@ -502,6 +510,7 @@
 					<div class="absolute top-2 right-2 z-10">
 						<button
 							class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+							aria-label={$i18n.t('Copy content')}
 							on:click={copyContent}
 						>
 							{#if contentCopied}

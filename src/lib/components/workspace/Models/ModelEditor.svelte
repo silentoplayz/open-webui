@@ -3,10 +3,11 @@
 
 	import { onMount, getContext, tick } from 'svelte';
 	import { models, tools, functions, user } from '$lib/stores';
-	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { WEBUI_BASE_URL, DEFAULT_CAPABILITIES } from '$lib/constants';
 
 	import { getTools } from '$lib/apis/tools';
 	import { getFunctions } from '$lib/apis/functions';
+	import { getModelsDefaults } from '$lib/apis/configs';
 
 	import AdvancedParams from '$lib/components/chat/Settings/Advanced/AdvancedParams.svelte';
 	import Tags from '$lib/components/common/Tags.svelte';
@@ -24,6 +25,7 @@
 	import DefaultFeatures from './DefaultFeatures.svelte';
 	import BuiltinTools from './BuiltinTools.svelte';
 	import PromptSuggestions from './PromptSuggestions.svelte';
+	import TerminalSelector from './TerminalSelector.svelte';
 	import AccessControlModal from '../common/AccessControlModal.svelte';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
 	import { updateModelAccessGrants } from '$lib/apis/models';
@@ -95,23 +97,13 @@
 	let filterIds = [];
 	let defaultFilterIds = [];
 
-	let capabilities = {
-		file_context: true,
-		vision: true,
-		file_upload: true,
-		web_search: true,
-		image_generation: true,
-		code_interpreter: true,
-		citations: true,
-		status_updates: true,
-		usage: undefined,
-		builtin_tools: true
-	};
+	let capabilities = { ...DEFAULT_CAPABILITIES };
 	let defaultFeatureIds = [];
 	let builtinTools = {};
 
 	let actionIds = [];
 	let accessGrants = [];
+	let terminalId = '';
 	let tts = { voice: '' };
 
 	const submitHandler = async () => {
@@ -216,6 +208,14 @@
 			}
 		}
 
+		if (terminalId) {
+			info.meta.terminalId = terminalId;
+		} else {
+			if (info.meta.terminalId) {
+				delete info.meta.terminalId;
+			}
+		}
+
 		if (tts.voice !== '') {
 			if (!info.meta.tts) info.meta.tts = {};
 			info.meta.tts.voice = tts.voice;
@@ -229,7 +229,11 @@
 		}
 
 		info.params.system = system.trim() === '' ? null : system;
-		info.params.stop = params.stop ? params.stop.split(',').filter((s) => s.trim()) : null;
+		info.params.stop = params.stop
+			? (typeof params.stop === 'string' ? params.stop.split(',') : params.stop).filter((s) =>
+					s.trim()
+				)
+			: null;
 		Object.keys(info.params).forEach((key) => {
 			if (info.params[key] === '' || info.params[key] === null) {
 				delete info.params[key];
@@ -245,6 +249,16 @@
 	onMount(async () => {
 		await tools.set(await getTools(localStorage.token));
 		await functions.set(await getFunctions(localStorage.token));
+
+		// Fetch admin-configured default model metadata so the editor
+		// reflects the actual defaults rather than hardcoded values
+		const modelsConfig = await getModelsDefaults(localStorage.token).catch(() => null);
+		const defaultMeta = modelsConfig?.DEFAULT_MODEL_METADATA ?? {};
+
+		// Use admin defaults as base, falling back to hardcoded defaults
+		capabilities = { ...DEFAULT_CAPABILITIES, ...(defaultMeta.capabilities ?? {}) };
+		defaultFeatureIds = defaultMeta.defaultFeatureIds ?? [];
+		builtinTools = defaultMeta.builtinTools ?? {};
 
 		// Scroll to top 'workspace-container' element
 		const workspaceContainer = document.getElementById('workspace-container');
@@ -308,9 +322,11 @@
 			defaultFilterIds = model?.meta?.defaultFilterIds ?? [];
 			actionIds = model?.meta?.actionIds ?? [];
 
+			// Per-model overrides take precedence over admin defaults
 			capabilities = { ...capabilities, ...(model?.meta?.capabilities ?? {}) };
-			defaultFeatureIds = model?.meta?.defaultFeatureIds ?? [];
-			builtinTools = model?.meta?.builtinTools ?? {};
+			defaultFeatureIds = model?.meta?.defaultFeatureIds ?? defaultFeatureIds;
+			builtinTools = model?.meta?.builtinTools ?? builtinTools;
+			terminalId = model?.meta?.terminalId ?? '';
 			tts = { voice: model?.meta?.tts?.voice ?? '' };
 
 			accessGrants = model?.access_grants ?? [];
@@ -343,10 +359,16 @@
 		accessRoles={preset ? ['read', 'write'] : ['read']}
 		share={$user?.permissions?.sharing?.models || $user?.role === 'admin'}
 		sharePublic={$user?.permissions?.sharing?.public_models || $user?.role === 'admin'}
+		shareUsers={($user?.permissions?.access_grants?.allow_users ?? true) || $user?.role === 'admin'}
 		onChange={async () => {
 			if (edit && model?.id) {
 				try {
-					await updateModelAccessGrants(localStorage.token, model.id, accessGrants);
+					await updateModelAccessGrants(
+						localStorage.token,
+						model.id,
+						model.name ?? name,
+						accessGrants
+					);
 					toast.success($i18n.t('Saved'));
 				} catch (error) {
 					toast.error(error?.detail ?? `${error}`);
@@ -475,6 +497,7 @@
 										? 'bg-transparent'
 										: 'bg-white'} shadow-xl group relative"
 									type="button"
+									aria-label={$i18n.t('Upload profile image')}
 									on:click={() => {
 										filesInputElement.click();
 									}}
@@ -813,6 +836,12 @@
 					{#if capabilities.builtin_tools}
 						<div class="my-4">
 							<BuiltinTools bind:builtinTools />
+						</div>
+					{/if}
+
+					{#if capabilities.terminal}
+						<div class="my-4">
+							<TerminalSelector bind:terminalId />
 						</div>
 					{/if}
 

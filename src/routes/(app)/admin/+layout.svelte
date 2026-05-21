@@ -4,6 +4,7 @@
 
 	import {
 		WEBUI_NAME,
+		config,
 		mobile,
 		showSidebar,
 		showThemeEditor,
@@ -43,7 +44,7 @@
 				: 'pr-[600px]'
 			: ''}"
 	>
-		<nav class="   px-2.5 pt-1.5 drag-region">
+		<nav class="   px-2.5 pt-1.5 backdrop-blur-xl drag-region select-none">
 			<div class=" flex items-center gap-1">
 				{#if $mobile}
 					<div class="{$showSidebar ? 'md:hidden' : ''} flex flex-none items-center self-end">
@@ -71,37 +72,44 @@
 						class="flex gap-1 scrollbar-none overflow-x-auto w-fit text-center text-sm font-medium rounded-full bg-transparent pt-1"
 					>
 						<a
+							draggable="false"
 							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/users')
 								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
 							href="/admin">{$i18n.t('Users')}</a
 						>
 
-						<a
-							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/analytics')
-								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
-							href="/admin/analytics">{$i18n.t('Analytics')}</a
-						>
+						{#if $config?.features.enable_admin_analytics ?? true}
+							<a
+								draggable="false"
+								class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/analytics')
+									? ''
+									: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
+								href="/admin/analytics">{$i18n.t('Analytics')}</a
+							>
+						{/if}
 
 						<a
+							draggable="false"
 							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/evaluations')
 								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
 							href="/admin/evaluations">{$i18n.t('Evaluations')}</a
 						>
 
 						<a
+							draggable="false"
 							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/functions')
 								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
 							href="/admin/functions">{$i18n.t('Functions')}</a
 						>
 
 						<a
+							draggable="false"
 							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/settings')
 								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
 							href="/admin/settings">{$i18n.t('Settings')}</a
 						>
 					</div>

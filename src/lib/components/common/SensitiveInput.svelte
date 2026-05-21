@@ -12,6 +12,8 @@
 	export let inputClassName = 'w-full text-sm py-0.5 bg-transparent';
 	export let showButtonClassName = 'pl-1.5  transition bg-transparent';
 	export let screenReader = true;
+	export let autocomplete = 'off';
+	export let name: string | undefined = undefined;
 
 	let show = false;
 </script>
@@ -25,13 +27,11 @@
 		class={`${inputClassName} ${show ? '' : 'password'} ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : ' outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-600'}`}
 		{placeholder}
 		type={type === 'password' && !show ? 'password' : 'text'}
-		{value}
+		bind:value
+		{name}
 		required={required && !readOnly}
 		disabled={readOnly}
-		on:change={(e) => {
-			value = e.target.value;
-		}}
-		autocomplete="off"
+		{autocomplete}
 	/>
 	<button
 		class={showButtonClassName}
