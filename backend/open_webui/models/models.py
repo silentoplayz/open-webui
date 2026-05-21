@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Optional
 
-from open_webui.internal.db import Base, get_async_db_context
+from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.users import User, UserModel, UserResponse, Users
@@ -78,12 +78,12 @@ class Model(Base):
         The human-readable display name of the model.
     """
 
-    params = Column(JSON)
+    params = Column(JSONField)
     """
         Holds a JSON encoded blob of parameters, see `ModelParams`.
     """
 
-    meta = Column(JSON)
+    meta = Column(JSONField)
     """
         Holds a JSON encoded blob of metadata, see `ModelMeta`.
     """

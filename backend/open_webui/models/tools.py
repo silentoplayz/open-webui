@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Optional
 
-from open_webui.internal.db import Base, get_async_db_context
+from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.users import UserResponse, Users
@@ -28,9 +28,9 @@ class Tool(Base):
     user_id = Column(String)
     name = Column(Text)
     content = Column(Text)
-    specs = Column(JSON)
-    meta = Column(JSON)
-    valves = Column(JSON)
+    specs = Column(JSONField)
+    meta = Column(JSONField)
+    valves = Column(JSONField)
 
     updated_at = Column(BigInteger)
     created_at = Column(BigInteger)
