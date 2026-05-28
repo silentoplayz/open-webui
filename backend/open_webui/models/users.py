@@ -340,6 +340,20 @@ class UsersTable:
         # --- context manager above always returns ---
         return
 
+    async def get_user_by_email_or_name(
+        self, email_or_name: str, db: AsyncSession | None = None,
+    ) -> UserModel | None:
+        """Case-insensitive lookup by email OR display name (for username login)."""
+        async with get_async_db_context(db) as session:
+            query = select(User).where(
+                or_(
+                    func.lower(User.email) == email_or_name.lower(),
+                    func.lower(User.name) == email_or_name.lower(),
+                )
+            )
+            match = (await session.execute(query)).scalars().first()
+            return UserModel.model_validate(match) if match else None
+
     # --- oauth & integrations ---
     async def get_user_by_oauth_sub(
         self, provider: str, sub: str, db: AsyncSession | None = None,

@@ -645,7 +645,7 @@ async def signin(
                 db=db,
             )
     else:
-        if signin_rate_limiter.is_limited(form_data.email.lower()):
+        if signin_rate_limiter.is_limited(form_data.email_or_username.lower()):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=ERROR_MESSAGES.RATE_LIMIT_EXCEEDED,
@@ -661,7 +661,7 @@ async def signin(
             form_data.password = password_bytes.decode('utf-8', errors='ignore')
 
         user = await Auths.authenticate_user(
-            form_data.email.lower(),
+            form_data.email_or_username,
             lambda pw: verify_password(form_data.password, pw),
             db=db,
         )
@@ -669,7 +669,10 @@ async def signin(
     if user:
         return await create_session_response(request, user, db, response, set_cookie=True)
     else:
-        raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
+        if form_data.login_method == 'username':
+            raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_USERNAME_CRED)
+        else:
+            raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_EMAIL_CRED)
 
 
 ############################

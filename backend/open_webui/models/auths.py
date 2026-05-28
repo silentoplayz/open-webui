@@ -52,8 +52,9 @@ class SigninResponse(Token, UserProfileImageResponse):
 
 
 class SigninForm(BaseModel):
-    email: str
+    email_or_username: str
     password: str
+    login_method: str = 'email'
 
 
 class LdapForm(BaseModel):
@@ -127,11 +128,11 @@ class AuthsTable:
             return created_user if credential and created_user else None
 
     async def authenticate_user(
-        self, email: str, verify_password: callable, db: AsyncSession | None = None,
+        self, email_or_username: str, verify_password: callable, db: AsyncSession | None = None,
     ) -> UserModel | None:
-        """Verify email + password credentials and return the matching user."""
-        log.info('authenticate_user: %s', email)
-        resolved = await Users.get_user_by_email(email, db=db)
+        """Verify email/username + password credentials and return the matching user."""
+        log.info('authenticate_user: %s', email_or_username)
+        resolved = await Users.get_user_by_email_or_name(email_or_username, db=db)
         if not resolved:
             return
         # load the credential row and verify the password hash

@@ -37,8 +37,10 @@
 
 	let name = '';
 	let email = '';
+	let username = '';
 	let password = '';
 	let confirmPassword = '';
+	let loginMethod: 'email' | 'username' = 'email';
 
 	let ldapUsername = '';
 
@@ -69,7 +71,8 @@
 	};
 
 	const signInHandler = async () => {
-		const sessionUser = await userSignIn(email, password).catch((error) => {
+		const identifier = loginMethod === 'username' ? username : email;
+		const sessionUser = await userSignIn(identifier, password, loginMethod).catch((error) => {
 			toast.error(`${error}`);
 			return null;
 		});
@@ -314,19 +317,58 @@
 											</div>
 										{:else}
 											<div class="mb-2">
-												<label for="email" class="text-sm font-medium text-left mb-1 block"
-													>{$i18n.t('Email')}</label
-												>
-												<input
-													bind:value={email}
-													type="email"
-													id="email"
-													class="my-0.5 w-full text-sm outline-hidden bg-transparent placeholder:text-gray-300 dark:placeholder:text-gray-600"
-													autocomplete="email"
-													name="email"
-													placeholder={$i18n.t('Enter Your Email')}
-													required
-												/>
+												{#if mode === 'signin'}
+													<div class="flex items-center justify-between mb-1">
+														<label
+															for={loginMethod === 'username' ? 'username-field' : 'email'}
+															class="text-sm font-medium text-left block"
+															>{loginMethod === 'username' ? $i18n.t('Username') : $i18n.t('Email')}</label
+														>
+														<div class="flex gap-1 text-xs">
+															<button
+																type="button"
+																class="{loginMethod === 'email' ? 'font-semibold underline' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'} transition"
+																on:click={() => (loginMethod = 'email')}
+																>{$i18n.t('Email')}</button
+															>
+															<span class="text-gray-300 dark:text-gray-600">·</span>
+															<button
+																type="button"
+																class="{loginMethod === 'username' ? 'font-semibold underline' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'} transition"
+																on:click={() => (loginMethod = 'username')}
+																>{$i18n.t('Username')}</button
+															>
+														</div>
+													</div>
+												{:else}
+													<label for="email" class="text-sm font-medium text-left mb-1 block"
+														>{$i18n.t('Email')}</label
+													>
+												{/if}
+
+												{#if mode === 'signin' && loginMethod === 'username'}
+													<input
+														bind:value={username}
+														type="text"
+														id="username-field"
+														class="my-0.5 w-full text-sm outline-hidden bg-transparent placeholder:text-gray-300 dark:placeholder:text-gray-600"
+														autocomplete="username"
+														name="username"
+														placeholder={$i18n.t('Enter Your Username')}
+														required
+													/>
+												{:else}
+													<input
+														bind:value={email}
+														type="email"
+														id="email"
+														class="my-0.5 w-full text-sm outline-hidden bg-transparent placeholder:text-gray-300 dark:placeholder:text-gray-600"
+														autocomplete="email"
+														name="email"
+														placeholder={$i18n.t('Enter Your Email')}
+														required
+													/>
+												{/if}
 											</div>
 										{/if}
 
