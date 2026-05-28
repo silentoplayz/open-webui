@@ -781,15 +781,10 @@
 
 {#if !$mobile && !$showSidebar}
 	<div
-		class=" pt-[7px] pb-2 px-2 flex flex-col justify-between text-black dark:text-white hover:bg-gray-50/30 dark:hover:bg-gray-950/30 h-full z-10 transition-all border-e-[0.5px] border-gray-50 dark:border-gray-850/30"
+		class=" pt-[7px] pb-2 px-2 flex flex-col text-black dark:text-white hover:bg-gray-50/30 dark:hover:bg-gray-950/30 h-full z-10 transition-all border-e-[0.5px] border-gray-50 dark:border-gray-850/30"
 		id="sidebar"
 	>
-		<button
-			class="flex flex-col flex-1 {isWindows ? 'cursor-pointer' : 'cursor-[e-resize]'}"
-			on:click={async () => {
-				showSidebar.set(!$showSidebar);
-			}}
-		>
+		<div class="flex-none">
 			<div class="pb-1.5">
 				<Tooltip
 					content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
@@ -800,6 +795,9 @@
 							? 'cursor-pointer'
 							: 'cursor-[e-resize]'}"
 						aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
+						on:click={async () => {
+							showSidebar.set(!$showSidebar);
+						}}
 					>
 						<div class=" self-center flex items-center justify-center size-9">
 							<img
@@ -932,9 +930,46 @@
 					{/if}
 				{/each}
 			</div>
-		</button>
+		</div>
 
-		<div>
+		<!-- Pinned Models -->
+		{#if ($models ?? []).length > 0 && ($settings?.pinnedModels ?? []).length > 0}
+			<div
+				class="flex-1 mt-1 pt-1 border-t border-gray-100 dark:border-gray-850 overflow-y-auto overflow-x-hidden space-y-1 scrollbar-none"
+			>
+				{#each $settings.pinnedModels as modelId (modelId)}
+					{@const model = $models.find((model) => model.id === modelId)}
+					{#if model}
+						<div class="">
+							<Tooltip content={model.name} placement="right">
+								<a
+									class="cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+									href="/?model={model.id}"
+									on:click|preventDefault={() => {
+										goto(`/?model=${model.id}`);
+										itemClickHandler();
+									}}
+									draggable="false"
+									aria-label={model.name}
+								>
+									<div class=" self-center flex items-center justify-center size-9">
+										<img
+											src={model.info?.meta?.profile_image_url ??
+												`${WEBUI_BASE_URL}/static/favicon.png`}
+											alt="Model"
+											class="rounded-full size-6 flex items-center"
+										/>
+									</div>
+								</a>
+
+							</Tooltip>
+						</div>
+					{/if}
+				{/each}
+			</div>
+		{/if}
+
+		<div class="flex-none mt-auto">
 			<div>
 				<div class=" py-2 flex justify-center items-center">
 					{#if $user !== undefined && $user !== null}
