@@ -111,7 +111,6 @@
 		};
 
 		window.addEventListener('message', messageHandler, false);
-		console.log(item);
 	};
 
 	const cloneHandler = async (tool) => {
@@ -394,6 +393,16 @@
 															v{tool?.meta?.manifest?.version ?? ''}
 														</div>
 													{/if}
+													{#if tool?.meta?.manifest?.requirements}
+														<Tooltip
+															content={$i18n.t('PyPI requirements: {{reqs}}', {
+																reqs: tool.meta.manifest.requirements
+															})}
+															placement="top"
+														>
+															<Badge type="info" content={$i18n.t('Requirements')} />
+														</Tooltip>
+													{/if}
 												</div>
 											</Tooltip>
 											<div class="px-0.5">
@@ -428,6 +437,16 @@
 															<div class=" text-gray-500 text-xs font-medium shrink-0">
 																v{tool?.meta?.manifest?.version ?? ''}
 															</div>
+														{/if}
+														{#if tool?.meta?.manifest?.requirements}
+															<Tooltip
+																content={$i18n.t('PyPI requirements: {{reqs}}', {
+																	reqs: tool.meta.manifest.requirements
+																})}
+																placement="top"
+															>
+																<Badge type="info" content={$i18n.t('Requirements')} />
+															</Tooltip>
 														{/if}
 													</div>
 												</Tooltip>
@@ -610,7 +629,6 @@
 			const reader = new FileReader();
 			reader.onload = async (event) => {
 				const _tools = JSON.parse(event.target.result);
-				console.log(_tools);
 
 				for (const tool of _tools) {
 					const res = await createNewTool(localStorage.token, tool).catch((error) => {
