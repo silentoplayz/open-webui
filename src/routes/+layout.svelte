@@ -988,6 +988,13 @@
 			}
 		});
 
+		// Start i18n immediately — don't block on the backend config round-trip
+		// for users who already have a locale stored.
+		initI18n(localStorage?.locale);
+
+		// Parallelise: fetch backend config and (when needed) language list concurrently.
+		const languagesPromise = !localStorage.locale ? getLanguages().catch(() => []) : Promise.resolve(null);
+
 		let backendConfig = null;
 		try {
 			backendConfig = await getBackendConfig();
@@ -1001,12 +1008,9 @@
 			}
 			console.error('Error loading backend config:', error);
 		}
-		// Initialize i18n even if we didn't get a backend config,
-		// so `/error` can show something that's not `undefined`.
-
-		initI18n(localStorage?.locale);
+		// Apply locale — languages fetch has been running in parallel above.
 		if (!localStorage.locale) {
-			const languages = await getLanguages();
+			const languages = await languagesPromise;
 			const browserLanguages = navigator.languages
 				? navigator.languages
 				: [navigator.language || navigator.userLanguage];
