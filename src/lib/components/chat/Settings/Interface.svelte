@@ -62,6 +62,7 @@
 
 	let landingPageMode = '';
 	let chatBubble = true;
+	let llmChatBubble = false;
 	let chatDirection: 'LTR' | 'RTL' | 'auto' = 'auto';
 	let ctrlEnterToSend = false;
 	let copyFormatted = false;
@@ -241,6 +242,7 @@
 
 		landingPageMode = $settings?.landingPageMode ?? '';
 		chatBubble = $settings?.chatBubble ?? true;
+		llmChatBubble = $settings?.llmChatBubble ?? false;
 		widescreenMode = $settings?.widescreenMode ?? false;
 		splitLargeChunks = $settings?.splitLargeChunks ?? false;
 		scrollOnBranchChange = $settings?.scrollOnBranchChange ?? true;
@@ -684,7 +686,7 @@
 			<div>
 				<div class=" py-0.5 flex w-full justify-between">
 					<div id="chat-bubble-ui-label" class=" self-center text-xs">
-						{$i18n.t('Chat Bubble UI')}
+						{$i18n.t('User Message Bubbles')}
 					</div>
 
 					<div class="flex items-center gap-2 p-1">
@@ -694,6 +696,25 @@
 							bind:state={chatBubble}
 							on:change={() => {
 								saveSettings({ chatBubble });
+							}}
+						/>
+					</div>
+				</div>
+			</div>
+
+			<div>
+				<div class=" py-0.5 flex w-full justify-between">
+					<div id="llm-chat-bubble-ui-label" class=" self-center text-xs">
+						{$i18n.t('Assistant Message Bubbles')}
+					</div>
+
+					<div class="flex items-center gap-2 p-1">
+						<Switch
+							tooltip={true}
+							ariaLabelledbyId="llm-chat-bubble-ui-label"
+							bind:state={llmChatBubble}
+							on:change={() => {
+								saveSettings({ llmChatBubble });
 							}}
 						/>
 					</div>
