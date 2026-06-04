@@ -491,6 +491,7 @@
 										bind:value={config.IMAGES_OPENAI_API_PARAMS}
 										placeholder={$i18n.t('Enter additional parameters in JSON format')}
 										minSize={100}
+										maxSize={200}
 									/>
 								</div>
 							</div>
@@ -605,6 +606,7 @@
 										bind:value={config.AUTOMATIC1111_PARAMS}
 										placeholder={$i18n.t('Enter additional parameters in JSON format')}
 										minSize={100}
+										maxSize={200}
 									/>
 								</div>
 							</div>

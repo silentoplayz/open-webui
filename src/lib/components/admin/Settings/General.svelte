@@ -376,6 +376,7 @@
 								'Enter a title for the pending user info overlay. Leave empty for default.'
 							)}
 							bind:value={adminConfig.PENDING_USER_OVERLAY_TITLE}
+							maxSize={200}
 						/>
 					</div>
 
@@ -388,6 +389,7 @@
 								'Enter content for the pending user info overlay. Leave empty for default.'
 							)}
 							bind:value={adminConfig.PENDING_USER_OVERLAY_CONTENT}
+							maxSize={200}
 						/>
 					</div>
 
@@ -803,6 +805,7 @@
 						<Textarea
 							placeholder={$i18n.t('Enter a watermark for the response. Leave empty for none.')}
 							bind:value={adminConfig.RESPONSE_WATERMARK}
+							maxSize={200}
 						/>
 					</div>
 

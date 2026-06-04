@@ -310,6 +310,7 @@
 										placeholder={$i18n.t(
 											'Leave empty to use the default prompt, or enter a custom prompt'
 										)}
+										maxSize={300}
 									/>
 								</Tooltip>
 							</div>

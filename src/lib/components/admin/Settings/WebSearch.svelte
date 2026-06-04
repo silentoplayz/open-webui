@@ -831,6 +831,7 @@
 											placeholder={$i18n.t(
 												'Leave empty to use the default config, or enter a valid json (see https://yandex.cloud/en/docs/search-api/api-ref/WebSearch/search#yandex.cloud.searchapi.v2.WebSearchRequest)'
 											)}
+											maxSize={200}
 										/>
 									</Tooltip>
 								</div>
@@ -869,6 +870,7 @@
 									<Textarea
 										bind:value={webConfig.LINKUP_SEARCH_PARAMS}
 										placeholder={`{\n  "depth": "standard",\n  "outputType": "sourcedAnswer"\n}`}
+										maxSize={200}
 									/>
 								</div>
 							</div>

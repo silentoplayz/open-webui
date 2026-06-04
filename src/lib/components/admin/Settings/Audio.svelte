@@ -725,6 +725,7 @@
 											bind:value={TTS_OPENAI_PARAMS}
 											placeholder={$i18n.t('Enter additional parameters in JSON format')}
 											minSize={100}
+											maxSize={200}
 										/>
 									</div>
 								</div>

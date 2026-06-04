@@ -449,6 +449,7 @@
 											<Textarea
 												bind:value={RAGConfig.DATALAB_MARKER_ADDITIONAL_CONFIG}
 												placeholder={$i18n.t('Enter JSON config (e.g., {"disable_links": true})')}
+												maxSize={200}
 											/>
 										</Tooltip>
 									</div>
@@ -627,6 +628,7 @@
 											bind:value={RAGConfig.DOCLING_PARAMS}
 											placeholder={$i18n.t('Enter additional parameters in JSON format')}
 											minSize={100}
+											maxSize={200}
 										/>
 									</div>
 								</div>
@@ -765,6 +767,7 @@
 										bind:value={RAGConfig.MINERU_PARAMS}
 										placeholder={`{\n  "enable_ocr": false,\n  "enable_formula": true,\n  "enable_table": true,\n  "language": "en",\n  "model_version": "pipeline",\n  "page_ranges": ""\n}`}
 										minSize={100}
+										maxSize={200}
 									/>
 								</div>
 							</div>
@@ -1391,6 +1394,7 @@
 										placeholder={$i18n.t(
 											'Leave empty to use the default prompt, or enter a custom prompt'
 										)}
+										maxSize={300}
 									/>
 								</Tooltip>
 							</div>

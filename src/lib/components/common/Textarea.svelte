@@ -78,7 +78,7 @@
 	{placeholder}
 	aria-label={ariaLabel || placeholder}
 	class={className}
-	style="field-sizing: content;"
+	style="field-sizing: content;{maxSize ? ` max-height: ${maxSize}px; overflow-y: auto;` : ''}"
 	{rows}
 	{required}
 	{readonly}
