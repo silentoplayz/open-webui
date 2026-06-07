@@ -211,7 +211,7 @@
 				{#if item.model?.info?.meta?.description}
 					<Tooltip
 						content={`${marked.parse(
-							sanitizeResponseContent(item.model?.info?.meta?.description).replaceAll('\n', '<br>')
+							sanitizeResponseContent(item.model?.info?.meta?.description)
 						)}`}
 					>
 						<div class=" translate-y-[1px]">
