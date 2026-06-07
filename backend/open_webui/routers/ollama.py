@@ -1394,7 +1394,7 @@ async def download_file_stream(
 
             if done:
                 f.close()
-                hashed = calculate_sha256(file_path, chunk_size)
+                hashed = await asyncio.to_thread(calculate_sha256, file_path, chunk_size)
 
                 with open(file_path, 'rb') as blob_f:
                     blob_data = blob_f.read()
@@ -1471,7 +1471,7 @@ async def upload_model(
         log.info(f'Total Model Size: {total_size}')
 
         # Stage 2: hash the file and emit SSE progress
-        file_hash = calculate_sha256(file_path, chunk_size)
+        file_hash = await asyncio.to_thread(calculate_sha256, file_path, chunk_size)
         log.info(f'Model Hash: {file_hash}')
 
         try:
