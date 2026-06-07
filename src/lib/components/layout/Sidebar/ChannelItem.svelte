@@ -16,6 +16,7 @@
 	import Users from '$lib/components/icons/Users.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Emoji from '$lib/components/common/Emoji.svelte';
+	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
 	export let onUpdate: Function = () => {};
 
@@ -233,17 +234,19 @@
 		<div
 			class="ml-0.5 mr-1 invisible group-hover:visible self-center flex items-center dark:text-gray-300"
 		>
-			<button
-				type="button"
-				class="p-0.5 dark:hover:bg-gray-850 rounded-lg touch-auto"
-				on:click={(e) => {
-					e.stopImmediatePropagation();
-					e.stopPropagation();
-					showEditChannelModal = true;
-				}}
-			>
-				<Cog6 className="size-3.5" />
-			</button>
+			<Tooltip content={$i18n.t('Edit Channel')}>
+				<button
+					type="button"
+					class="p-0.5 dark:hover:bg-gray-850 rounded-lg touch-auto"
+					on:click={(e) => {
+						e.stopImmediatePropagation();
+						e.stopPropagation();
+						showEditChannelModal = true;
+					}}
+				>
+					<Cog6 className="size-3.5" />
+				</button>
+			</Tooltip>
 		</div>
 	{/if}
 </div>

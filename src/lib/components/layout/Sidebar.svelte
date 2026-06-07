@@ -1231,32 +1231,34 @@
 									<div class="flex-1 text-ellipsis line-clamp-1">
 										{note.title}
 									</div>
-									<button
-										class="invisible group-hover:visible self-center p-0.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition"
-										on:click|preventDefault|stopPropagation={async () => {
-											await toggleNotePinnedStatusById(localStorage.token, note.id);
-											const _pinnedNotes = await getPinnedNoteList(localStorage.token).catch(
-												() => []
-											);
-											pinnedNotes.set(_pinnedNotes);
-										}}
-										aria-label={$i18n.t('Unpin')}
-									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke-width="2"
-											stroke="currentColor"
-											class="size-3.5"
+									<Tooltip content={$i18n.t('Unpin')}>
+										<button
+											class="invisible group-hover:visible self-center p-0.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition"
+											on:click|preventDefault|stopPropagation={async () => {
+												await toggleNotePinnedStatusById(localStorage.token, note.id);
+												const _pinnedNotes = await getPinnedNoteList(localStorage.token).catch(
+													() => []
+												);
+												pinnedNotes.set(_pinnedNotes);
+											}}
+											aria-label={$i18n.t('Unpin')}
 										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												d="M6 18 18 6M6 6l12 12"
-											/>
-										</svg>
-									</button>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke-width="2"
+												stroke="currentColor"
+												class="size-3.5"
+											>
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													d="M6 18 18 6M6 6l12 12"
+												/>
+											</svg>
+										</button>
+									</Tooltip>
 								</a>
 							{/each}
 						</div>
@@ -1280,7 +1282,7 @@
 									}, 0);
 								}
 							: null}
-						onAddLabel={$i18n.t('Create Channel')}
+						onAddLabel={$i18n.t('New Channel')}
 					>
 						{#each $channels as channel, channelIdx (`${channel?.id}`)}
 							<ChannelItem
