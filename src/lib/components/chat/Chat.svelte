@@ -114,6 +114,11 @@
 	import Sidebar from '../icons/Sidebar.svelte';
 	import Image from '../common/Image.svelte';
 	import { getBanners } from '$lib/apis/configs';
+	import {
+		chatEventChannel,
+		broadcastChatDeleted,
+		type ChatLifecycleEvent
+	} from '$lib/utils/chatEventChannel';
 
 	export let chatIdProp = '';
 
@@ -768,6 +773,21 @@
 		window.addEventListener('message', onMessageHandler);
 		$socket?.on('events', chatEventHandler);
 
+		const onChatLifecycleMessage = (event: MessageEvent<ChatLifecycleEvent>) => {
+			const data = event.data;
+			if (!data) return;
+
+			if (
+				(data.type === 'chat:deleted' && data.chatIds?.includes($chatId)) ||
+				data.type === 'chats:cleared'
+			) {
+				stopResponse();
+				toast.warning($i18n.t('This chat has been deleted'));
+				goto('/');
+			}
+		};
+		chatEventChannel.addEventListener('message', onChatLifecycleMessage);
+
 		$audioQueue?.destroy();
 
 		const audioQueueInstance = new AudioQueue(document.getElementById('audioElement'));
@@ -890,6 +910,7 @@
 				selectedFolderSubscribe();
 				window.removeEventListener('message', onMessageHandler);
 				$socket?.off('events', chatEventHandler);
+				chatEventChannel.removeEventListener('message', onChatLifecycleMessage);
 				audioQueueInstance?.destroy();
 				audioQueue.set(null);
 			} catch (e) {
@@ -2936,6 +2957,7 @@
 		try {
 			const res = await deleteChatById(localStorage.token, id);
 			if (res) {
+				broadcastChatDeleted([id]);
 				currentChatPage.set(1);
 				initNewChat();
 				await goto('/');

@@ -52,6 +52,7 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import { generateTitle } from '$lib/apis';
 	import { createMessagesList } from '$lib/utils';
+	import { broadcastChatDeleted } from '$lib/utils/chatEventChannel';
 
 	export let className = '';
 
@@ -171,6 +172,7 @@
 		});
 
 		if (res) {
+			broadcastChatDeleted([id]);
 			tags.set(await getAllTags(localStorage.token));
 			if ($chatId === id) {
 				await goto('/');

@@ -10,6 +10,7 @@
 	dayjs.extend(calendar);
 
 	import { deleteChatById } from '$lib/apis/chats';
+	import { broadcastChatDeleted } from '$lib/utils/chatEventChannel';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import Modal from '$lib/components/common/Modal.svelte';
@@ -71,6 +72,7 @@
 		});
 
 		if (res) {
+			broadcastChatDeleted([chatId]);
 			onDelete(chatId);
 		}
 		onUpdate();
