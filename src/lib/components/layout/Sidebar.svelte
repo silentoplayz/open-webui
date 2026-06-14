@@ -599,6 +599,18 @@
 		const socketInstance = $socket;
 		socketInstance?.on('events', chatActiveEventHandler);
 
+		let lastVisibilityRefresh = Date.now();
+		const onVisibilityChange = () => {
+			if (document.visibilityState === 'visible' && $showSidebar) {
+				const now = Date.now();
+				if (now - lastVisibilityRefresh > 1000) {
+					lastVisibilityRefresh = now;
+					initChatList();
+				}
+			}
+		};
+		document.addEventListener('visibilitychange', onVisibilityChange);
+
 		await tick();
 		initPinnedMenuSortable();
 
@@ -621,6 +633,7 @@
 			}
 
 			socketInstance?.off('events', chatActiveEventHandler);
+			document.removeEventListener('visibilitychange', onVisibilityChange);
 		};
 	});
 
