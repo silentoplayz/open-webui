@@ -1487,6 +1487,22 @@
 												deleteFileHandler(fileId);
 											}}
 											onRename={(fileId, name) => renameFileHandler(fileId, name)}
+											onReindex={async (fileId) => {
+												try {
+													const res = await updateFileFromKnowledgeById(
+														localStorage.token,
+														id,
+														fileId
+													);
+
+													if (res) {
+														toast.success($i18n.t('File reindexing started.'));
+														init();
+													}
+												} catch (e) {
+													toast.error(`${e}`);
+												}
+											}}
 											onNavigateDirectory={(dirId) => navigateToDirectory(dirId)}
 											onRenameDirectory={(id, name) => renameDirectoryHandler(id, name)}
 											onDeleteDirectory={(id) => confirmDeleteDirectory(id)}
