@@ -1755,19 +1755,22 @@ async def process_file(
     request: Request,
     form_data: ProcessFileForm,
     user=Depends(get_verified_user),
-    db: AsyncSession = Depends(get_async_session),
+    db=None,
 ):
     """
     Process a file and save its content to the vector database.
-    Process a file and save its content to the vector database.
-    Note: granular session management is used to prevent connection pool exhaustion.
-    The session is committed before external API calls, and updates use a fresh session.
+
+    NOTE: We intentionally do NOT use Depends(get_async_session) here.
+    The save_docs_to_vector_db() call makes external embedding API calls
+    which can take 5-60+ seconds.  Database operations (file lookups,
+    status updates) manage their own short-lived sessions to avoid
+    holding a connection through slow I/O.
     """
     config = await get_retrieval_config()
     if user.role == 'admin':
-        file = await Files.get_file_by_id(form_data.file_id, db=db)
+        file = await Files.get_file_by_id(form_data.file_id)
     else:
-        file = await Files.get_file_by_id_and_user_id(form_data.file_id, user.id, db=db)
+        file = await Files.get_file_by_id_and_user_id(form_data.file_id, user.id)
 
     if file:
         try:
@@ -1877,13 +1880,12 @@ async def process_file(
             await Files.update_file_data_by_id(
                 file.id,
                 {'content': text_content},
-                db=db,
             )
             hash = calculate_sha256_string(text_content)
 
             if config.BYPASS_EMBEDDING_AND_RETRIEVAL:
-                await Files.update_file_data_by_id(file.id, {'status': 'completed'}, db=db)
-                await Files.update_file_hash_by_id(file.id, hash, db=db)
+                await Files.update_file_data_by_id(file.id, {'status': 'completed'})
+                await Files.update_file_hash_by_id(file.id, hash)
                 return {
                     'status': True,
                     'collection_name': None,
@@ -1892,9 +1894,6 @@ async def process_file(
                 }
             else:
                 try:
-                    # Commit any pending changes before the slow embedding step.
-                    # Note: file is already a Pydantic model (not ORM), so no expunge needed.
-                    await db.commit()
 
                     # External embedding API takes time (5-60s+).
                     # Subsequent updates use fresh async sessions.

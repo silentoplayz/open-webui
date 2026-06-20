@@ -139,7 +139,6 @@ async def process_uploaded_file(
                     request,
                     ProcessFileForm(file_id=file_item.id, content=result.get('text', '')),
                     user=user,
-                    db=db_session,
                 )
 
             elif (
@@ -170,7 +169,6 @@ async def process_uploaded_file(
                     request,
                     ProcessFileForm(file_id=file_item.id),
                     user=user,
-                    db=db_session,
                 )
 
             # Auto-link to Knowledge Collection when uploaded from one (#24807).
@@ -209,7 +207,6 @@ async def process_uploaded_file(
                             request,
                             ProcessFileForm(file_id=file_item.id, collection_name=knowledge_id),
                             user=user,
-                            db=db_session,
                         )
                         log.info(f'Linked file {file_item.id} to knowledge {knowledge_id}')
                 except Exception as e:
@@ -644,7 +641,6 @@ async def update_file_data_content_by_id(
                 request,
                 ProcessFileForm(file_id=id, content=form_data.content),
                 user=user,
-                db=db,
             )
             file = await Files.get_file_by_id(id=id, db=db)
         except Exception as e:
@@ -664,7 +660,6 @@ async def update_file_data_content_by_id(
                     request,
                     ProcessFileForm(file_id=id, collection_name=knowledge.id),
                     user=user,
-                    db=db,
                 )
             except Exception as e:
                 log.warning(f'Failed to update knowledge {knowledge.id} after content change for file {id}: {e}')

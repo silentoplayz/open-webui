@@ -329,7 +329,6 @@ async def reindex_knowledge_files(
                         request,
                         ProcessFileForm(file_id=file.id, collection_name=knowledge_base.id),
                         user=user,
-                        db=db,
                     )
                 except Exception as e:
                     log.error(f'Error processing file {file.filename} (ID: {file.id}): {str(e)}')
@@ -754,7 +753,6 @@ async def add_file_to_knowledge_by_id(
             request,
             ProcessFileForm(file_id=form_data.file_id, collection_name=id),
             user=user,
-            db=db,
         )
 
         # Add file to knowledge base
@@ -838,7 +836,6 @@ async def update_file_from_knowledge_by_id(
             request,
             ProcessFileForm(file_id=form_data.file_id, collection_name=id),
             user=user,
-            db=db,
         )
     except Exception as e:
         raise HTTPException(
