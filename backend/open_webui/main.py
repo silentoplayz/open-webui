@@ -1040,6 +1040,12 @@ async def chat_completion(
             **(model_info.params.model_dump() if model_info and model_info.params else {}),
         }
 
+        # Inject global+model params as defaults; frontend per-user/per-chat params win
+        if model_info_params:
+            frontend_params = form_data.get('params') or {}
+            form_data['params'] = {k: v for k, v in model_info_params.items() if v is not None}
+            form_data['params'].update(frontend_params)
+
         # Check base model existence for custom models
         if model_info and model_info.base_model_id:
             base_model_id = model_info.base_model_id
