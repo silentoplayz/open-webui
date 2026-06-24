@@ -1021,19 +1021,36 @@
 		// so `/error` can show something that's not `undefined`.
 
 		initI18n(localStorage?.locale);
-		if (!localStorage.locale) {
-			const languages = await getLanguages();
-			const browserLanguages = navigator.languages
-				? navigator.languages
-				: [navigator.language || navigator.userLanguage];
-			const lang = backendConfig?.default_locale
-				? backendConfig.default_locale
-				: bestMatchingLanguage(languages, browserLanguages, 'en-US');
-			changeLanguage(lang);
-			dayjs.locale(lang);
-		}
 
-		if (backendConfig) {
+		// Detect the user's preferred language in the background. This is
+		// independent of the socket/session setup and can run concurrently.
+		const detectLanguage = async () => {
+			if (localStorage.locale) return;
+			try {
+				const languages = await getLanguages();
+				const browserLanguages = navigator.languages
+					? navigator.languages
+					: [navigator.language || navigator.userLanguage];
+				const lang = backendConfig?.default_locale
+					? backendConfig.default_locale
+					: bestMatchingLanguage(languages, browserLanguages, 'en-US');
+				changeLanguage(lang);
+				dayjs.locale(lang);
+			} catch (error) {
+				console.error('Failed to detect language, falling back to en-US:', error);
+				changeLanguage('en-US');
+				dayjs.locale('en-US');
+			}
+		};
+
+		// Set up the socket, session, and config — this is the critical auth path.
+		const setupSession = async () => {
+			if (!backendConfig) {
+				// Redirect to /error when Backend Not Detected
+				await goto(`/error`);
+				return;
+			}
+
 			// Save Backend Status to Store
 			await config.set(backendConfig);
 			await WEBUI_NAME.set(backendConfig.name);
@@ -1053,6 +1070,11 @@
 
 					if (sessionUser) {
 						await user.set(sessionUser);
+
+						// Refresh config now that the user is authenticated.
+						// The backend may return user-specific config values
+						// (e.g. permissions, feature flags) that differ from
+						// the unauthenticated response.
 						try {
 							await config.set(await getBackendConfig());
 						} catch (error) {
@@ -1087,10 +1109,11 @@
 					}
 				}
 			}
-		} else {
-			// Redirect to /error when Backend Not Detected
-			await goto(`/error`);
-		}
+		};
+
+		// Run language detection concurrently with session setup —
+		// they are independent and this saves a network round-trip.
+		await Promise.all([detectLanguage(), setupSession()]);
 
 		await tick();
 
