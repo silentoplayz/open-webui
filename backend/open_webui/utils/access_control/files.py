@@ -1,14 +1,13 @@
 import logging
 
-from open_webui.models.users import UserModel
-from open_webui.models.files import Files
-from open_webui.models.knowledge import Knowledges
+from open_webui.models.access_grants import AccessGrants
 from open_webui.models.channels import Channels
 from open_webui.models.chats import Chats
+from open_webui.models.files import Files
 from open_webui.models.groups import Groups
+from open_webui.models.knowledge import Knowledges
 from open_webui.models.models import Models
-from open_webui.models.access_grants import AccessGrants
-
+from open_webui.models.users import UserModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -39,25 +38,33 @@ async def has_access_to_file(
     if file.user_id == user.id:
         return True
 
-    # Check if the file is associated with any knowledge bases the user has access to
+    # Check if the file is associated with any knowledge bases the user has access to.
+    # An object (knowledge base or workspace model) confers write/delete on a file only when
+    # the object's OWNER owns that file; otherwise a read-only file laundered into an object
+    # the user controls would gain write/delete on it (CWE-863). Read access is unaffected.
     knowledge_bases = await Knowledges.get_knowledges_by_file_id(file_id, db=db)
     user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, db=db)}
     for knowledge_base in knowledge_bases:
-        if knowledge_base.user_id == user.id or await AccessGrants.has_access(
-            user_id=user.id,
-            resource_type='knowledge',
-            resource_id=knowledge_base.id,
-            permission=access_type,
-            user_group_ids=user_group_ids,
-            db=db,
-        ):
+        if (
+            knowledge_base.user_id == user.id
+            or await AccessGrants.has_access(
+                user_id=user.id,
+                resource_type='knowledge',
+                resource_id=knowledge_base.id,
+                permission=access_type,
+                user_group_ids=user_group_ids,
+                db=db,
+            )
+        ) and (access_type == 'read' or knowledge_base.user_id == file.user_id):
             return True
 
     knowledge_base_id = file.meta.get('collection_name') if file.meta else None
     if knowledge_base_id:
         knowledge_bases = await Knowledges.get_knowledge_bases_by_user_id(user.id, access_type, db=db)
         for knowledge_base in knowledge_bases:
-            if knowledge_base.id == knowledge_base_id:
+            if knowledge_base.id == knowledge_base_id and (
+                access_type == 'read' or knowledge_base.user_id == file.user_id
+            ):
                 return True
 
     # Check if the file is associated with any channels the user has access to
@@ -67,7 +74,7 @@ async def has_access_to_file(
 
     # Check if the file is associated with any chats the user has access to
     shared_chat_ids = await Chats.get_shared_chat_ids_by_file_id(file_id, db=db)
-    if shared_chat_ids:
+    if access_type == 'read' and shared_chat_ids:
         accessible_ids = await AccessGrants.get_accessible_resource_ids(
             user_id=user.id,
             resource_type='shared_chat',
@@ -79,12 +86,14 @@ async def has_access_to_file(
         if accessible_ids:
             return True
 
-    # Check if the file is directly attached to a shared workspace model
+    # Check if the file is directly attached to a shared workspace model (per the ownership
+    # note above, model write is conferred only for files the model owner owns).
     for model in await Models.get_models_by_user_id(user.id, permission=access_type, db=db):
         knowledge_items = getattr(model.meta, 'knowledge', None) or []
         for item in knowledge_items:
             if isinstance(item, dict) and item.get('type') == 'file' and item.get('id') == file.id:
-                return True
+                if access_type == 'read' or model.user_id == file.user_id:
+                    return True
 
     return False
 

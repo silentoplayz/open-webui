@@ -1,53 +1,62 @@
 <script lang="ts">
 	import Checkbox from '$lib/components/common/Checkbox.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import { getContext, onMount } from 'svelte';
+	import TypeaheadSelector from './TypeaheadSelector.svelte';
+	import { getContext } from 'svelte';
 
-	import { getSkillItems } from '$lib/apis/skills';
+	type Skill = {
+		id: string;
+		name?: string;
+		description?: string;
+	};
 
+	export let skills: Skill[] = [];
 	export let selectedSkillIds: string[] = [];
 
-	let _skills: Record<string, any> = {};
+	const i18n = getContext('i18n') as any;
 
-	const i18n = getContext('i18n');
+	$: selectedSkills = skills.filter((skill) => selectedSkillIds.includes(skill.id));
+	$: availableSkills = skills.filter((skill) => !selectedSkillIds.includes(skill.id));
 
-	onMount(async () => {
-		const res = await getSkillItems(localStorage.token).catch(() => null);
-		const skills = res?.items ?? [];
-		_skills = skills.reduce((acc: Record<string, any>, skill: any) => {
-			acc[skill.id] = {
-				...skill,
-				selected: selectedSkillIds.includes(skill.id)
-			};
-
-			return acc;
-		}, {});
-	});
+	const selectSkill = (skill: Skill) => {
+		selectedSkillIds = [...selectedSkillIds, skill.id];
+	};
 </script>
 
 <div>
 	<div class="flex w-full justify-between mb-1">
-		<div class=" self-center text-xs font-medium text-gray-500">{$i18n.t('Skills')}</div>
+		<div class=" self-center text-xs text-gray-500">{$i18n.t('Skills')}</div>
 	</div>
 
 	<div class="flex flex-col mb-1">
-		{#if Object.keys(_skills).length > 0}
+		{#if skills.length > 0}
+			<TypeaheadSelector
+				id="model-skills-selector"
+				items={availableSkills}
+				className="w-48 max-w-full"
+				placeholder={$i18n.t('Search skills')}
+				on:select={(e) => {
+					selectSkill(e.detail);
+				}}
+			/>
+
 			<div class=" flex items-center flex-wrap">
-				{#each Object.keys(_skills) as skill, skillIdx}
+				{#each selectedSkills as skill, skillIdx}
 					<div class=" flex items-center gap-2 mr-3">
 						<div class="self-center flex items-center">
 							<Checkbox
-								state={_skills[skill].selected ? 'checked' : 'unchecked'}
+								state="checked"
 								on:change={(e) => {
-									_skills[skill].selected = e.detail === 'checked';
-									selectedSkillIds = Object.keys(_skills).filter((s) => _skills[s].selected);
+									if (e.detail === 'unchecked') {
+										selectedSkillIds = selectedSkillIds.filter((id) => id !== skill.id);
+									}
 								}}
 							/>
 						</div>
 
-						<Tooltip content={_skills[skill]?.description ?? _skills[skill].id}>
-							<div class=" py-0.5 text-sm w-full capitalize font-medium">
-								{_skills[skill].name}
+						<Tooltip content={skill.description ?? skill.id}>
+							<div class=" py-0.5 text-xs capitalize">
+								{skill.name}
 							</div>
 						</Tooltip>
 					</div>

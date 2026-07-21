@@ -43,6 +43,7 @@
 	const i18n = getContext('i18n');
 
 	export let initNewChat: Function;
+	export let readOnly: boolean = false;
 	export let shareEnabled: boolean = false;
 	export let scrollTop = 0;
 	export let scrollToTop: (() => void) | null = null;
@@ -58,6 +59,14 @@
 	export let moveChatHandler: (id: string, folderId: string) => void;
 
 	let closedBannerIds = [];
+
+	const getDismissedBannerIds = (): string[] => {
+		try {
+			return JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]');
+		} catch {
+			return [];
+		}
+	};
 
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
@@ -114,7 +123,11 @@
 			"
 				>
 					{#if showModelSelector}
-						<ModelSelector bind:selectedModels showSetDefault={!shareEnabled} />
+						<ModelSelector
+							bind:selectedModels
+							showSetDefault={!shareEnabled && !readOnly}
+							disabled={readOnly}
+						/>
 					{/if}
 				</div>
 
@@ -195,6 +208,7 @@
 						<Menu
 							{chat}
 							{shareEnabled}
+							{readOnly}
 							{scrollToTop}
 							shareHandler={() => {
 								showShareChatModal = !showShareChatModal;
@@ -245,11 +259,12 @@
 								}
 							}}
 						>
-							<div
+							<button
+								type="button"
 								class="select-none flex rounded-xl p-1.5 w-full hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								aria-label={$i18n.t('User menu')}
 							>
 								<div class=" self-center">
-									<span class="sr-only">{$i18n.t('User menu')}</span>
 									<img
 										src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
 										class="size-6 object-cover rounded-full"
@@ -257,7 +272,7 @@
 										draggable="false"
 									/>
 								</div>
-							</div>
+							</button>
 						</UserMenu>
 					{/if}
 				</div>
@@ -274,7 +289,9 @@
 	<div class="absolute top-[100%] left-0 right-0 h-fit">
 		{#if !history.currentId && !$chatId && ($banners.length > 0 || ($config?.license_metadata?.type ?? null) === 'trial' || (($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats))}
 			<div class=" w-full z-30">
-				<div class=" flex flex-col gap-1 w-full">
+				<div
+					class=" flex flex-col gap-1 w-full max-h-28 overflow-y-auto overscroll-contain md:max-h-none md:overflow-visible"
+				>
 					{#if ($config?.license_metadata?.type ?? null) === 'trial'}
 						<Banner
 							banner={{
@@ -299,7 +316,7 @@
 						/>
 					{/if}
 
-					{#each $banners.filter((b) => ![...JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]'), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
+					{#each $banners.filter((b) => ![...getDismissedBannerIds(), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
 						<Banner
 							{banner}
 							on:dismiss={(e) => {
@@ -309,10 +326,9 @@
 									localStorage.setItem(
 										'dismissedBannerIds',
 										JSON.stringify(
-											[
-												bannerId,
-												...JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]')
-											].filter((id) => $banners.find((b) => b.id === id))
+											[bannerId, ...getDismissedBannerIds()].filter((id) =>
+												$banners.find((b) => b.id === id)
+											)
 										)
 									);
 								} else {

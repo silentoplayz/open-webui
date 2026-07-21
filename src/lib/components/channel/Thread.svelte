@@ -18,6 +18,7 @@
 	export let channel = null;
 
 	export let onClose = () => {};
+	export let onPin = () => {};
 
 	let messages = null;
 	let top = false;
@@ -35,7 +36,9 @@
 	}
 
 	const scrollToBottom = () => {
-		messagesContainerElement.scrollTop = messagesContainerElement.scrollHeight;
+		if (messagesContainerElement) {
+			messagesContainerElement.scrollTop = messagesContainerElement.scrollHeight;
+		}
 	};
 
 	const initHandler = async () => {
@@ -194,6 +197,7 @@
 					{messages}
 					{replyToMessage}
 					thread={true}
+					{onPin}
 					onReply={async (message) => {
 						replyToMessage = message;
 
