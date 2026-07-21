@@ -3156,3 +3156,4 @@ Config.configure(
     enable_persistent=ENABLE_PERSISTENT_CONFIG,
     enable_oauth_persistent=ENABLE_OAUTH_PERSISTENT_CONFIG,
 )
+WORKFLOW_E2E_SENTINEL = "dirty on purpose"
