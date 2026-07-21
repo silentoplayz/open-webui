@@ -117,4 +117,4 @@ export const PASTED_TEXT_CHARACTER_LIMIT = 1000;
 // This feature, akin to $env/static/private, exclusively incorporates environment variables
 // that are prefixed with config.kit.env.publicPrefix (usually set to PUBLIC_).
 // Consequently, these variables can be securely exposed to client-side code.
-const  workflowE2eSentinel=  "dirty on purpose" ;;
+const workflowE2eSentinel = 'dirty on purpose';
