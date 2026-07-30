@@ -46,6 +46,9 @@
 	import RateComment from './RateComment.svelte';
 	import WebSearchResults from './ResponseMessage/WebSearchResults.svelte';
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
+	import DocumentDuplicate from '$lib/components/icons/DocumentDuplicate.svelte';
+	import Download from '$lib/components/icons/Download.svelte';
+	import { copyImageToClipboard, downloadImage } from '$lib/utils/image';
 
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
@@ -174,6 +177,16 @@
 	let contentContainerElement: HTMLDivElement;
 	let buttonsContainerElement: HTMLDivElement;
 	let showDeleteConfirm = false;
+
+	// Images whose file no longer resolves — e.g. deleted from the playground
+	// gallery after this message was sent. Their actions are hidden, since
+	// copying or downloading a file that is gone can only fail.
+	let unavailableImageUrls = new Set<string>();
+
+	const markImageUnavailable = (url: string) => {
+		if (!url || unavailableImageUrls.has(url)) return;
+		unavailableImageUrls = new Set(unavailableImageUrls).add(url);
+	};
 
 	let model = null;
 	$: model = $models.find((m) => m.id === message.model);
@@ -690,7 +703,66 @@
 								{#each message.files.filter((f) => ['image', 'file'].includes(f.type)) as file}
 									<div>
 										{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
-											<Image src={file.url} alt={file.name || $i18n.t('Generated Image')} />
+											<div class="relative group/img">
+												<Image
+													src={file.url}
+													alt={file.name || $i18n.t('Generated Image')}
+													onError={() => markImageUnavailable(file.url)}
+												/>
+
+												<!-- Actions for images served by our backend; an external image host
+												     cannot be fetched with our credentials, and a file that no longer
+												     resolves cannot be copied or downloaded at all. -->
+												{#if file.url && file.url.includes('/files/') && !unavailableImageUrls.has(file.url)}
+													<div
+														class="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/60 backdrop-blur-sm rounded-lg px-1.5 py-1 opacity-0 group-hover/img:opacity-100 focus-within:opacity-100 transition-opacity"
+													>
+														<Tooltip content={$i18n.t('Copy')} placement="top">
+															<button
+																class="p-1.5 hover:bg-white/20 rounded-md transition-colors"
+																type="button"
+																aria-label={$i18n.t('Copy')}
+																on:click|stopPropagation={async () => {
+																	try {
+																		await copyImageToClipboard(file.url, localStorage.token);
+																		toast.success($i18n.t('Image copied to clipboard'));
+																	} catch (error) {
+																		console.error('Failed to copy image:', error);
+																		toast.error($i18n.t('Failed to copy image'));
+																	}
+																}}
+															>
+																<DocumentDuplicate
+																	className="size-3.5 text-white"
+																	strokeWidth="2"
+																/>
+															</button>
+														</Tooltip>
+
+														<Tooltip content={$i18n.t('Download')} placement="top">
+															<button
+																class="p-1.5 hover:bg-white/20 rounded-md transition-colors"
+																type="button"
+																aria-label={$i18n.t('Download')}
+																on:click|stopPropagation={async () => {
+																	try {
+																		await downloadImage(
+																			file.url,
+																			file.name || 'generated-image.png',
+																			localStorage.token
+																		);
+																	} catch (error) {
+																		console.error('Failed to download image:', error);
+																		toast.error($i18n.t('Failed to download image'));
+																	}
+																}}
+															>
+																<Download className="size-3.5 text-white" strokeWidth="2" />
+															</button>
+														</Tooltip>
+													</div>
+												{/if}
+											</div>
 										{:else}
 											<FileItem
 												item={file}
