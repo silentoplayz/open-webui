@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { onDestroy, getContext } from 'svelte';
+	import { toast } from 'svelte-sonner';
 
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
+	import { WEBUI_BASE_URL } from '$lib/constants';
 	import PanzoomContainer from '$lib/components/common/PanzoomContainer.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
@@ -119,9 +121,45 @@
 							src.startsWith('http://') ||
 							src.startsWith('https://')
 						) {
-							// Handle remote URLs
-							fetch(src)
-								.then((response) => response.blob())
+							// Handle remote URLs.
+							// Backend file URLs (e.g. /api/v1/files/{id}/content) require
+							// authentication, so send the bearer token when the target is
+							// this deployment's own backend. That is not always the page
+							// origin: in dev the frontend is served separately and
+							// WEBUI_BASE_URL points at the backend. Never attach the token
+							// to a third-party image host.
+							const ownOrigins = new Set([window.location.origin]);
+							if (WEBUI_BASE_URL) {
+								try {
+									ownOrigins.add(new URL(WEBUI_BASE_URL, window.location.origin).origin);
+								} catch {
+									// Unparseable base URL — fall back to the page origin only.
+								}
+							}
+
+							let isOwnBackend = src.startsWith('/');
+							if (!isOwnBackend) {
+								try {
+									isOwnBackend = ownOrigins.has(new URL(src).origin);
+								} catch {
+									isOwnBackend = false;
+								}
+							}
+
+							fetch(
+								src,
+								isOwnBackend && localStorage.token
+									? { headers: { Authorization: `Bearer ${localStorage.token}` } }
+									: undefined
+							)
+								.then((response) => {
+									// A failed response still has a body, which would otherwise be
+									// saved as the "image" (e.g. a JSON error payload).
+									if (!response.ok) {
+										throw new Error(`Failed to download image: ${response.status}`);
+									}
+									return response.blob();
+								})
 								.then((blob) => {
 									// detect the MIME type from the blob
 									const mimeType = blob.type || 'image/png';
@@ -140,6 +178,7 @@
 								})
 								.catch((error) => {
 									console.error('Error downloading remote image:', error);
+									toast.error($i18n.t('Failed to download image'));
 								});
 							return;
 						}

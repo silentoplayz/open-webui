@@ -1,4 +1,24 @@
 import { IMAGES_API_BASE_URL } from '$lib/constants';
+import { searchFiles } from '$lib/apis/files';
+
+/**
+ * Retrieve previously generated images from file storage.
+ * Generated images are saved with filename `generated-image.{ext}` by the backend,
+ * so we use the existing searchFiles API with a glob pattern.
+ */
+export const getGeneratedImages = async (token: string, skip: number = 0, limit: number = 20) => {
+	try {
+		return await searchFiles(token, 'generated-image*', skip, limit);
+	} catch (error) {
+		// The search endpoint 404s when nothing matches, which for a gallery means
+		// "no images yet" or "end of pagination" rather than a failure. Anything
+		// else is a real error and must not be reported as an empty gallery.
+		if (typeof error === 'string' && error.includes('No files found')) {
+			return [];
+		}
+		throw error;
+	}
+};
 
 export const getConfig = async (token: string = '') => {
 	let error = null;

@@ -613,6 +613,10 @@ async def image_generations(
 
     model = await get_image_model(request)
 
+    # Always include model and size in stored file metadata for gallery display
+    metadata['model'] = model
+    metadata['size'] = size
+
     try:
         if image_config.IMAGE_GENERATION_ENGINE == 'openai':
             headers = {
