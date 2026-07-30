@@ -15,6 +15,23 @@ export interface GalleryImageFile {
 	created_at: number;
 }
 
+/** Size preset offered by the editor's aspect-ratio control. */
+export interface SizePreset {
+	label: string;
+	value: string;
+	ratio?: string;
+	icon: string;
+}
+
+/** Common size presets for image dimensions. */
+export const IMAGE_SIZE_PRESETS: SizePreset[] = [
+	{ label: '1:1', value: '1024x1024', ratio: '1:1', icon: 'square' },
+	{ label: '16:9', value: '1792x1024', ratio: '16:9', icon: 'landscape' },
+	{ label: '9:16', value: '1024x1792', ratio: '9:16', icon: 'portrait' },
+	{ label: '4:3', value: '1024x768', ratio: '4:3', icon: 'landscape-sm' },
+	{ label: '3:4', value: '768x1024', ratio: '3:4', icon: 'portrait-sm' }
+];
+
 /**
  * Resolve an image URL returned by the backend.
  * Relative paths (e.g. `/api/v1/files/{id}/content`) are prefixed with

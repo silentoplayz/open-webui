@@ -22,10 +22,12 @@
 	import DocumentDuplicate from '$lib/components/icons/DocumentDuplicate.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
+	import Pencil from '$lib/components/icons/Pencil.svelte';
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import ImagePreview from '$lib/components/common/ImagePreview.svelte';
+	import ImageEditor from '$lib/components/playground/ImageEditor.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -36,6 +38,13 @@
 
 	let prompt = '';
 	let sourceImages: string[] = [];
+
+	// Editor state — set while an image is open for editing
+	let editingImage: { url: string; id: string; prompt: string } | null = null;
+
+	const openEditor = (url: string, fileId: string, prompt: string) => {
+		editingImage = { url, id: fileId, prompt };
+	};
 
 	// Full-size preview state
 	let previewSrc = '';
@@ -322,6 +331,14 @@
 						</p>
 					</div>
 				</div>
+			{:else if editingImage}
+				<ImageEditor
+					imageUrl={editingImage.url}
+					imageId={editingImage.id}
+					initialPrompt={editingImage.prompt}
+					{galleryImages}
+					on:close={() => (editingImage = null)}
+				/>
 			{:else}
 				<!-- Results Area -->
 				<div
@@ -413,6 +430,18 @@
 															</button>
 														</Tooltip>
 													{/if}
+
+													<Tooltip content={$i18n.t('Edit')} placement="top">
+														<button
+															class="p-1.5 hover:bg-white/20 rounded-md transition-colors"
+															type="button"
+															aria-label={$i18n.t('Edit')}
+															on:click|stopPropagation={() =>
+																openEditor(fileUrl, file.id, (filePrompt as string) || '')}
+														>
+															<Pencil className="size-4 text-white" strokeWidth="2" />
+														</button>
+													</Tooltip>
 
 													<Tooltip content={$i18n.t('Copy')} placement="top">
 														<button
