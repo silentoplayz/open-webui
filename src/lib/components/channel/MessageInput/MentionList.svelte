@@ -7,9 +7,10 @@
 	import Hashtag from '$lib/components/icons/Hashtag.svelte';
 	import Lock from '$lib/components/icons/Lock.svelte';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
-	import { searchUsers } from '$lib/apis/users';
+	import { getChannelMembersById } from '$lib/apis/channels';
 
 	export let query = '';
+	export let channel = null;
 
 	export let command: (payload: { id: string; label: string }) => void;
 	export let selectedIndex = 0;
@@ -32,10 +33,12 @@
 	);
 
 	const getUserList = async () => {
-		const res = await searchUsers(localStorage.token, query).catch((error) => {
-			console.error('Error searching users:', error);
-			return null;
-		});
+		const res = await getChannelMembersById(localStorage.token, channel.id, query).catch(
+			(error) => {
+				console.error('Error searching channel members:', error);
+				return null;
+			}
+		);
 
 		if (res) {
 			_users = [...res.users.map((u) => ({ type: 'user', id: u.id, label: u.name }))].sort((a, b) =>
@@ -44,7 +47,7 @@
 		}
 	};
 
-	$: if (query !== null && userSuggestions) {
+	$: if (query !== null && userSuggestions && channel?.id) {
 		getUserList();
 	}
 
