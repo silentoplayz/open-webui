@@ -65,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🔐 **Configure authentication from the admin panel.** LDAP and OAuth/OIDC settings now have a dedicated Authentication settings page, so providers can be configured from the admin interface. [Commit](https://github.com/open-webui/open-webui/commit/5cdcdbaeec9fc8156721c38c33ec37956962871c), [#12945](https://github.com/open-webui/open-webui/pull/12945)
 - 🏷️ **More custom header variables.** Custom request headers now support "{{USER_MESSAGE_ID}}", "{{USER_MESSAGE_PARENT_ID}}", and "{{TASK}}", letting connected services tell apart real user messages from automated background requests like title, tag, and follow-up generation. [Commit](https://github.com/open-webui/open-webui/commit/f85cb27ef835aa76aff7de6176bf2159ba392061)
 - 📄 **File details forwarded to external document extractors.** External custom document-extraction servers now receive the file's ID, name, and content type, and these are also available as custom header variables, so extraction can be tailored per file. [Commit](https://github.com/open-webui/open-webui/commit/b1c2536ed2f8639efade04618018e6de9b332df2), [#26259](https://github.com/open-webui/open-webui/issues/26259)
-- 🎰 **Last model pre-selected for new slots.** When you add another model to a multi-model chat, the slot now defaults to the model you last picked instead of starting empty. [#25974](https://github.com/open-webui/open-webui/pull/25974)
+- 🎰 **Last model preselected for new slots.** When you add another model to a multi-model chat, the slot now defaults to the model you last picked instead of starting empty. [#25974](https://github.com/open-webui/open-webui/pull/25974)
 - ⚡ **Faster model overview.** The admin model overview now loads its feedback history and tags through batched queries, so it opens noticeably faster on instances with many chats. [Commit](https://github.com/open-webui/open-webui/commit/40c09167cd6de1c853a5dd03c88b4fdcb279dfe1)
 - 🏎️ **Lighter channel profile previews.** Profile previews in channels now load a person's details only when you hover to open one, rather than fetching them for every message up front. [Commit](https://github.com/open-webui/open-webui/commit/4f69c33de0e9a8fde4f16d0b2f1ed8aac8741772)
 - ↩️ **Reset permissions to defaults.** The group and default permission dialogs now include a button to restore all permissions back to their built-in defaults in one step. [#25931](https://github.com/open-webui/open-webui/pull/25931)
@@ -3036,7 +3036,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - 🌐 **Custom Azure TTS API URL Support Added**: You can now define a custom Azure Text-to-Speech endpoint—enabling flexibility for enterprise deployments and regional compliance.
-- ⚙️ **TOOL_SERVER_CONNECTIONS Environment Variable Suppor**: Easily configure and deploy tool servers via environment variables, streamlining setup and enabling faster enterprise provisioning.
+- ⚙️ **TOOL_SERVER_CONNECTIONS Environment Variable Support**: Easily configure and deploy tool servers via environment variables, streamlining setup and enabling faster enterprise provisioning.
 - 👥 **Enhanced OAuth Group Handling as String or List**: OAuth group data can now be passed as either a list or a comma-separated string, improving compatibility with varied identity provider formats and reducing onboarding friction.
 
 ### Fixed

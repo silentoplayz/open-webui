@@ -23,7 +23,7 @@
 		resize();
 
 		requestAnimationFrame(() => {
-			// setInterveal to cehck until textareaElement is set
+			// setInterveal to check until textareaElement is set
 			const interval = setInterval(() => {
 				if (textareaElement) {
 					clearInterval(interval);

@@ -490,11 +490,11 @@ export const getToolServersData = async (servers: object[]) => {
 						// Fetch system prompt if the server supports it
 						try {
 							const baseUrl = (server?.url ?? '').replace(/\/$/, '');
-							const configRes = await fetch(`${baseUrl}/api/config`, {
+							const configures = await fetch(`${baseUrl}/api/config`, {
 								signal: AbortSignal.timeout(TOOL_SERVER_FETCH_TIMEOUT)
 							});
-							if (configRes.ok) {
-								const config = await configRes.json();
+							if (configures.ok) {
+								const config = await configures.json();
 								if (config?.features?.system) {
 									const headers: Record<string, string> = {};
 									if (toolServerToken) {
