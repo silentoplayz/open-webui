@@ -138,12 +138,13 @@
 
 	import { Fragment, DOMParser } from 'prosemirror-model';
 	import { EditorState, Plugin, PluginKey, TextSelection, Selection } from 'prosemirror-state';
-	import { Decoration, DecorationSet } from 'prosemirror-view';
+	import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 	import { Editor, Extension, markInputRule, mergeAttributes } from '@tiptap/core';
 
 	import { AIAutocompletion } from './RichTextInput/AutoCompletion.js';
 
 	import StarterKit from '@tiptap/starter-kit';
+	import { slugify } from '$lib/utils';
 
 	// Bubble and Floating menus are currently fixed to v2 due to styling issues in v3
 	// TODO: Update to v3 when styling issues are resolved
@@ -333,6 +334,7 @@
 	let bubbleMenuElement: Element | null = null;
 	let element: Element | null = null;
 
+	let pendingAnchorScroll = false;
 	let pendingUpdate = null;
 
 	const options = {
@@ -668,6 +670,63 @@
 		return false;
 	}
 
+	const hashLinkFromClick = (view: EditorView, event: MouseEvent) => {
+		if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+			return null;
+		}
+
+		const anchor = event.target instanceof Element ? event.target.closest('a') : null;
+		if (!anchor || !view.dom.contains(anchor)) {
+			return null;
+		}
+
+		const href = anchor.getAttribute('href') ?? '';
+		return href.startsWith('#') ? href : null;
+	};
+
+	export const scrollToAnchor = (href: string) => {
+		if (!editor) {
+			return false;
+		}
+
+		const slug = slugify(decodeURIComponent(href.slice(1))).replace(/-+/g, '-');
+		if (!slug) {
+			return false;
+		}
+
+		let headingPos: number | null = null;
+		let looseHeadingPos: number | null = null;
+		editor.view.state.doc.descendants((node, nodePos) => {
+			if (headingPos !== null || node.type.name !== 'heading') {
+				return headingPos === null;
+			}
+
+			const headingSlug = slugify(node.textContent).replace(/-+/g, '-');
+			const bareSlug = /^\d+(?:\.\d+)+\.?\s|^\d+\.\s/.test(node.textContent)
+				? headingSlug.replace(/^\d+-/, '')
+				: headingSlug;
+			if (headingSlug === slug || bareSlug === slug) {
+				headingPos = nodePos;
+				return false;
+			}
+			if (looseHeadingPos === null && bareSlug.startsWith(slug)) {
+				looseHeadingPos = nodePos;
+			}
+		});
+
+		const targetPos = headingPos ?? looseHeadingPos;
+		if (targetPos === null) {
+			return false;
+		}
+
+		const dom = editor.view.nodeDOM(targetPos);
+		if (dom instanceof HTMLElement) {
+			dom.scrollIntoView({ block: 'start' });
+		}
+
+		return true;
+	};
+
 	export const setContent = (content) => {
 		editor.commands.setContent(content);
 	};
@@ -957,6 +1016,11 @@
 					md: mdValue
 				});
 
+				if (pendingAnchorScroll && editor.state.doc.content.size > 2) {
+					pendingAnchorScroll = false;
+					scrollToAnchor(window.location.hash);
+				}
+
 				if (json) {
 					value = jsonValue;
 				} else {
@@ -1034,7 +1098,20 @@
 
 					return false;
 				},
+				handleClick: (view, pos, event) => hashLinkFromClick(view, event) !== null,
 				handleDOMEvents: {
+					click: (view, event) => {
+						const href = hashLinkFromClick(view, event);
+						if (href === null) {
+							return false;
+						}
+
+						event.preventDefault();
+						if (scrollToAnchor(href)) {
+							window.history.replaceState(history.state, '', href);
+						}
+						return true;
+					},
 					compositionstart: (view, event) => {
 						oncompositionstart(event);
 						return false;
@@ -1282,6 +1359,11 @@
 			enableInputRules: richText,
 			enablePasteRules: richText
 		});
+
+		pendingAnchorScroll = !!window.location.hash;
+		if (pendingAnchorScroll && scrollToAnchor(window.location.hash)) {
+			pendingAnchorScroll = false;
+		}
 
 		provider?.setEditor(editor, () => ({ md: mdValue, html: htmlValue, json: jsonValue }));
 
