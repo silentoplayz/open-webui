@@ -19,10 +19,47 @@
 	export let userValves = false;
 	$: prefix = userValves ? 'user_valves' : 'valves';
 	$: displaySpec = localizeValvesSchema(valvesSpec, $i18n.language, meta, prefix);
+
+	let selectedGroup = '';
+	$: groups = [
+		...new Set(
+			Object.values(displaySpec?.properties ?? {}).map((property) => property?.group ?? '')
+		)
+	];
+	$: tabs = groups.includes('') ? ['', ...groups.filter((group) => group !== '')] : groups;
+	$: if (!tabs.includes(selectedGroup)) {
+		selectedGroup = tabs[0] ?? '';
+	}
 </script>
 
 {#if displaySpec && Object.keys(displaySpec?.properties ?? {}).length}
-	{#each Object.keys(displaySpec.properties) as property}
+	{#if tabs.length > 1}
+		<div
+			class="flex mb-2.5 scrollbar-none overflow-x-auto w-full border-b border-gray-50 dark:border-gray-850/30 text-center text-sm font-normal bg-transparent dark:text-gray-200"
+		>
+			{#each tabs as tab}
+				<button
+					class="min-w-fit py-1.5 px-4 border-b {selectedGroup === tab
+						? ' '
+						: ' border-transparent text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+					type="button"
+					on:click={() => {
+						selectedGroup = tab;
+					}}
+					>{tab === ''
+						? $i18n.t('General')
+						: resolveLocalizedString(
+								tab,
+								meta?.i18n,
+								$i18n.language,
+								`${prefix}.group.${tab}`
+							)}</button
+				>
+			{/each}
+		</div>
+	{/if}
+
+	{#each Object.keys(displaySpec.properties).filter((property) => tabs.length <= 1 || (displaySpec.properties[property]?.group ?? '') === selectedGroup) as property}
 		<div class=" py-0.5 w-full justify-between">
 			<div class="flex w-full justify-between">
 				<div class=" self-center text-xs font-normal">
