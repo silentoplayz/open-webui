@@ -12,6 +12,8 @@
 	import NativeSelect from './NativeSelect.svelte';
 	import MultiSelect from './MultiSelect.svelte';
 	import MapSelector from './Valves/MapSelector.svelte';
+	import ChevronUp from '../icons/ChevronUp.svelte';
+	import ChevronDown from '../icons/ChevronDown.svelte';
 
 	export let valvesSpec = null;
 	export let valves = {};
@@ -19,11 +21,49 @@
 	export let userValves = false;
 	$: prefix = userValves ? 'user_valves' : 'valves';
 	$: displaySpec = localizeValvesSchema(valvesSpec, $i18n.language, meta, prefix);
+
+	let collapsed = {};
+	$: groupOf = (property) => displaySpec?.properties?.[property]?.group ?? '';
+	$: groups = [...new Set(Object.keys(displaySpec?.properties ?? {}).map(groupOf))];
+	$: sections = groups.includes('') ? ['', ...groups.filter((group) => group !== '')] : groups;
+	$: ordered = sections.flatMap((section) =>
+		Object.keys(displaySpec?.properties ?? {}).filter((property) => groupOf(property) === section)
+	);
+	$: firstOfGroup = Object.fromEntries(
+		sections.map((section) => [section, ordered.find((property) => groupOf(property) === section)])
+	);
 </script>
 
 {#if displaySpec && Object.keys(displaySpec?.properties ?? {}).length}
-	{#each Object.keys(displaySpec.properties) as property}
-		<div class=" py-0.5 w-full justify-between">
+	{#each ordered as property}
+		{#if sections.length > 1 && firstOfGroup[groupOf(property)] === property}
+			<button
+				class="w-full py-1 text-xs font-normal text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition cursor-pointer select-none"
+				type="button"
+				on:click={() => {
+					collapsed[groupOf(property)] = !collapsed[groupOf(property)];
+				}}
+			>
+				<div class="flex items-center justify-between">
+					<div>
+						{groupOf(property) === ''
+							? $i18n.t('General')
+							: resolveLocalizedString(
+									groupOf(property),
+									meta?.i18n,
+									$i18n.language,
+									`${prefix}.group.${groupOf(property)}`
+								)}
+					</div>
+					{#if collapsed[groupOf(property)]}
+						<ChevronDown strokeWidth="2" className="size-2.5" />
+					{:else}
+						<ChevronUp strokeWidth="2" className="size-2.5" />
+					{/if}
+				</div>
+			</button>
+		{/if}
+		<div class=" py-0.5 w-full justify-between" class:hidden={collapsed[groupOf(property)]}>
 			<div class="flex w-full justify-between">
 				<div class=" self-center text-xs font-normal">
 					{displaySpec.properties[property].title}
