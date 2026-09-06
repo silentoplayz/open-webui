@@ -38,6 +38,7 @@
 	let scrollOnResponseGeneration = true;
 	let showFilesOnTerminalSelect = true;
 	let terminalFileDisplay: 'sidebar' | 'inline' = 'sidebar';
+	let valvesLayout: 'tabs' | 'sections' = 'tabs';
 	let userLocation = false;
 
 	// Interface
@@ -362,6 +363,7 @@
 		scrollOnResponseGeneration = currentSettings?.scrollOnResponseGeneration ?? true;
 		showFilesOnTerminalSelect = currentSettings?.showFilesOnTerminalSelect ?? true;
 		terminalFileDisplay = currentSettings?.terminalFileDisplay === 'inline' ? 'inline' : 'sidebar';
+		valvesLayout = currentSettings?.valvesLayout === 'sections' ? 'sections' : 'tabs';
 
 		temporaryChatByDefault = currentSettings?.temporaryChatByDefault ?? false;
 		chatDirection = currentSettings?.chatDirection ?? 'auto';
@@ -821,6 +823,31 @@
 		</div>
 		<p class={settingDescriptionClass}>
 			{$i18n.t('Choose whether the app opens to the default home or chat view.')}
+		</p>
+	</div>
+
+	<div>
+		<div class={settingRowClass}>
+			<div id="valves-layout-label" class={settingLabelClass}>
+				{$i18n.t('Valves Layout')}
+			</div>
+
+			<button
+				aria-labelledby="valves-layout-label valves-layout-state"
+				class={actionButtonClass}
+				on:click={() => {
+					valvesLayout = valvesLayout === 'sections' ? 'tabs' : 'sections';
+					saveSettings({ valvesLayout });
+				}}
+				type="button"
+			>
+				<span id="valves-layout-state">
+					{valvesLayout === 'sections' ? $i18n.t('Sections') : $i18n.t('Tabs')}
+				</span>
+			</button>
+		</div>
+		<p class={settingDescriptionClass}>
+			{$i18n.t('Choose whether grouped valves are shown as tabs or collapsible sections.')}
 		</p>
 	</div>
 

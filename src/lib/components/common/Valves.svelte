@@ -2,6 +2,7 @@
 	import { getContext, createEventDispatcher } from 'svelte';
 	import DOMPurify from 'dompurify';
 	import { marked } from 'marked';
+	import { settings } from '$lib/stores';
 	import { localizeValvesSchema, resolveLocalizedString } from '$lib/utils/localizedContent';
 
 	const dispatch = createEventDispatcher();
@@ -12,6 +13,8 @@
 	import NativeSelect from './NativeSelect.svelte';
 	import MultiSelect from './MultiSelect.svelte';
 	import MapSelector from './Valves/MapSelector.svelte';
+	import ChevronUp from '../icons/ChevronUp.svelte';
+	import ChevronDown from '../icons/ChevronDown.svelte';
 
 	export let valvesSpec = null;
 	export let valves = {};
@@ -19,11 +22,70 @@
 	export let userValves = false;
 	$: prefix = userValves ? 'user_valves' : 'valves';
 	$: displaySpec = localizeValvesSchema(valvesSpec, $i18n.language, meta, prefix);
+
+	$: layout = $settings?.valvesLayout === 'sections' ? 'sections' : 'tabs';
+	let selectedGroup = '';
+	let collapsed = {};
+	$: groupOf = (property) => displaySpec?.properties?.[property]?.group ?? '';
+	$: groupLabel = (group) =>
+		group === ''
+			? $i18n.t('General')
+			: resolveLocalizedString(group, meta?.i18n, $i18n.language, `${prefix}.group.${group}`);
+	$: groups = [...new Set(Object.keys(displaySpec?.properties ?? {}).map(groupOf))];
+	$: sections = groups.includes('') ? ['', ...groups.filter((group) => group !== '')] : groups;
+	$: ordered = sections.flatMap((section) =>
+		Object.keys(displaySpec?.properties ?? {}).filter((property) => groupOf(property) === section)
+	);
+	$: firstOfGroup = Object.fromEntries(
+		sections.map((section) => [section, ordered.find((property) => groupOf(property) === section)])
+	);
+	$: if (!sections.includes(selectedGroup)) {
+		selectedGroup = sections[0] ?? '';
+	}
 </script>
 
 {#if displaySpec && Object.keys(displaySpec?.properties ?? {}).length}
-	{#each Object.keys(displaySpec.properties) as property}
-		<div class=" py-0.5 w-full justify-between">
+	{#if sections.length > 1 && layout === 'tabs'}
+		<div
+			class="flex mb-2.5 scrollbar-none overflow-x-auto w-full border-b border-gray-50 dark:border-gray-850/30 text-center text-sm font-normal bg-transparent dark:text-gray-200"
+		>
+			{#each sections as section}
+				<button
+					class="min-w-fit py-1.5 px-4 border-b {selectedGroup === section
+						? ' '
+						: ' border-transparent text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+					type="button"
+					on:click={() => {
+						selectedGroup = section;
+					}}>{groupLabel(section)}</button
+				>
+			{/each}
+		</div>
+	{/if}
+
+	{#each ordered.filter((property) => sections.length <= 1 || layout === 'sections' || groupOf(property) === selectedGroup) as property}
+		{#if sections.length > 1 && layout === 'sections' && firstOfGroup[groupOf(property)] === property}
+			<button
+				class="w-full py-1 text-xs font-normal text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition cursor-pointer select-none"
+				type="button"
+				on:click={() => {
+					collapsed[groupOf(property)] = !collapsed[groupOf(property)];
+				}}
+			>
+				<div class="flex items-center justify-between">
+					<div>{groupLabel(groupOf(property))}</div>
+					{#if collapsed[groupOf(property)]}
+						<ChevronDown strokeWidth="2" className="size-2.5" />
+					{:else}
+						<ChevronUp strokeWidth="2" className="size-2.5" />
+					{/if}
+				</div>
+			</button>
+		{/if}
+		<div
+			class=" py-0.5 w-full justify-between"
+			class:hidden={layout === 'sections' && collapsed[groupOf(property)]}
+		>
 			<div class="flex w-full justify-between">
 				<div class=" self-center text-xs font-normal">
 					{displaySpec.properties[property].title}
