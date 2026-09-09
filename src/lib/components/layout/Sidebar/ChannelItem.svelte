@@ -16,6 +16,7 @@
 	import SettingsIcon from '$lib/components/icons/Settings.svelte';
 	import UserIcon from './icons/User.svelte';
 	import XMarkIcon from './icons/XMark.svelte';
+	import ChatBubbleOval from '$lib/components/icons/ChatBubbleOval.svelte';
 
 	export let onUpdate: Function = () => {};
 
@@ -243,3 +244,23 @@
 		</div>
 	{/if}
 </div>
+
+{#each channel?.threads ?? [] as thread (thread.id)}
+	<a
+		class="w-full {className} rounded-xl flex items-center gap-1 pl-5 pr-1 py-[0.1875rem] text-xs hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-gray-400 text-gray-600 cursor-pointer select-none"
+		href="/channels/{channel.id}?thread={thread.id}"
+		on:click={() => {
+			if ($mobile) {
+				showSidebar.set(false);
+			}
+		}}
+		draggable="false"
+	>
+		<div class="size-4 shrink-0 flex items-center justify-center">
+			<ChatBubbleOval className="size-3" strokeWidth="1.8" />
+		</div>
+		<span class="min-w-0 truncate">
+			{thread.content.split('\n').find((line) => line.trim() !== '') ?? ''}
+		</span>
+	</a>
+{/each}

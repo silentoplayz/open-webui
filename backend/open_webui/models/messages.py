@@ -422,6 +422,29 @@ class MessageTable:
             all_messages = result.scalars().all()
             return [MessageModel.model_validate(message) for message in all_messages]
 
+    async def get_joined_thread_messages_by_user_id(
+        self, user_id: str, since: int, db: Optional[AsyncSession] = None
+    ) -> list[MessageModel]:
+        async with get_async_db_context(db) as db:
+            latest_replies = (
+                select(Message.parent_id, func.max(Message.created_at).label('latest_reply_at'))
+                .filter(Message.parent_id.isnot(None))
+                .group_by(Message.parent_id)
+                .subquery()
+            )
+            replied_parent_ids = select(Message.parent_id).filter(
+                Message.parent_id.isnot(None), Message.user_id == user_id
+            )
+            result = await db.execute(
+                select(Message)
+                .join(latest_replies, latest_replies.c.parent_id == Message.id)
+                .filter(latest_replies.c.latest_reply_at >= since)
+                .filter(or_(Message.user_id == user_id, Message.id.in_(replied_parent_ids)))
+                .order_by(latest_replies.c.latest_reply_at.desc())
+            )
+            all_messages = result.scalars().all()
+            return [MessageModel.model_validate(message) for message in all_messages]
+
     async def get_replied_message_ids_by_user_id(
         self, ids: list[str], user_id: str, db: Optional[AsyncSession] = None
     ) -> set[str]:

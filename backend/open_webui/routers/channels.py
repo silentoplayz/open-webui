@@ -1,6 +1,7 @@
 import base64
 import io
 import logging
+import time
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -167,6 +168,11 @@ class ChannelListItemResponse(ChannelModel):
 
     last_message_at: Optional[int] = None  # timestamp in epoch (time_ns)
     unread_count: int = 0
+    threads: list[MessageModel] = []
+
+
+SIDEBAR_THREAD_WINDOW_NS = 7 * 24 * 60 * 60 * 1_000_000_000
+SIDEBAR_THREAD_COUNT = 5
 
 
 @router.get('/', response_model=list[ChannelListItemResponse])
@@ -178,6 +184,13 @@ async def get_channels(
     await check_channels_access(request, user)
 
     channels = await Channels.get_channels_by_user_id(user.id, db=db)
+
+    joined_threads = {}
+    for message in await Messages.get_joined_thread_messages_by_user_id(
+        user.id, time.time_ns() - SIDEBAR_THREAD_WINDOW_NS, db=db
+    ):
+        joined_threads.setdefault(message.channel_id, []).append(message)
+
     channel_list = []
     for channel in channels:
         last_message = await Messages.get_last_message_by_channel_id(channel.id, db=db)
@@ -212,6 +225,7 @@ async def get_channels(
                 users=users,
                 last_message_at=last_message_at,
                 unread_count=unread_count,
+                threads=joined_threads.get(channel.id, [])[:SIDEBAR_THREAD_COUNT],
             )
         )
 
