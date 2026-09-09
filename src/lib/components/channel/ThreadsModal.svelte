@@ -21,14 +21,23 @@
 	let page = 1;
 	let threads = null;
 	let query = '';
+	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let allItemsLoaded = false;
 	let loading = false;
 
-	$: filteredThreads = (threads ?? []).filter(
+	const ACTIVE_THREAD_WINDOW = 7 * 24 * 60 * 60;
+
+	$: joinedThreads = (threads ?? []).filter((message) => message.joined);
+	$: activeThreads = (threads ?? []).filter(
 		(message) =>
-			query === '' ||
-			`${message.content} ${message.user?.name ?? ''}`.toLowerCase().includes(query.toLowerCase())
+			!message.joined &&
+			message.latest_reply_at / 1000000000 > Date.now() / 1000 - ACTIVE_THREAD_WINDOW
+	);
+	$: olderThreads = (threads ?? []).filter(
+		(message) =>
+			!message.joined &&
+			message.latest_reply_at / 1000000000 <= Date.now() / 1000 - ACTIVE_THREAD_WINDOW
 	);
 
 	const getThreads = async () => {
@@ -37,10 +46,12 @@
 
 		loading = true;
 		try {
-			const res = await getChannelThreads(localStorage.token, channel.id, page).catch((error) => {
-				toast.error(`${error}`);
-				return null;
-			});
+			const res = await getChannelThreads(localStorage.token, channel.id, page, query).catch(
+				(error) => {
+					toast.error(`${error}`);
+					return null;
+				}
+			);
 
 			if (res) {
 				threads = [...(threads ?? []), ...res];
@@ -59,13 +70,22 @@
 	const init = () => {
 		page = 1;
 		threads = null;
-		query = '';
 		allItemsLoaded = false;
 
 		getThreads();
 	};
 
+	const handleSearchInput = () => {
+		if (channel === null) return;
+
+		clearTimeout(debounceTimer);
+		debounceTimer = setTimeout(() => {
+			init();
+		}, 300);
+	};
+
 	$: if (show) {
+		query = '';
 		init();
 	}
 
@@ -116,6 +136,7 @@
 									<input
 										class=" w-full text-sm pr-4 py-1 rounded-r-xl outline-hidden bg-transparent"
 										bind:value={query}
+										on:input={handleSearchInput}
 										placeholder={$i18n.t('Search Threads')}
 									/>
 								</div>
@@ -130,71 +151,84 @@
 							<div
 								class="flex flex-col gap-2 max-h-[60vh] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-700 scrollbar-track-transparent pt-7 pb-2"
 							>
-								{#if filteredThreads.length === 0}
+								{#if threads.length === 0}
 									<div class=" text-center text-xs text-gray-500 dark:text-gray-400 py-6">
 										{$i18n.t('No threads')}
 									</div>
 								{:else}
-									{#each filteredThreads as message, messageIdx (message.id)}
-										<Message
-											id="thread"
-											className="rounded-xl px-2"
-											{message}
-											{channel}
-											onThread={(id) => {
-												show = false;
-												onThread(id);
-											}}
-											onPin={async (message) => {
-												const pinned = !message.is_pinned;
-												const pinnedBy = pinned ? ($user?.id ?? null) : null;
-												const pinnedAt = pinned ? Date.now() * 1000000 : null;
-
-												threads = threads.map((m) => {
-													if (m.id === message.id) {
-														m.is_pinned = pinned;
-														m.pinned_by = pinnedBy;
-														m.pinned_at = pinnedAt;
-													}
-													return m;
-												});
-
-												onPin(message.id, pinned, pinnedBy, pinnedAt);
-
-												await pinMessage(
-													localStorage.token,
-													message.channel_id,
-													message.id,
-													pinned
-												).catch((error) => {
-													toast.error(`${error}`);
-													return null;
-												});
-											}}
-											onReaction={false}
-											onReply={false}
-											onEdit={false}
-											onDelete={false}
-										/>
-
-										{#if messageIdx === filteredThreads.length - 1 && !allItemsLoaded}
-											<Loader
-												on:visible={(e) => {
-													if (!loading) {
-														page += 1;
-														getThreads();
-													}
-												}}
+									{#each [[$i18n.t('Joined Threads'), joinedThreads], [$i18n.t('Other Active Threads'), activeThreads], [$i18n.t('Older Threads'), olderThreads]] as [label, group], groupIdx}
+										{#if group.length > 0}
+											<div
+												class="w-full text-xs text-gray-500 dark:text-gray-500 font-normal {groupIdx ===
+												0
+													? ''
+													: 'pt-5'} pb-2 px-2"
 											>
-												<div
-													class="w-full flex justify-center py-1 text-xs animate-pulse items-center gap-2"
-												>
-													<Spinner className=" size-4" />
-													<div class=" ">{$i18n.t('Loading...')}</div>
-												</div>
-											</Loader>
+												{label}
+											</div>
+
+											{#each group as message (message.id)}
+												<Message
+													id="thread"
+													className="rounded-xl px-2"
+													{message}
+													{channel}
+													onThread={(id) => {
+														show = false;
+														onThread(id);
+													}}
+													onPin={async (message) => {
+														const pinned = !message.is_pinned;
+														const pinnedBy = pinned ? ($user?.id ?? null) : null;
+														const pinnedAt = pinned ? Date.now() * 1000000 : null;
+
+														threads = threads.map((m) => {
+															if (m.id === message.id) {
+																m.is_pinned = pinned;
+																m.pinned_by = pinnedBy;
+																m.pinned_at = pinnedAt;
+															}
+															return m;
+														});
+
+														onPin(message.id, pinned, pinnedBy, pinnedAt);
+
+														await pinMessage(
+															localStorage.token,
+															message.channel_id,
+															message.id,
+															pinned
+														).catch((error) => {
+															toast.error(`${error}`);
+															return null;
+														});
+													}}
+													onReaction={false}
+													onReply={false}
+													onEdit={false}
+													onDelete={false}
+												/>
+											{/each}
 										{/if}
 									{/each}
+
+									{#if !allItemsLoaded}
+										<Loader
+											on:visible={(e) => {
+												if (!loading) {
+													page += 1;
+													getThreads();
+												}
+											}}
+										>
+											<div
+												class="w-full flex justify-center py-1 text-xs animate-pulse items-center gap-2"
+											>
+												<Spinner className=" size-4" />
+												<div class=" ">{$i18n.t('Loading...')}</div>
+											</div>
+										</Loader>
+									{/if}
 								{/if}
 							</div>
 						{/if}

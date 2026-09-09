@@ -396,6 +396,7 @@ class MessageTable:
     async def get_thread_messages_by_channel_id(
         self,
         channel_id: str,
+        query: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
         db: Optional[AsyncSession] = None,
@@ -407,16 +408,31 @@ class MessageTable:
                 .group_by(Message.parent_id)
                 .subquery()
             )
-            result = await db.execute(
+            stmt = (
                 select(Message)
                 .join(latest_replies, latest_replies.c.parent_id == Message.id)
                 .filter(Message.channel_id == channel_id)
-                .order_by(latest_replies.c.latest_reply_at.desc())
-                .offset(skip)
-                .limit(limit)
             )
+
+            if query:
+                stmt = stmt.filter(Message.content.ilike(f'%{query}%'))
+
+            stmt = stmt.order_by(latest_replies.c.latest_reply_at.desc()).offset(skip).limit(limit)
+            result = await db.execute(stmt)
             all_messages = result.scalars().all()
             return [MessageModel.model_validate(message) for message in all_messages]
+
+    async def get_replied_message_ids_by_user_id(
+        self, ids: list[str], user_id: str, db: Optional[AsyncSession] = None
+    ) -> set[str]:
+        if not ids:
+            return set()
+
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(Message.parent_id).filter(Message.parent_id.in_(ids), Message.user_id == user_id).distinct()
+            )
+            return {row[0] for row in result.all()}
 
     async def update_message_by_id(
         self, id: str, form_data: MessageForm, db: Optional[AsyncSession] = None

@@ -458,12 +458,19 @@ export const getChannelPinnedMessages = async (
 export const getChannelThreads = async (
 	token: string = '',
 	channel_id: string,
-	page: number = 1
+	page: number = 1,
+	query: string = ''
 ) => {
 	let error = null;
 
+	const searchParams = new URLSearchParams();
+	searchParams.append('page', `${page}`);
+	if (query) {
+		searchParams.append('query', query);
+	}
+
 	const res = await fetch(
-		`${WEBUI_API_BASE_URL}/channels/${channel_id}/messages/threads?page=${page}`,
+		`${WEBUI_API_BASE_URL}/channels/${channel_id}/messages/threads?${searchParams.toString()}`,
 		{
 			method: 'GET',
 			headers: {

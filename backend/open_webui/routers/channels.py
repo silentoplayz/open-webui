@@ -940,10 +940,15 @@ async def get_pinned_channel_messages(
 PAGE_ITEM_COUNT_THREADS = 20
 
 
-@router.get('/{id}/messages/threads', response_model=list[MessageUserResponse])
+class ThreadMessageResponse(MessageUserResponse):
+    joined: bool = False
+
+
+@router.get('/{id}/messages/threads', response_model=list[ThreadMessageResponse])
 async def get_channel_threads(
     request: Request,
     id: str,
+    query: Optional[str] = None,
     page: int = 1,
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
@@ -964,7 +969,7 @@ async def get_channel_threads(
     skip = (page - 1) * PAGE_ITEM_COUNT_THREADS
     limit = PAGE_ITEM_COUNT_THREADS
 
-    message_list = await Messages.get_thread_messages_by_channel_id(id, skip, limit, db=db)
+    message_list = await Messages.get_thread_messages_by_channel_id(id, query, skip, limit, db=db)
 
     if not message_list:
         return []
@@ -975,6 +980,7 @@ async def get_channel_threads(
     message_ids = [m.id for m in message_list]
     all_reactions = await Messages.get_reactions_by_message_ids(message_ids, db=db)
     all_reply_counts = await Messages.get_thread_reply_counts_by_message_ids(message_ids, db=db)
+    replied_message_ids = await Messages.get_replied_message_ids_by_user_id(message_ids, user.id, db=db)
 
     messages = []
     for message in message_list:
@@ -993,11 +999,12 @@ async def get_channel_threads(
             user_info = None
 
         messages.append(
-            MessageUserResponse(
+            ThreadMessageResponse(
                 **{
                     **message.model_dump(),
                     'reply_count': reply_count,
                     'latest_reply_at': latest_reply_at,
+                    'joined': message.user_id == user.id or message.id in replied_message_ids,
                     'reactions': all_reactions.get(message.id, []),
                     'user': user_info,
                 }
