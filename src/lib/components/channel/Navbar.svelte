@@ -19,10 +19,13 @@
 	import Users from '../icons/Users.svelte';
 	import Pin from '../icons/Pin.svelte';
 	import PinnedMessagesModal from './PinnedMessagesModal.svelte';
+	import ChatBubbles from '../icons/ChatBubbles.svelte';
+	import ThreadsModal from './ThreadsModal.svelte';
 
 	const i18n: any = getContext('i18n');
 
 	let showChannelPinnedMessagesModal = false;
+	let showChannelThreadsModal = false;
 	let showChannelInfoModal = false;
 
 	const hasPublicReadGrant = (grants: any) =>
@@ -47,10 +50,12 @@
 	export let channel;
 
 	export let onPin = (messageId, pinned) => {};
+	export let onThread = (messageId) => {};
 	export let onUpdate = () => {};
 </script>
 
 <PinnedMessagesModal bind:show={showChannelPinnedMessagesModal} {channel} {onPin} />
+<ThreadsModal bind:show={showChannelThreadsModal} {channel} {onPin} {onThread} />
 <ChannelInfoModal bind:show={showChannelInfoModal} {channel} {onUpdate} />
 <nav class="sticky top-0 z-30 w-full px-1.5 py-1 -mb-8 flex items-center drag-region flex flex-col">
 	<div
@@ -167,6 +172,21 @@
 						>
 							<div class=" flex items-center gap-0.5 m-auto self-center shrink-0">
 								<Pin className=" size-4" strokeWidth="1.5" />
+							</div>
+						</button>
+					</Tooltip>
+
+					<Tooltip content={$i18n.t('Threads')}>
+						<button
+							class=" flex cursor-pointer py-1.5 px-1.5 border dark:border-gray-850 border-gray-50 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+							aria-label={$i18n.t('Threads')}
+							type="button"
+							on:click={() => {
+								showChannelThreadsModal = true;
+							}}
+						>
+							<div class=" flex items-center gap-0.5 m-auto self-center shrink-0">
+								<ChatBubbles className=" size-4" strokeWidth="1.5" />
 							</div>
 						</button>
 					</Tooltip>

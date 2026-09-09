@@ -393,6 +393,31 @@ class MessageTable:
             all_messages = result.scalars().all()
             return [MessageModel.model_validate(message) for message in all_messages]
 
+    async def get_thread_messages_by_channel_id(
+        self,
+        channel_id: str,
+        skip: int = 0,
+        limit: int = 50,
+        db: Optional[AsyncSession] = None,
+    ) -> list[MessageModel]:
+        async with get_async_db_context(db) as db:
+            latest_replies = (
+                select(Message.parent_id, func.max(Message.created_at).label('latest_reply_at'))
+                .filter(Message.parent_id.isnot(None))
+                .group_by(Message.parent_id)
+                .subquery()
+            )
+            result = await db.execute(
+                select(Message)
+                .join(latest_replies, latest_replies.c.parent_id == Message.id)
+                .filter(Message.channel_id == channel_id)
+                .order_by(latest_replies.c.latest_reply_at.desc())
+                .offset(skip)
+                .limit(limit)
+            )
+            all_messages = result.scalars().all()
+            return [MessageModel.model_validate(message) for message in all_messages]
+
     async def update_message_by_id(
         self, id: str, form_data: MessageForm, db: Optional[AsyncSession] = None
     ) -> Optional[MessageModel]:

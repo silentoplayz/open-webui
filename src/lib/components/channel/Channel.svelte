@@ -328,6 +328,9 @@
 			<Navbar
 				{channel}
 				onPin={pinHandler}
+				onThread={(id) => {
+					threadId = id;
+				}}
 				onUpdate={async () => {
 					channel = await getChannelById(localStorage.token, id).catch((error) => {
 						return null;

@@ -934,6 +934,80 @@ async def get_pinned_channel_messages(
 
 
 ############################
+# GetChannelThreads
+############################
+
+PAGE_ITEM_COUNT_THREADS = 20
+
+
+@router.get('/{id}/messages/threads', response_model=list[MessageUserResponse])
+async def get_channel_threads(
+    request: Request,
+    id: str,
+    page: int = 1,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    await check_channels_access(request, user)
+    channel = await Channels.get_channel_by_id(id, db=db)
+    if not channel:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    if channel.type in ['group', 'dm']:
+        if not await Channels.is_user_channel_member(channel.id, user.id, db=db):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.DEFAULT())
+    else:
+        if user.role != 'admin' and not await channel_has_access(user.id, channel, permission='read', db=db):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.DEFAULT())
+
+    page = max(1, page)
+    skip = (page - 1) * PAGE_ITEM_COUNT_THREADS
+    limit = PAGE_ITEM_COUNT_THREADS
+
+    message_list = await Messages.get_thread_messages_by_channel_id(id, skip, limit, db=db)
+
+    if not message_list:
+        return []
+
+    user_ids = list(set(m.user_id for m in message_list))
+    fetched_users = {u.id: u for u in await Users.get_users_by_user_ids(user_ids, db=db)}
+
+    message_ids = [m.id for m in message_list]
+    all_reactions = await Messages.get_reactions_by_message_ids(message_ids, db=db)
+    all_reply_counts = await Messages.get_thread_reply_counts_by_message_ids(message_ids, db=db)
+
+    messages = []
+    for message in message_list:
+        reply_count, latest_reply_at = all_reply_counts.get(message.id, (0, None))
+
+        webhook_info = message.meta.get('webhook') if message.meta else None
+        if webhook_info:
+            user_info = UserNameResponse(
+                id=webhook_info.get('id') or '',
+                name=webhook_info.get('name') or 'Webhook',
+                role='webhook',
+            )
+        elif message.user_id in fetched_users:
+            user_info = UserNameResponse(**fetched_users[message.user_id].model_dump())
+        else:
+            user_info = None
+
+        messages.append(
+            MessageUserResponse(
+                **{
+                    **message.model_dump(),
+                    'reply_count': reply_count,
+                    'latest_reply_at': latest_reply_at,
+                    'reactions': all_reactions.get(message.id, []),
+                    'user': user_info,
+                }
+            )
+        )
+
+    return messages
+
+
+############################
 # PostNewMessage
 ############################
 
