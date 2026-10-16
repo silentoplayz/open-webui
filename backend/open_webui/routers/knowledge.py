@@ -19,7 +19,7 @@ from open_webui.config import (
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
-from open_webui.models.access_grants import AccessGrants
+from open_webui.models.access_grants import AccessGrants, normalize_access_grants
 from open_webui.models.config import Config
 from open_webui.models.files import FileMetadataResponse, FileModel, FileModelResponse, Files
 from open_webui.models.groups import Groups
@@ -1252,11 +1252,25 @@ async def update_knowledge_access_by_id(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    form_data.access_grants = await filter_allowed_access_grants(
+    existing_access_grants = {
+        (grant.principal_type, grant.principal_id, grant.permission) for grant in knowledge.access_grants
+    }
+    submitted_access_grants_map = {
+        (grant['principal_type'], grant['principal_id'], grant['permission']): grant
+        for grant in normalize_access_grants(form_data.access_grants)
+    }
+    preserved_access_grants = [
+        grant for key, grant in submitted_access_grants_map.items() if key in existing_access_grants
+    ]
+    new_access_grants = [
+        grant for key, grant in submitted_access_grants_map.items() if key not in existing_access_grants
+    ]
+
+    form_data.access_grants = preserved_access_grants + await filter_allowed_access_grants(
         await Config.get('user.permissions'),
         user.id,
         user.role,
-        form_data.access_grants,
+        new_access_grants,
         'sharing.public_knowledge',
     )
 
