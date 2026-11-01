@@ -343,7 +343,7 @@
 			getReferenceClientRect: () => draftRange?.getBoundingClientRect() ?? referenceRect,
 			appendTo: () => document.body,
 			arrow: false,
-			maxWidth: 'min(320px, calc(100vw - 24px))',
+			maxWidth: 'none',
 			theme: 'comment-preview',
 			duration: 0,
 			hideOnClick: false,
@@ -388,11 +388,11 @@
 <div class="hidden">
 	<div
 		bind:this={preview}
-		class="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-850 text-gray-800 dark:text-gray-200 shadow-lg"
+		class="w-80 max-w-[calc(100vw-24px)] rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-850 text-gray-800 dark:text-gray-200 shadow-lg"
 	>
 		{#if $commentSelectionDraft}
 			{@const draft = $commentSelectionDraft}
-			<div class="w-80 max-w-[calc(100vw-24px)] px-3 py-2">
+			<div class="px-3 py-2">
 				<div class="mb-2.5 flex min-w-0 items-center gap-2">
 					<ProfileImage
 						src={$user?.id ? `${WEBUI_API_BASE_URL}/users/${$user.id}/profile/image` : undefined}
@@ -449,7 +449,7 @@
 			</div>
 		{/if}
 		{#each hovered as { comment } (comment.id)}
-			<div class="w-80 max-w-[calc(100vw-24px)] px-3 py-2">
+			<div class="px-3 py-2">
 				<div class="mb-2.5 flex min-w-0 items-center gap-2">
 					<ProfileImage
 						src={comment.user?.id
