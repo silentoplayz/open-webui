@@ -94,6 +94,7 @@
 	import CalendarIcon from '$lib/components/layout/Sidebar/icons/Calendar.svelte';
 	import ClockIcon from '$lib/components/layout/Sidebar/icons/Clock.svelte';
 	import CodeIcon from '$lib/components/layout/Sidebar/icons/Code.svelte';
+	import UserIcon from '$lib/components/layout/Sidebar/icons/User.svelte';
 	import { fileIconName } from './FileNav/fileIcon';
 	import UntitledFile from './Tabs/UntitledFile.svelte';
 	import QuickOpen from './Tabs/QuickOpen.svelte';
@@ -456,7 +457,8 @@
 		notes: NotesIcon,
 		calendar: CalendarIcon,
 		automations: ClockIcon,
-		playground: CodeIcon
+		playground: CodeIcon,
+		admin: UserIcon
 	};
 	const domId = (id: string) => `chat-panel-${encodeURIComponent(id)}`;
 	$: activeTabId = tabs.activeId;

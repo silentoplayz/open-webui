@@ -605,7 +605,9 @@
 						}
 						e.preventDefault();
 						show = false;
-						goto('/admin');
+						if (appLayout?.openPageTab)
+							appLayout.openPageTab({ href: '/admin', label: $i18n.t('Admin Panel') });
+						else goto('/admin');
 						if ($mobile) {
 							await tick();
 							showSidebar.set(false);
