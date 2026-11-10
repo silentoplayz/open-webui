@@ -1,7 +1,9 @@
 <script>
+	import { getPageContext } from '$lib/utils/page';
+	const { url: pageUrl } = getPageContext();
+
 	import { toast } from 'svelte-sonner';
 	import { onMount, getContext } from 'svelte';
-	import { page } from '$app/stores';
 
 	const i18n = getContext('i18n');
 
@@ -61,7 +63,7 @@
 	};
 
 	onMount(() => {
-		const groupId = $page.url.searchParams.get('id');
+		const groupId = $pageUrl.searchParams.get('id');
 		if (groupId && groupId === group.id) {
 			showEdit = true;
 		}

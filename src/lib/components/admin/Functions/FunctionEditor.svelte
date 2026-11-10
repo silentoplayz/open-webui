@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { getPageContext } from '$lib/utils/page';
+	const { goto } = getPageContext();
+
 	import { getContext, onMount, tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { goto } from '$app/navigation';
 	import VersionDiff from '$lib/components/workspace/common/VersionDiff.svelte';
 	import FunctionHistory from './FunctionHistory.svelte';
 	import { getFunctionHistoryDiff } from '$lib/apis/functions';

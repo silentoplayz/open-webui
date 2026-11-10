@@ -3,9 +3,11 @@
 </script>
 
 <script>
+	import { getPageContext } from '$lib/utils/page';
+	const { goto } = getPageContext();
+
 	import { toast } from 'svelte-sonner';
 	import { onMount, getContext } from 'svelte';
-	import { goto } from '$app/navigation';
 
 	import { adminGroupCount, user } from '$lib/stores';
 

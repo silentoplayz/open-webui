@@ -315,8 +315,9 @@ export const fileTabId = (terminalId: string, path: string) =>
 // Queries selecting an editor resource identify a tab; view queries stay within it.
 export function pageTabKey(url: URL): string | null {
 	if (url.pathname.startsWith('/workspace/functions')) return null;
+	if (/^\/admin\/(?:settings|analytics)(?:\/|$)/.test(url.pathname)) return null;
 	if (
-		!/^\/(?:$|c\/|channels\/|notes(?:\/|$)|automations(?:\/|$)|calendar(?:\/|$)|workspace(?:\/|$)|playground(?:\/|$)|home(?:\/|$))/.test(
+		!/^\/(?:$|c\/|channels\/|notes(?:\/|$)|automations(?:\/|$)|calendar(?:\/|$)|workspace(?:\/|$)|playground(?:\/|$)|home(?:\/|$)|admin(?:\/|$))/.test(
 			url.pathname
 		)
 	)

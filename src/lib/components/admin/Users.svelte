@@ -1,9 +1,10 @@
 <script>
+	import { getPageContext } from '$lib/utils/page';
+	const { goto, url: pageUrl } = getPageContext();
+
 	import { getContext, onMount } from 'svelte';
 
-	import { goto } from '$app/navigation';
-	import { adminGroupCount, adminUserCount, config, user } from '$lib/stores';
-	import { page } from '$app/stores';
+	import { WEBUI_NAME, adminGroupCount, adminUserCount, config, user } from '$lib/stores';
 	import { getGroups } from '$lib/apis/groups';
 	import { getUsers } from '$lib/apis/users';
 	import { formatNumber } from '$lib/utils';
@@ -15,7 +16,7 @@
 
 	let selectedTab;
 	$: {
-		const pathParts = $page.url.pathname.split('/');
+		const pathParts = $pageUrl.pathname.split('/');
 		const tabFromPath = pathParts[pathParts.length - 1];
 		selectedTab = ['overview', 'groups'].includes(tabFromPath) ? tabFromPath : 'overview';
 	}
@@ -78,7 +79,13 @@
 		// Scroll to the selected tab on mount
 		scrollToTab(selectedTab);
 	});
+	import PageTitle from '$lib/components/common/PageTitle.svelte';
 </script>
+
+<!-- LICENSE covers this Open WebUI browser-title identifier.
+	Do not alter, remove, obscure, or replace it except as LICENSE permits:
+	https://docs.openwebui.com/license. -->
+<PageTitle title={$i18n.t('Users') + ' / ' + $WEBUI_NAME} />
 
 {#if loaded}
 	<div class="flex flex-col lg:flex-row w-full h-full pb-2">

@@ -1,0 +1,126 @@
+<script>
+	import { toast } from 'svelte-sonner';
+	import { onMount, getContext } from 'svelte';
+
+	import { getPageContext } from '$lib/utils/page';
+	const { goto, url: pageUrl } = getPageContext();
+
+	import { config, functions, models, settings } from '$lib/stores';
+	import { updateFunctionById, getFunctions, getFunctionById } from '$lib/apis/functions';
+
+	import FunctionEditor from '$lib/components/admin/Functions/FunctionEditor.svelte';
+	import Spinner from '$lib/components/common/Spinner.svelte';
+	import { getModels } from '$lib/apis';
+	import { compareVersion, extractFrontmatter } from '$lib/utils';
+	import { WEBUI_VERSION } from '$lib/constants';
+
+	const i18n = getContext('i18n');
+
+	let func = null;
+
+	const saveHandler = async (data) => {
+		console.log(data);
+
+		const manifest = extractFrontmatter(data.content);
+		if (compareVersion(manifest?.required_open_webui_version ?? '0.0.0', WEBUI_VERSION)) {
+			console.log('Version is lower than required');
+			// LICENSE covers this Open WebUI wordmark.
+			// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+			// https://docs.openwebui.com/license.
+			toast.error(
+				$i18n.t(
+					'Open WebUI version (v{{OPEN_WEBUI_VERSION}}) is lower than required version (v{{REQUIRED_VERSION}})',
+					{
+						OPEN_WEBUI_VERSION: WEBUI_VERSION,
+						REQUIRED_VERSION: manifest?.required_open_webui_version ?? '0.0.0'
+					}
+				)
+			);
+			return;
+		}
+
+		const res = await updateFunctionById(localStorage.token, func.id, {
+			id: data.id,
+			name: data.name,
+			meta: data.meta,
+			content: data.content,
+			commit_message: data.commit_message
+		}).catch((error) => {
+			toast.error(`${error}`);
+			return null;
+		});
+
+		if (res) {
+			toast.success($i18n.t('Function updated successfully'));
+			functions.set(await getFunctions(localStorage.token));
+			models.set(
+				await getModels(
+					localStorage.token,
+					$config?.features?.enable_direct_connections
+						? ($settings?.directConnections ?? null)
+						: null,
+					false,
+					true
+				)
+			);
+		}
+		return res;
+	};
+
+	onMount(async () => {
+		if (!$config?.features?.enable_functions) {
+			goto('/admin', { replaceState: true });
+			return;
+		}
+
+		console.log('mounted');
+		const id = $pageUrl.searchParams.get('id');
+
+		if (id) {
+			func = await getFunctionById(localStorage.token, id).catch((error) => {
+				toast.error(`${error}`);
+				goto('/admin/functions');
+				return null;
+			});
+
+			console.log(func);
+		}
+	});
+	import PageTitle from '$lib/components/common/PageTitle.svelte';
+	import { WEBUI_NAME } from '$lib/stores';
+</script>
+
+<PageTitle title={(func?.name || $i18n.t('Functions')) + ' / ' + $WEBUI_NAME} />
+
+{#if func}
+	<div class="px-[1rem] h-full min-w-0 overflow-x-hidden">
+		<FunctionEditor
+			edit={true}
+			id={func.id}
+			name={func.name}
+			meta={func.meta}
+			content={func.content}
+			version_id={func.version_id}
+			onProduction={async () => {
+				functions.set(await getFunctions(localStorage.token));
+				models.set(
+					await getModels(
+						localStorage.token,
+						$config?.features?.enable_direct_connections
+							? ($settings?.directConnections ?? null)
+							: null,
+						false,
+						true
+					)
+				);
+			}}
+			onSave={saveHandler}
+		/>
+	</div>
+{:else}
+	<div class="flex items-center justify-center h-full">
+		<div class=" pb-16">
+			<Spinner className="size-5" />
+		</div>
+	</div>
+{/if}

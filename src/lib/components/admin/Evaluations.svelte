@@ -1,7 +1,14 @@
 <script>
+	import { getPageContext } from '$lib/utils/page';
+	const { url: pageUrl } = getPageContext();
+
 	import { getContext, onMount } from 'svelte';
-	import { page } from '$app/stores';
-	import { adminFeedbackCount, adminLeaderboardCount, models as _models } from '$lib/stores';
+	import {
+		WEBUI_NAME,
+		adminFeedbackCount,
+		adminLeaderboardCount,
+		models as _models
+	} from '$lib/stores';
 	import { getFeedbackItems, getLeaderboard } from '$lib/apis/evaluations';
 	import { formatNumber } from '$lib/utils';
 
@@ -12,7 +19,7 @@
 
 	let selectedTab;
 	$: {
-		const pathParts = $page.url.pathname.split('/');
+		const pathParts = $pageUrl.pathname.split('/');
 		const tabFromPath = pathParts[pathParts.length - 1];
 		selectedTab = ['leaderboard', 'feedback'].includes(tabFromPath) ? tabFromPath : 'leaderboard';
 	}
@@ -74,7 +81,13 @@
 		// Scroll to the selected tab on mount
 		scrollToTab(selectedTab);
 	});
+	import PageTitle from '$lib/components/common/PageTitle.svelte';
 </script>
+
+<!-- LICENSE covers this Open WebUI browser-title identifier.
+	Do not alter, remove, obscure, or replace it except as LICENSE permits:
+	https://docs.openwebui.com/license. -->
+<PageTitle title={$i18n.t('Evaluations') + ' / ' + $WEBUI_NAME} />
 
 {#if loaded}
 	<div class="flex flex-col lg:flex-row w-full h-full pb-2 lg:space-x-4">

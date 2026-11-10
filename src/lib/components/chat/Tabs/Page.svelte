@@ -10,6 +10,7 @@
 	import AutomationsLayout from '$lib/components/automations/AutomationsLayout.svelte';
 	import Playground from '$lib/components/playground/Playground.svelte';
 	import HomeLayout from '$lib/components/home/HomeLayout.svelte';
+	import AdminLayout from '$lib/components/admin/AdminLayout.svelte';
 
 	export let href: string;
 	export let active = false;
@@ -92,7 +93,18 @@
 		'/playground': () => import('$lib/components/playground/Chat.svelte'),
 		'/playground/completions': () => import('$lib/components/playground/Completions.svelte'),
 		'/playground/images': () => import('$lib/components/playground/Images.svelte'),
-		'/home': () => import('$lib/components/home/Home.svelte')
+		'/home': () => import('$lib/components/home/Home.svelte'),
+		'/admin': () => import('$lib/components/admin/AdminRedirect.svelte'),
+		'/admin/users': () => import('$lib/components/admin/Users.svelte'),
+		'/admin/users/overview': () => import('$lib/components/admin/Users.svelte'),
+		'/admin/users/groups': () => import('$lib/components/admin/Users.svelte'),
+		'/admin/evaluations': () => import('$lib/components/admin/Evaluations.svelte'),
+		'/admin/evaluations/leaderboard': () => import('$lib/components/admin/Evaluations.svelte'),
+		'/admin/evaluations/feedback': () => import('$lib/components/admin/Evaluations.svelte'),
+		'/admin/functions': () => import('$lib/components/admin/Functions.svelte'),
+		'/admin/functions/create': () =>
+			import('$lib/components/admin/Functions/CreateFunction.svelte'),
+		'/admin/functions/edit': () => import('$lib/components/admin/Functions/EditFunction.svelte')
 	};
 	$: path = $url.pathname.replace(/\/$/, '');
 	$: parts = path.split('/');
@@ -123,6 +135,9 @@
 			($config?.features?.enable_calendar &&
 				($user?.role === 'admin' || $user?.permissions?.features?.calendar))) &&
 		(parts[1] !== 'playground' || $user?.role === 'admin') &&
+		(parts[1] !== 'admin' ||
+			($user?.role === 'admin' &&
+				(parts[2] !== 'functions' || $config?.features?.enable_functions))) &&
 		(parts[1] !== 'workspace' ||
 			!parts[2] ||
 			(($user?.role === 'admin' || $user?.permissions?.workspace?.[parts[2]]) &&
@@ -157,6 +172,8 @@
 		<Playground>{@render content()}</Playground>
 	{:else if parts[1] === 'home'}
 		<HomeLayout>{@render content()}</HomeLayout>
+	{:else if parts[1] === 'admin'}
+		<AdminLayout>{@render content()}</AdminLayout>
 	{:else}
 		{@render content()}
 	{/if}
