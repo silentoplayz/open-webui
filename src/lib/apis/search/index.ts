@@ -12,6 +12,8 @@ export type SearchResult = {
 	updated_at: number;
 	shared: boolean;
 	pinned: boolean;
+	user_id: string | null;
+	owner_name: string | null;
 };
 export type SearchScope = { id: string; name: string; kind: 'folder' | 'channel' };
 export type SearchResponse = {

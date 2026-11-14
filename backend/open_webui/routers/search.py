@@ -37,6 +37,8 @@ class SearchResult(BaseModel):
     updated_at: int
     shared: bool = False
     pinned: bool = False
+    user_id: str | None = None
+    owner_name: str | None = None
     rank: int = Field(exclude=True, default=3)
 
 
@@ -255,7 +257,9 @@ async def search_workspace(  # noqa: C901 — keep permission scoping and source
             stmt = stmt.where(or_(model.title.ilike(pattern(term), escape='\\'), content_match))
         return stmt.params(**params)
 
-    def append_result(id, result_kind, title, context, content, url, updated, shared, pinned=False, rank=3):
+    def append_result(
+        id, result_kind, title, context, content, url, updated, shared, pinned=False, rank=3, owner_id=None
+    ):
         results.append(
             SearchResult(
                 id=id,
@@ -269,6 +273,8 @@ async def search_workspace(  # noqa: C901 — keep permission scoping and source
                 shared=shared,
                 pinned=bool(pinned),
                 rank=rank,
+                user_id=owner_id,
+                owner_name=owner_names.get(owner_id, 'Unknown') if owner_id else None,
             )
         )
 
@@ -408,6 +414,13 @@ async def search_workspace(  # noqa: C901 — keep permission scoping and source
                 {'id': row.id.removeprefix(f'{row.chat_id}-'), 'content': row.content}
             )
 
+    owner_ids = {
+        row[0].user_id for source in ('chat', 'shared', 'note', 'message') for row in hydrated.get(source, {}).values()
+    }
+    owner_names = (
+        dict((await db.execute(select(User.id, User.name).where(User.id.in_(owner_ids)))).all()) if owner_ids else {}
+    )
+
     for match in matches:
         row = hydrated.get(match.source, {}).get(match.id)
         if row is None:
@@ -442,6 +455,7 @@ async def search_workspace(  # noqa: C901 — keep permission scoping and source
                 is_shared,
                 not snapshot and item.pinned and item.user_id == user.id,
                 match.rank,
+                item.user_id,
             )
         elif match.source == 'note':
             page = matching_page(item.data, query)
@@ -457,6 +471,7 @@ async def search_workspace(  # noqa: C901 — keep permission scoping and source
                 item.user_id != user.id or row[2],
                 row[1],
                 match.rank,
+                item.user_id,
             )
         else:
             channel = channel_map[item.channel_id]
@@ -471,6 +486,7 @@ async def search_workspace(  # noqa: C901 — keep permission scoping and source
                 match.updated_at,
                 True,
                 rank=match.rank,
+                owner_id=item.user_id,
             )
 
     return SearchResponse(items=results, has_more=has_more, scopes=scopes, kinds=list(enabled))

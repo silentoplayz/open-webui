@@ -30,6 +30,7 @@
 	import HighlightedText from './Search/HighlightedText.svelte';
 	import ChatPreview from './Sidebar/ChatPreview.svelte';
 	import NotePreview from './Search/NotePreview.svelte';
+	import ChatParticipants from '$lib/components/common/ChatParticipants.svelte';
 	import PreviewMarkdown from './Search/PreviewMarkdown.svelte';
 
 	const i18n: any = getContext('i18n');
@@ -622,6 +623,12 @@
 								this={icons[result.kind]}
 								className="size-3.5 shrink-0 text-gray-500 dark:text-gray-400"
 							/>
+							{#if result.user_id}
+								<ChatParticipants
+									owner={{ id: result.user_id, name: result.owner_name }}
+									avatarClass="size-3.5"
+								/>
+							{/if}
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2 leading-5">
 									<span class="min-w-0 flex-1 truncate"
