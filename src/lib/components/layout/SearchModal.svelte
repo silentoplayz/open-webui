@@ -2,7 +2,13 @@
 	import { getContext, onDestroy, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import { folders, mobile, settings, tags } from '$lib/stores';
+	import { chatId, folders, mobile, settings, tags, user } from '$lib/stores';
+	import { archiveChatById, deleteChatById, getAllTags } from '$lib/apis/chats';
+	import { deleteNoteById } from '$lib/apis/notes';
+	import { deleteMessage } from '$lib/apis/channels';
+	import { refreshSidebar } from '$lib/stores/chatList';
+	import { updateFolderChatLists } from '$lib/stores/folderStates';
+	import { closeChatTabs, closePageTabs } from '$lib/stores/chatViewStates';
 	import { copyToClipboard } from '$lib/utils';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import DropdownSub from '$lib/components/common/DropdownSub.svelte';
@@ -17,6 +23,7 @@
 		type SearchKind
 	} from '$lib/apis/search';
 	import Modal from '$lib/components/common/Modal.svelte';
+	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
 	import ChatBubble from '$lib/components/icons/ChatBubble.svelte';
 	import Hashtag from '$lib/components/icons/Hashtag.svelte';
@@ -27,6 +34,8 @@
 	import Eye from '$lib/components/icons/Eye.svelte';
 	import ArrowLeft from '$lib/components/icons/ArrowLeft.svelte';
 	import Pin from '$lib/components/icons/Pin.svelte';
+	import ArchiveBox from '$lib/components/icons/ArchiveBox.svelte';
+	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import HighlightedText from './Search/HighlightedText.svelte';
 	import ChatPreview from './Sidebar/ChatPreview.svelte';
 	import NotePreview from './Search/NotePreview.svelte';
@@ -60,6 +69,10 @@
 	let generation = 0;
 	let suggesting = false;
 	let suggestionIndex = -1;
+	let selectedIds = new Set<string>();
+	let selectionAnchor: string | null = null;
+	let selectionBusy = false;
+	let showDeleteSelectedConfirm = false;
 	const icons = { chat: ChatBubble, message: Hashtag, note: Document };
 	const labels = { chat: 'Chats', message: 'Messages', note: 'Notes' };
 	const locations = [
@@ -85,6 +98,12 @@
 	$: suggestions = suggesting && !panel ? getSuggestions(query, $tags, $folders) : [];
 	$: scopeName = scopes.find((item) => item.id === scope)?.name ?? '';
 	$: canCreateNote = kinds.includes('note');
+	$: canDeleteChats = $user?.role === 'admin' || ($user?.permissions?.chat?.delete ?? true);
+	$: selectedResults = results.filter((item) => selectedIds.has(item.id));
+	$: selectedChatsOnly = selectedResults.every((item) => item.kind === 'chat');
+	$: canArchiveSelected =
+		selectedChatsOnly && !query.toLowerCase().split(' ').includes('archived:true');
+	$: canDeleteSelected = canDeleteChats || !selectedResults.some((item) => item.kind === 'chat');
 	$: selectionClass = $settings?.highContrastMode
 		? 'bg-gray-200 dark:bg-gray-800'
 		: 'bg-gray-50/70 dark:bg-gray-800/60';
@@ -108,6 +127,8 @@
 		clearTimeout(timer);
 		request?.abort();
 		generation += 1;
+		selectedIds = new Set();
+		selectionAnchor = null;
 		if (!visible) return;
 		loading = true;
 		error = '';
@@ -214,8 +235,105 @@
 		show = false;
 		suggesting = false;
 		panel = null;
+		selectedIds = new Set();
+		selectionAnchor = null;
 		preview = false;
 		onClose();
+	}
+
+	function selectResult(id: string, shift = false) {
+		if (selectionBusy) return;
+		const visible = results.filter((item) => item.write_access).map((item) => item.id);
+		const index = visible.indexOf(id);
+		if (index < 0) return;
+		const next = new Set(selectedIds);
+		const remove = next.has(id);
+		const start = selectionAnchor === null ? -1 : visible.indexOf(selectionAnchor);
+		if (shift && !remove && start >= 0) {
+			for (const item of visible.slice(Math.min(start, index), Math.max(start, index) + 1)) {
+				next.add(item);
+			}
+		} else if (remove) {
+			next.delete(id);
+		} else {
+			next.add(id);
+		}
+		if (!shift || start < 0) selectionAnchor = id;
+		selectedIds = next;
+	}
+
+	function clearSelection() {
+		if (selectionBusy) return;
+		selectedIds = new Set();
+		selectionAnchor = null;
+	}
+
+	async function applySelectedAction(action: 'archive' | 'delete') {
+		const items = results.filter((item) => selectedIds.has(item.id));
+		if (selectionBusy || items.length === 0) return;
+		if (action === 'archive' ? !canArchiveSelected : !canDeleteSelected) return;
+		selectionBusy = true;
+		const succeeded = new Set<string>();
+		for (const item of items) {
+			const id = item.id.slice(item.id.indexOf(':') + 1);
+			try {
+				let result;
+				if (item.kind === 'chat') {
+					result = await (action === 'archive' ? archiveChatById : deleteChatById)(
+						localStorage.token,
+						id
+					);
+				} else if (item.kind === 'note') {
+					result = await deleteNoteById(localStorage.token, id);
+				} else {
+					const channelId = new URL(item.url, location.origin).pathname.split('/')[2];
+					result = await deleteMessage(localStorage.token, channelId, id);
+				}
+				if (!result) throw new Error('Search result action failed');
+				if (item.kind === 'chat') {
+					updateFolderChatLists({ id }, undefined, true);
+					if (action === 'delete') closeChatTabs(id);
+					if ($chatId === id) {
+						await goto('/');
+						chatId.set('');
+					}
+				} else if (item.kind === 'note') {
+					closePageTabs(`/notes/${id}`);
+				}
+				succeeded.add(item.id);
+			} catch (error) {
+				console.error(`Failed to ${action} search result:`, error);
+			}
+		}
+		results = results.filter((item) => !succeeded.has(item.id));
+		selectedIds = new Set([...selectedIds].filter((id) => !succeeded.has(id)));
+		if (selectedIds.size === 0) selectionAnchor = null;
+		selectedIndex = Math.min(selectedIndex, Math.max(0, results.length - 1));
+		if (succeeded.size > 0) {
+			toast.success(
+				action === 'archive'
+					? $i18n.t('{{count}} chats archived.', { count: succeeded.size })
+					: items.every((item) => item.kind === 'chat')
+						? $i18n.t('{{count}} chats deleted.', { count: succeeded.size })
+						: $i18n.t('{{count}} items deleted.', { count: succeeded.size })
+			);
+			if (items.some((item) => item.kind === 'chat' && succeeded.has(item.id))) {
+				await Promise.all([
+					refreshSidebar(localStorage.token),
+					...(action === 'delete'
+						? [getAllTags(localStorage.token).then((value) => tags.set(value))]
+						: [])
+				]);
+			}
+		}
+		if (succeeded.size < items.length) {
+			toast.error(
+				$i18n.t('Could not update {{count}} items. They remain selected so you can try again.', {
+					count: items.length - succeeded.size
+				})
+			);
+		}
+		selectionBusy = false;
 	}
 
 	async function open(result = selected) {
@@ -611,13 +729,48 @@
 								? selectionClass
 								: 'hover:bg-gray-50/40 dark:hover:bg-gray-800/40'}"
 							on:mouseenter={() => (selectedIndex = index)}
-							on:click={() => {
+							on:mousedown={(event) => {
+								if (event.shiftKey) event.preventDefault();
+							}}
+							on:click={(event) => {
 								selectedIndex = index;
+								if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+									if (event.shiftKey || selectedIds.size > 0) {
+										selectResult(result.id, event.shiftKey);
+										return;
+									}
+									if (result.write_access) selectionAnchor = result.id;
+								}
 								if (preview) input?.focus();
 								else open(result);
 							}}
-							on:dblclick={() => open(result)}
+							on:dblclick={() => {
+								if (selectedIds.size === 0) open(result);
+							}}
 						>
+							{#if selectedIds.size > 0}
+								<button
+									type="button"
+									role="checkbox"
+									aria-checked={selectedIds.has(result.id)}
+									disabled={!result.write_access || selectionBusy}
+									aria-label={$i18n.t('Select {{name}}', { name: result.title })}
+									class="flex size-3.5 shrink-0 items-center justify-center rounded border disabled:opacity-40 {selectedIds.has(
+										result.id
+									)
+										? 'border-gray-900 bg-gray-900 text-white dark:border-gray-200 dark:bg-gray-200 dark:text-gray-900'
+										: 'border-gray-300 dark:border-gray-600'}"
+									on:click|stopPropagation={(event) => {
+										selectedIndex = index;
+										selectResult(result.id, event.shiftKey);
+									}}
+								>
+									{#if selectedIds.has(result.id)}<Check
+											className="size-2.5"
+											strokeWidth="2"
+										/>{/if}
+								</button>
+							{/if}
 							<svelte:component
 								this={icons[result.kind]}
 								className="size-3.5 shrink-0 text-gray-500 dark:text-gray-400"
@@ -763,30 +916,64 @@
 		<div
 			class="flex h-8 shrink-0 items-center justify-between gap-2 border-t border-gray-100/60 px-2 dark:border-gray-800/40"
 		>
-			<span class="min-w-0 truncate pl-1 text-[0.6875rem] text-gray-500 dark:text-gray-400"
-				>{selected
-					? (contextLabels.get(selected.context) ?? selected.context)
-					: $i18n.t('Workspace search')}</span
-			>
-			<div class="flex shrink-0 items-center gap-0.5">
-				<button class={quietButton} disabled={!selected} on:click={() => open()}
-					>{$i18n.t('Open')}<span class="text-gray-400">↵</span></button
-				><button
-					class={quietButton}
-					disabled={!selected}
-					on:click={() => setPreview(!preview)}
-					aria-pressed={preview}
-					title={$i18n.t('Preview (Ctrl/Cmd + Enter)')}
-					><Eye className="size-3" /><span class="hidden sm:inline">{$i18n.t('Preview')}</span
-					></button
-				><button
-					class={quietButton}
-					data-search-panel
-					aria-expanded={panel === 'actions'}
-					on:click={() => togglePanel('actions')}
-					>{$i18n.t('Actions')}<span class="text-[0.625rem] text-gray-400">⌘K</span></button
+			{#if selectedIds.size > 0}
+				<span
+					class="min-w-0 truncate pl-1 text-[0.6875rem] text-gray-500 dark:text-gray-400"
+					role="status">{$i18n.t('{{count}} selected', { count: selectedIds.size })}</span
 				>
-			</div>
+				<div class="flex shrink-0 items-center gap-0.5" aria-busy={selectionBusy}>
+					{#if canArchiveSelected}<button
+							class={quietButton}
+							disabled={selectionBusy}
+							on:click={() => applySelectedAction('archive')}
+							><ArchiveBox className="size-3" strokeWidth="1.7" /><span>{$i18n.t('Archive')}</span
+							></button
+						>{/if}{#if canDeleteSelected}<button
+							class={quietButton}
+							disabled={selectionBusy}
+							on:click={() => (showDeleteSelectedConfirm = true)}
+							><GarbageBin className="size-3" strokeWidth="1.7" /><span>{$i18n.t('Delete')}</span
+							></button
+						>{/if}<button class={quietButton} disabled={selectionBusy} on:click={clearSelection}
+						><XMark className="size-3" strokeWidth="1.7" /><span>{$i18n.t('Clear selection')}</span
+						></button
+					>
+				</div>
+			{:else}
+				<span class="min-w-0 truncate pl-1 text-[0.6875rem] text-gray-500 dark:text-gray-400"
+					>{selected
+						? (contextLabels.get(selected.context) ?? selected.context)
+						: $i18n.t('Workspace search')}</span
+				>
+				<div class="flex shrink-0 items-center gap-0.5">
+					<button class={quietButton} disabled={!selected} on:click={() => open()}
+						>{$i18n.t('Open')}<span class="text-gray-400">↵</span></button
+					><button
+						class={quietButton}
+						disabled={!selected}
+						on:click={() => setPreview(!preview)}
+						aria-pressed={preview}
+						title={$i18n.t('Preview (Ctrl/Cmd + Enter)')}
+						><Eye className="size-3" /><span class="hidden sm:inline">{$i18n.t('Preview')}</span
+						></button
+					><button
+						class={quietButton}
+						data-search-panel
+						aria-expanded={panel === 'actions'}
+						on:click={() => togglePanel('actions')}
+						>{$i18n.t('Actions')}<span class="text-[0.625rem] text-gray-400">⌘K</span></button
+					>
+				</div>
+			{/if}
 		</div>
 	</div>
 </Modal>
+
+<ConfirmDialog
+	bind:show={showDeleteSelectedConfirm}
+	title={selectedChatsOnly
+		? $i18n.t('Delete {{count}} chats?', { count: selectedIds.size })
+		: $i18n.t('Delete {{count}} items?', { count: selectedIds.size })}
+	confirmLabel={$i18n.t('Delete')}
+	on:confirm={() => applySelectedAction('delete')}
+/>
