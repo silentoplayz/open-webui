@@ -47,6 +47,7 @@
 		tags,
 		selectedFolder,
 		settings,
+		socket,
 		user
 	} from '$lib/stores';
 	import { refreshSidebar } from '$lib/stores/chatList';
@@ -246,6 +247,12 @@
 		viewedAt = null;
 		lastReadAt = res.last_read_at ?? 0;
 		onReadStateChange(res);
+	};
+
+	const markReadHandler = () => {
+		$socket?.emit('events:chat', { chat_id: id, data: { type: 'last_read_at' } });
+		unread = false;
+		lastReadAt = Date.now() / 1000;
 	};
 
 	let showShareChatModal = false;
@@ -913,6 +920,8 @@
 							showDeleteConfirm = true;
 						}}
 						{markUnreadHandler}
+						{markReadHandler}
+						{unread}
 						onOpen={() => {
 							menuOpen = true;
 							chatMenuOpen = true;

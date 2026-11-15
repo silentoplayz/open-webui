@@ -2,7 +2,7 @@
 	import { getContext, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import { chatId, user, tags } from '$lib/stores';
+	import { chatId, socket, user, tags } from '$lib/stores';
 	import {
 		archiveChatById,
 		cloneChatById,
@@ -13,7 +13,7 @@
 	} from '$lib/apis/chats';
 	import { refreshSidebar } from '$lib/stores/chatList';
 	import { updateFolderChatLists } from '$lib/stores/folderStates';
-	import type { WorkspaceChat } from '$lib/utils/folders';
+	import { isChatUnread, type WorkspaceChat } from '$lib/utils/folders';
 	import ChatMenu from '$lib/components/layout/Sidebar/ChatMenu.svelte';
 	import MoreHorizontalIcon from '$lib/components/layout/Sidebar/icons/MoreHorizontal.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
@@ -92,6 +92,11 @@
 			return res;
 		});
 
+	const markRead = () => {
+		updateFolderChatLists({ id: chat.id, last_read_at: Date.now() / 1000 });
+		$socket?.emit('events:chat', { chat_id: chat.id, data: { type: 'last_read_at' } });
+	};
+
 	const markUnread = () =>
 		run(async () => {
 			const res = await markChatUnreadById(localStorage.token, chat.id);
@@ -118,6 +123,8 @@
 	renameHandler={onRename}
 	deleteHandler={() => (showDelete = true)}
 	markUnreadHandler={markUnread}
+	markReadHandler={markRead}
+	unread={chat.user_id === $user?.id && isChatUnread(chat)}
 	onOpen={() => (open = true)}
 	onClose={() => (open = false)}
 	onPinChange={() => onChange()}

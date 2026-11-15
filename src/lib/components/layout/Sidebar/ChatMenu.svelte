@@ -41,6 +41,8 @@
 	export let onOpen: () => void = () => {};
 	export let onClose: Function;
 	export let markUnreadHandler: Function = () => {};
+	export let markReadHandler: Function = () => {};
+	export let unread = false;
 
 	export let chatId = '';
 	export let archived = false;
@@ -431,11 +433,14 @@
 					draggable="false"
 					class="flex h-[1.6875rem] gap-2 items-center rounded-xl px-2 text-[0.8125rem] cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900 w-full"
 					on:click={() => {
-						markUnreadHandler();
+						if (unread) markReadHandler();
+						else markUnreadHandler();
 					}}
 				>
 					<ChatCheckIcon className="size-3.5" strokeWidth="1.5" />
-					<div class="flex items-center">{$i18n.t('Mark as unread')}</div>
+					<div class="flex items-center">
+						{unread ? $i18n.t('Mark as read') : $i18n.t('Mark as unread')}
+					</div>
 				</button>
 
 				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
