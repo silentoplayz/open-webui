@@ -82,7 +82,7 @@
 
 	const remove = () => run(() => deleteChatById(localStorage.token, chat.id), true);
 
-	const move = (id: string, folderId: string) =>
+	const move = (id: string, folderId: string | null) =>
 		run(async () => {
 			const res = await updateChatFolderIdById(localStorage.token, id, folderId);
 			if (res) {
@@ -110,6 +110,7 @@
 
 <ChatMenu
 	readonly={!chat.can_edit_tags}
+	inFolder
 	chatId={chat.id}
 	cloneChatHandler={clone}
 	shareHandler={() => (showShare = true)}

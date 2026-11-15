@@ -28,6 +28,7 @@
 	import ShareIcon from './icons/Share.svelte';
 	import TrashIcon from './icons/Trash.svelte';
 	import ChatCheckIcon from '$lib/components/icons/ChatCheck.svelte';
+	import ArrowUturnLeft from '$lib/components/icons/ArrowUturnLeft.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -45,6 +46,7 @@
 	export let chatId = '';
 	export let archived = false;
 	export let readonly = false;
+	export let inFolder = false;
 
 	let show = false;
 	let pinned = false;
@@ -482,6 +484,23 @@
 							<FolderIcon className="size-3.5" />
 							<div class="flex items-center">{$i18n.t('Move')}</div>
 						</button>
+
+						{#if inFolder}
+							<button
+								role="menuitem"
+								draggable="false"
+								class="flex h-[1.6875rem] gap-2 items-center rounded-xl px-2 text-[0.8125rem] cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900 overflow-hidden w-full"
+								on:click={() => {
+									moveChatHandler(chatId, null);
+								}}
+							>
+								<div class="shrink-0">
+									<ArrowUturnLeft className="size-3.5" />
+								</div>
+
+								<div class="truncate">{$i18n.t('Remove from folder')}</div>
+							</button>
+						{/if}
 
 						{#each $folders.sort((a, b) => b.updated_at - a.updated_at) as folder}
 							<button

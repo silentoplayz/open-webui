@@ -5505,7 +5505,7 @@
 	};
 
 	const moveChatHandler = async (chatId, folderId) => {
-		if (chatId && folderId) {
+		if (chatId) {
 			const res = await updateChatFolderIdById(localStorage.token, chatId, folderId).catch(
 				(error) => {
 					toast.error(`${error}`);
@@ -5514,6 +5514,7 @@
 			);
 
 			if (res) {
+				if (chat) chat.folder_id = res.folder_id;
 				updateFolderChatLists(res, folderId);
 				await refreshChatList(localStorage.token, { refreshPinned: true });
 				await refreshFolderChatLists();

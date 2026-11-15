@@ -34,6 +34,7 @@
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
+	import ArrowUturnLeft from '$lib/components/icons/ArrowUturnLeft.svelte';
 	import EditPencilIcon from '$lib/components/layout/Sidebar/icons/EditPencil.svelte';
 
 	const i18n = getContext('i18n');
@@ -498,6 +499,21 @@
 
 							<div class="flex items-center">{$i18n.t('Move')}</div>
 						</button>
+						{#if chat?.folder_id}
+							<button
+								draggable="false"
+								class="flex h-[1.6875rem] w-full items-center gap-2 overflow-hidden rounded-xl px-2 text-[0.8125rem] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+								on:click={() => {
+									moveChatHandler(chat.id, null);
+								}}
+							>
+								<div class="shrink-0">
+									<ArrowUturnLeft className="size-3.5" strokeWidth="1.5" />
+								</div>
+
+								<div class="truncate">{$i18n.t('Remove from folder')}</div>
+							</button>
+						{/if}
 						{#each $folders.sort((a, b) => b.updated_at - a.updated_at) as folder}
 							{#if folder?.id}
 								<button

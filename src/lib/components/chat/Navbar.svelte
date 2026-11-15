@@ -61,7 +61,7 @@
 	export let onSaveTempChat: () => {};
 	export let archiveChatHandler: (id: string) => void;
 	export let deleteChatHandler: (id: string) => void;
-	export let moveChatHandler: (id: string, folderId: string) => void;
+	export let moveChatHandler: (id: string, folderId: string | null) => void;
 
 	let closedBannerIds = [];
 

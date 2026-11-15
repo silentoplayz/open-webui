@@ -104,6 +104,7 @@
 	export let shiftKey = false;
 	export let readonly = false;
 	export let canMove = false;
+	export let inFolder = false;
 	export let canRename = false;
 
 	export let ownerName: string | null = null;
@@ -387,7 +388,7 @@
 	};
 
 	const moveChatHandler = async (chatId, folderId) => {
-		if (chatId && folderId) {
+		if (chatId) {
 			const res = await updateChatFolderIdById(localStorage.token, chatId, folderId).catch(
 				(error) => {
 					toast.error(`${error}`);
@@ -897,6 +898,7 @@
 				<div class="flex self-center z-10 items-end">
 					<ChatMenu
 						{readonly}
+						{inFolder}
 						chatId={id}
 						cloneChatHandler={() => {
 							cloneChatHandler(id);

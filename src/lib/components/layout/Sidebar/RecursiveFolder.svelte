@@ -975,6 +975,7 @@
 											: null}
 										readonly={chat.user_id !== $user?.id}
 										canMove={folders[folderId]?.user_id === $user?.id}
+										inFolder
 										canRename={folders[folderId]?.user_id === $user?.id}
 										{shiftKey}
 										onReadStateChange={applyReadState}
