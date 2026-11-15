@@ -1290,6 +1290,13 @@
 	};
 
 	$: hasMessages = chatHistory?.messages && Object.keys(chatHistory.messages).length > 0;
+	let overviewChat: { history: any; chatUser: any; showMessage: Function } | null = null;
+	const groupChatOverview = (group: PanelGroup) => {
+		const tab = tabs.tabs.find((item) => item.id === group.activeId);
+		return tab?.kind === 'chat' && tab.id !== mainChatTabId
+			? (chatViews[tab.id]?.getOverview() ?? null)
+			: null;
+	};
 
 	const chatContextNeedsSavedChat = (terminal: any) => terminal?.scope === 'chat';
 	$: selectedSystemTerminal = ($terminalServers ?? []).find(
@@ -1306,7 +1313,8 @@
 	$: showFilesTab =
 		supportsTerminalFiles ||
 		(codeInterpreterEnabled && $config?.code?.interpreter_engine !== 'jupyter');
-	$: if (!hasMessages) showOverview.set(false);
+	$: if (!hasMessages && !overviewChat) showOverview.set(false);
+	$: if (!$showOverview) overviewChat = null;
 	$: showCommentsTab = !!(
 		$config?.features?.enable_comments &&
 		$user &&
@@ -1837,15 +1845,14 @@
 		</div>
 		<div class="flex-1 min-h-0">
 			<Overview
-				history={chatHistory}
-				{chatUser}
+				history={overviewChat?.history ?? chatHistory}
+				chatUser={overviewChat ? overviewChat.chatUser : chatUser}
 				onNodeClick={(e: any) => {
 					const { node } = e;
-					chatHistory.messages[node.data.message.id].favorite = node.data.message.favorite
-						? true
-						: null;
+					const target = overviewChat?.history ?? chatHistory;
+					target.messages[node.data.message.id].favorite = node.data.message.favorite ? true : null;
 					showOverview.set(false);
-					showMessage(node.data.message, true);
+					(overviewChat?.showMessage ?? showMessage)(node.data.message, true);
 				}}
 			/>
 		</div>
@@ -2467,8 +2474,14 @@
 									{/if}
 								</button>
 							{/each}
-							{#if hasMessages}
-								<button aria-haspopup="dialog" on:click={() => showOverview.set(true)}>
+							{#if groupChatOverview(group) ? Object.keys(groupChatOverview(group)?.history?.messages ?? {}).length > 0 : hasMessages}
+								<button
+									aria-haspopup="dialog"
+									on:click={() => {
+										overviewChat = groupChatOverview(group);
+										showOverview.set(true);
+									}}
+								>
 									<Map className="size-3.5 shrink-0" strokeWidth="1.5" />
 									<span class="flex-1 text-start">{$i18n.t('Overview')}</span>
 								</button>

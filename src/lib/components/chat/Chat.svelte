@@ -4230,6 +4230,8 @@
 		editingTitle = false;
 	$: tabTitleEditor = editingTitle ? renderTitleEditor : undefined;
 
+	export const getOverview = () => ({ history, chatUser: chatOwner, showMessage });
+
 	export const startRename = async () => {
 		if (
 			loading ||
