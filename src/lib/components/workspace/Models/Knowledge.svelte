@@ -2,6 +2,7 @@
 	import ModelSettingsLabel from './ModelSettingsLabel.svelte';
 	import { getContext, onMount } from 'svelte';
 	import { config, settings, user } from '$lib/stores';
+	import type { AppLayoutContext } from '$lib/types';
 
 	import KnowledgeSelector from './Knowledge/KnowledgeSelector.svelte';
 	import FileItemModal from '$lib/components/common/FileItemModal.svelte';
@@ -26,6 +27,7 @@
 	let picker: KnowledgeSelector;
 	let valueElement: HTMLElement | null = null;
 	const i18n = getContext('i18n');
+	const appLayout = getContext<AppLayoutContext | undefined>('appLayout');
 
 	let loaded = false;
 
@@ -319,6 +321,20 @@
 						href="/workspace/knowledge"
 						target="_blank"
 						rel="noreferrer"
+						on:click={(event) => {
+							if (
+								!appLayout?.openPageTab ||
+								event.button !== 0 ||
+								event.metaKey ||
+								event.ctrlKey ||
+								event.shiftKey ||
+								event.altKey
+							)
+								return;
+							event.preventDefault();
+							picker.close();
+							appLayout.openPageTab({ href: '/workspace/knowledge', label: '' });
+						}}
 						class="hover:text-gray-900 dark:hover:text-gray-100">{$i18n.t('Manage')}</a
 					>
 				{/if}

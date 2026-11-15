@@ -7,6 +7,8 @@
 	import ChevronRight from '$lib/components/icons/ChevronRight.svelte';
 	import TTSVoiceInput from './TTSVoiceInput.svelte';
 	import ModelSettingToggle from './ModelSettingToggle.svelte';
+	import { pageTabKey } from '$lib/components/chat/Tabs/tabs';
+	import type { AppLayoutContext } from '$lib/types';
 
 	type Item = {
 		id: string;
@@ -35,6 +37,7 @@
 	export let variant: 'inline' | 'dropdown' = 'inline';
 
 	const i18n: any = getContext('i18n');
+	const appLayout = getContext<AppLayoutContext | undefined>('appLayout');
 
 	const dispatch = createEventDispatcher<{
 		select: Item;
@@ -262,6 +265,21 @@
 								href={workspaceHref}
 								target="_blank"
 								rel="noreferrer"
+								on:click={(event) => {
+									if (
+										!appLayout?.openPageTab ||
+										!pageTabKey(new URL(workspaceHref, location.origin)) ||
+										event.button !== 0 ||
+										event.metaKey ||
+										event.ctrlKey ||
+										event.shiftKey ||
+										event.altKey
+									)
+										return;
+									event.preventDefault();
+									dropdown.close();
+									appLayout.openPageTab({ href: workspaceHref, label: '' });
+								}}
 								class="hover:text-gray-900 dark:hover:text-gray-100">{$i18n.t('Manage')}</a
 							>{/if}
 						<button
