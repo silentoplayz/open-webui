@@ -163,13 +163,14 @@
 				console.error('Unable to refresh terminals', error)
 			);
 		};
-		const eventHandler = (event: { data?: { type?: string } }) => {
+		const eventHandler = (event: { data?: { type?: string; data?: { event?: string } } }) => {
 			if (event?.data?.type === 'terminals:changed') {
 				changed();
 				// Tether devices also bring the user's own models and tool servers.
 				void setModels().catch((error) => console.error('Unable to refresh models', error));
 				void setTools().catch((error) => console.error('Unable to refresh tools', error));
 			} else if (event?.data?.type === 'access:updated') void refreshAccess();
+			else if (event?.data?.data?.event === 'user.settings_updated') void setUserSettings();
 		};
 		socketInstance?.on('events', eventHandler);
 		socketInstance?.on('connect', changed);

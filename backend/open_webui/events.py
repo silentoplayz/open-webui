@@ -1188,6 +1188,7 @@ class SocketSessionEventSink:
             EVENTS.CHANNEL_UPDATED.name,
             EVENTS.CHANNEL_DELETED.name,
             EVENTS.CHANNEL_MEMBER_REMOVED.name,
+            EVENTS.USER_SETTINGS_UPDATED.name,
         } or (event.event == EVENTS.CHAT_UPDATED.name and event.data.get('title_only')):
             from open_webui.socket.main import sio
 

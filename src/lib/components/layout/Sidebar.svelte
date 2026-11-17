@@ -999,6 +999,7 @@
 				return;
 			}
 
+			if (eventData.event === 'user.settings_updated') return;
 			if (eventData.event?.startsWith('note.')) {
 				const _pinnedNotes = await getPinnedNoteList(localStorage.token).catch(() => []);
 				pinnedNotes.set(_pinnedNotes);
