@@ -1544,7 +1544,7 @@ async def update_chat_by_id(
             EVENTS.CHAT_UPDATED,
             actor=user,
             subject_id=id,
-            data={'title': chat.title},
+            data={'title': chat.title, 'title_only': set(form_data.chat) == {'title'}},
         )
         data = await shared_chat_response(chat, user, db=db)
         data['write_access'] = await Chats.has_chat_access(id, user, db=db, permission='write', chat=chat)

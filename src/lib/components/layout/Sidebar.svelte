@@ -954,6 +954,7 @@
 				folder_id?: string | null;
 				last_read_at?: number;
 				folder_unread_counts?: Record<string, number>;
+				event?: string;
 			};
 		};
 	}) => {
@@ -995,6 +996,16 @@
 				for (const folder of Object.values(folderRegistry)) {
 					folder?.setChatReadAt?.(event.chat_id, eventData.last_read_at);
 				}
+				return;
+			}
+
+			if (eventData.event?.startsWith('note.')) {
+				const _pinnedNotes = await getPinnedNoteList(localStorage.token).catch(() => []);
+				pinnedNotes.set(_pinnedNotes);
+				return;
+			}
+			if (eventData.event?.startsWith('channel.')) {
+				initChannels();
 				return;
 			}
 

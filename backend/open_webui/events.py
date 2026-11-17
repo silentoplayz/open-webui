@@ -1166,6 +1166,43 @@ class SocketSessionEventSink:
             # User-scoped events (archive all, unshare all) recheck every chat.
             await refresh_chat_access(subject.get('id') if subject.get('type') == 'chat' else None)
 
+        if event.event in {
+            EVENTS.CHAT_CREATED.name,
+            EVENTS.CHAT_IMPORTED.name,
+            EVENTS.CHAT_CLONED.name,
+            EVENTS.CHAT_PINNED.name,
+            EVENTS.CHAT_UNPINNED.name,
+            EVENTS.CHAT_ARCHIVED.name,
+            EVENTS.CHAT_UNARCHIVED.name,
+            EVENTS.CHAT_FOLDER_UPDATED.name,
+            EVENTS.CHAT_DELETED.name,
+            EVENTS.CHAT_DELETED_ALL.name,
+            EVENTS.FOLDER_CREATED.name,
+            EVENTS.FOLDER_UPDATED.name,
+            EVENTS.FOLDER_PARENT_UPDATED.name,
+            EVENTS.FOLDER_DELETED.name,
+            EVENTS.NOTE_PINNED.name,
+            EVENTS.NOTE_UNPINNED.name,
+            EVENTS.NOTE_DELETED.name,
+            EVENTS.CHANNEL_CREATED.name,
+            EVENTS.CHANNEL_UPDATED.name,
+            EVENTS.CHANNEL_DELETED.name,
+            EVENTS.CHANNEL_MEMBER_REMOVED.name,
+        } or (event.event == EVENTS.CHAT_UPDATED.name and event.data.get('title_only')):
+            from open_webui.socket.main import sio
+
+            actor_id = (event.actor or {}).get('id')
+            if actor_id:
+                subject = event.subject or {}
+                await sio.emit(
+                    'events',
+                    {
+                        'chat_id': subject.get('id') if subject.get('type') == 'chat' else None,
+                        'data': {'type': 'chat:list', 'data': {'event': event.event}},
+                    },
+                    room=f'user:{actor_id}',
+                )
+
         if event.event not in {EVENTS.USER_DELETED.name, EVENTS.USER_ROLE_UPDATED.name}:
             return
 
