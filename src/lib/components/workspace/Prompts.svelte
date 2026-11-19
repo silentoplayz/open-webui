@@ -20,7 +20,7 @@
 	import { onMount, getContext, tick, onDestroy } from 'svelte';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
-	import { WEBUI_NAME, config, user } from '$lib/stores';
+	import { WEBUI_NAME, config, settings, user } from '$lib/stores';
 	import { COMMUNITY_ORIGINS } from '$lib/constants';
 
 	import {
@@ -51,6 +51,7 @@
 	import TagSelector from './common/TagSelector.svelte';
 	import CommunityDiscover from './common/CommunityDiscover.svelte';
 	import Badge from '$lib/components/common/Badge.svelte';
+	import DropdownOptions from '$lib/components/common/DropdownOptions.svelte';
 	import Switch from '../common/Switch.svelte';
 	import Pagination from '../common/Pagination.svelte';
 	import ChevronDown from '../icons/ChevronDown.svelte';
@@ -93,6 +94,7 @@
 
 	let tagsContainerElement: HTMLDivElement;
 	let viewOption = '';
+	let displayOption = null;
 	let selectedTag = '';
 	let copiedId: string | null = null;
 	$: hasFilters = Boolean(query || viewOption || selectedTag);
@@ -102,6 +104,13 @@
 	let openPromptMenuId: string | null = null;
 
 	let page = 1;
+	let perPage = 0;
+	let gridWidth = 0;
+	let innerHeight = 0;
+	let gridHeight = 0;
+	let gridRows = 1;
+	let wrapperElement: HTMLDivElement;
+	let loadingElement: HTMLDivElement;
 
 	$: if (loaded) {
 		workspaceActions.set([
@@ -152,6 +161,38 @@
 		}, 300);
 	};
 
+	const setPerPage = (value: number) => {
+		if (value === perPage) return;
+		page = Math.floor(((page - 1) * perPage) / value) + 1;
+		perPage = value;
+	};
+
+	$: if (gridWidth && innerHeight && $settings) {
+		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+		const gap = rem * 0.625;
+		const columns = Math.max(
+			1,
+			Math.floor((gridWidth + gap) / (Math.min(rem * 15, gridWidth) + gap))
+		);
+		gridHeight =
+			columns > 1
+				? Math.max(
+						rem * 7.6,
+						innerHeight -
+							(wrapperElement?.firstElementChild?.getBoundingClientRect().bottom ??
+								(loadingElement?.getBoundingClientRect().top ?? 0) + rem * 2) -
+							rem * ($config?.features?.enable_community_sharing ? 13 : 5.5)
+					)
+				: 0;
+		gridRows = gridHeight
+			? Math.max(
+					1,
+					Math.min(Math.floor(100 / columns), Math.floor((gridHeight + gap) / (rem * 7.6 + gap)))
+				)
+			: 30;
+		setPerPage(displayOption === 'grid' ? columns * gridRows : 30);
+	}
+
 	// Immediate response to page/filter changes
 	$: if (
 		loaded &&
@@ -159,7 +200,8 @@
 		selectedTag !== undefined &&
 		viewOption !== undefined &&
 		sortKey !== undefined &&
-		sortDirection !== undefined
+		sortDirection !== undefined &&
+		perPage
 	) {
 		getPromptList();
 	}
@@ -198,7 +240,8 @@
 				sortKey,
 				sortDirection,
 				page,
-				signal
+				signal,
+				perPage
 			).catch((error) => {
 				if (!signal.aborted) toast.error(`${error}`);
 				return null;
@@ -326,6 +369,7 @@
 
 	onMount(async () => {
 		viewOption = localStorage?.workspaceViewOption || '';
+		displayOption = localStorage?.workspaceDisplayOption ?? null;
 		loaded = true;
 
 		const onMessage = async (event: MessageEvent) => {
@@ -395,6 +439,8 @@
 	});
 	import PageTitle from '$lib/components/common/PageTitle.svelte';
 </script>
+
+<svelte:window bind:innerHeight />
 
 <WorkspaceAccessModal bind:this={accessModal} resourceType="prompts" onUpdated={getPromptList} />
 
@@ -478,7 +524,7 @@
 			}}
 		/>
 
-		<div class="space-y-0">
+		<div class="space-y-0" bind:this={wrapperElement} bind:clientWidth={gridWidth}>
 			<div class="flex h-8 w-full items-center gap-2">
 				<div class="flex min-w-0 flex-1">
 					<div class=" self-center ml-1 mr-3">
@@ -542,6 +588,22 @@
 								}}
 							/>
 						{/if}
+
+						<DropdownOptions
+							align="end"
+							bind:value={displayOption}
+							items={[
+								{ value: null, label: $i18n.t('List') },
+								{ value: 'grid', label: $i18n.t('Grid') }
+							]}
+							onChange={() => {
+								if (displayOption) {
+									localStorage.workspaceDisplayOption = displayOption;
+								} else {
+									delete localStorage.workspaceDisplayOption;
+								}
+							}}
+						/>
 					</div>
 				</div>
 			</div>
@@ -552,135 +614,298 @@
 				</div>
 			{:else if (prompts ?? []).length !== 0}
 				<div class="@container">
-					<div
-						class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-6 text-xs text-gray-500 dark:text-gray-400"
-					>
-						<button
-							class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
-							type="button"
-							on:click={() => setSortKey('name')}
+					{#if displayOption === null}
+						<div
+							class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-6 text-xs text-gray-500 dark:text-gray-400"
 						>
-							{$i18n.t('Name')}
-							{#if sortKey === 'name'}
-								{#if sortDirection === 'asc'}
-									<ChevronUp className="size-2" />
-								{:else}
-									<ChevronDown className="size-2" />
-								{/if}
-							{/if}
-						</button>
-
-						<div class="@max-[48rem]:hidden">{$i18n.t('Owner')}</div>
-
-						<button
-							class="@max-[36rem]:hidden flex min-w-0 items-center gap-1 py-0.5 text-left"
-							type="button"
-							on:click={() => setSortKey('updated_at')}
-						>
-							{$i18n.t('Updated at')}
-							{#if sortKey === 'updated_at'}
-								{#if sortDirection === 'asc'}
-									<ChevronUp className="size-2" />
-								{:else}
-									<ChevronDown className="size-2" />
-								{/if}
-							{/if}
-						</button>
-						<span class="sr-only">{$i18n.t('Actions')}</span>
-					</div>
-
-					<div class="grid gap-y-0.5">
-						{#each prompts as prompt (prompt.id)}
-							<div
-								class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-12 rounded-lg py-1.5 hover:bg-black/[0.03] dark:hover:bg-white/[0.03] group cursor-pointer text-left"
-								role="presentation"
-								on:click={(e) => {
-									if (shouldIgnoreRowClick(e.target)) return;
-									openPrompt(prompt);
-								}}
+							<button
+								class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
+								type="button"
+								on:click={() => setSortKey('name')}
 							>
-								<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-									<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-										<div class="flex min-w-0 items-center gap-2 overflow-hidden">
-											<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-												<Tooltip content={prompt.name} className="min-w-0" placement="top-start">
-													<a
-														href={`/workspace/prompts/${prompt.id}`}
-														class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
-														>{prompt.name}</a
+								{$i18n.t('Name')}
+								{#if sortKey === 'name'}
+									{#if sortDirection === 'asc'}
+										<ChevronUp className="size-2" />
+									{:else}
+										<ChevronDown className="size-2" />
+									{/if}
+								{/if}
+							</button>
+
+							<div class="@max-[48rem]:hidden">{$i18n.t('Owner')}</div>
+
+							<button
+								class="@max-[36rem]:hidden flex min-w-0 items-center gap-1 py-0.5 text-left"
+								type="button"
+								on:click={() => setSortKey('updated_at')}
+							>
+								{$i18n.t('Updated at')}
+								{#if sortKey === 'updated_at'}
+									{#if sortDirection === 'asc'}
+										<ChevronUp className="size-2" />
+									{:else}
+										<ChevronDown className="size-2" />
+									{/if}
+								{/if}
+							</button>
+							<span class="sr-only">{$i18n.t('Actions')}</span>
+						</div>
+
+						<div class="grid gap-y-0.5">
+							{#each prompts as prompt (prompt.id)}
+								<div
+									class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-12 rounded-lg py-1.5 hover:bg-black/[0.03] dark:hover:bg-white/[0.03] group cursor-pointer text-left"
+									role="presentation"
+									on:click={(e) => {
+										if (shouldIgnoreRowClick(e.target)) return;
+										openPrompt(prompt);
+									}}
+								>
+									<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+										<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+											<div class="flex min-w-0 items-center gap-2 overflow-hidden">
+												<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+													<Tooltip content={prompt.name} className="min-w-0" placement="top-start">
+														<a
+															href={`/workspace/prompts/${prompt.id}`}
+															class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+															>{prompt.name}</a
+														>
+													</Tooltip>
+													{#if !prompt.write_access}
+														<Badge type="subtle" content={$i18n.t('Read Only')} />
+													{/if}
+												</div>
+											</div>
+
+											<div class="mt-0.5 min-w-0">
+												{#if prompt.content}
+													<Tooltip
+														content={prompt.content}
+														className="min-w-0"
+														placement="top-start"
 													>
-												</Tooltip>
-												{#if !prompt.write_access}
-													<Badge type="subtle" content={$i18n.t('Read Only')} />
+														<div
+															class="truncate text-xs leading-4 text-gray-500 dark:text-gray-400"
+														>
+															{prompt.content}
+														</div>
+													</Tooltip>
 												{/if}
 											</div>
 										</div>
+									</div>
 
-										<div class="mt-0.5 min-w-0">
-											{#if prompt.content}
-												<Tooltip content={prompt.content} className="min-w-0" placement="top-start">
-													<div class="truncate text-xs leading-4 text-gray-500 dark:text-gray-400">
-														{prompt.content}
-													</div>
+									<div class="@max-[48rem]:hidden min-w-0 text-xs text-gray-600 dark:text-gray-400">
+										<ProfilePreview
+											user={prompt?.user ?? null}
+											side="bottom"
+											className="w-full min-w-0"
+										>
+											<span class="flex w-full min-w-0 items-center gap-2">
+												<ProfileImage
+													src={prompt?.user?.id
+														? `/api/v1/users/${prompt.user.id}/profile/image`
+														: '/user.png'}
+													className="size-5 shrink-0 rounded-full!"
+												/>
+												<span class="min-w-0 truncate">
+													{capitalizeFirstLetter(
+														prompt?.user?.name ?? prompt?.user?.email ?? $i18n.t('Deleted User')
+													)}
+												</span>
+											</span>
+										</ProfilePreview>
+									</div>
+									<Tooltip
+										content={dayjs((prompt.updated_at ?? prompt.created_at) * 1000)
+											.locale($i18n.language)
+											.format('LLLL')}
+										className="@max-[36rem]:hidden min-w-0"
+									>
+										<div
+											class="shrink-0 truncate text-xs leading-5 text-gray-500 dark:text-gray-400"
+										>
+											{dayjs((prompt.updated_at ?? prompt.created_at) * 1000)
+												.locale($i18n.language)
+												.fromNow()}
+										</div>
+									</Tooltip>
+									<div class="flex min-w-0 items-center justify-end gap-1.5">
+										<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
+											{#if shiftKey}
+												<Tooltip content={$i18n.t('Delete')}>
+													<button
+														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
+														type="button"
+														aria-label={$i18n.t('Delete')}
+														disabled={!prompt.write_access}
+														on:click={(e) => {
+															e.preventDefault();
+															e.stopPropagation();
+															deleteHandler(prompt);
+														}}
+													>
+														<GarbageBin className="size-4" />
+													</button>
 												</Tooltip>
+											{:else}
+												<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
+													<Tooltip content={$i18n.t('Copy Prompt')}>
+														<button
+															class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															type="button"
+															aria-label={$i18n.t('Copy Prompt')}
+															on:click={(e) => {
+																e.preventDefault();
+																e.stopPropagation();
+																copyHandler(prompt);
+															}}
+														>
+															{#if copiedId === prompt.command}
+																<Check className="size-4" strokeWidth="1.5" />
+															{:else}
+																<Clipboard className="size-4" strokeWidth="1.5" />
+															{/if}
+														</button>
+													</Tooltip>
+
+													<CommentButton
+														onComment={(request) => (comments = request)}
+														modal
+														className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+														resource={{ resource_type: 'prompt', resource_id: prompt.id }}
+													/>
+													<PromptMenu
+														onComment={(request) => (comments = request)}
+														resourceId={prompt.id}
+														accessHandler={$user?.permissions?.sharing?.prompts ||
+														$user?.role === 'admin'
+															? () => accessModal.open(prompt.id)
+															: null}
+														writeAccess={prompt.write_access}
+														show={openPromptMenuId === prompt.id}
+														editHandler={() => {
+															goto(`/workspace/prompts/${prompt.id}`);
+														}}
+														shareHandler={() => {
+															shareHandler(prompt);
+														}}
+														cloneHandler={() => {
+															cloneHandler(prompt);
+														}}
+														exportHandler={() => {
+															exportHandler(prompt);
+														}}
+														deleteHandler={async () => {
+															deletePrompt = prompt;
+															showDeleteConfirm = true;
+														}}
+														onClose={() => {
+															openPromptMenuId = null;
+														}}
+													>
+														<button
+															class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															type="button"
+															aria-label={$i18n.t('Prompt Menu')}
+															on:click={(e) => {
+																e.preventDefault();
+																e.stopPropagation();
+																openPromptMenuId =
+																	openPromptMenuId === prompt.id ? null : prompt.id;
+															}}
+														>
+															<EllipsisHorizontal className="size-4" />
+														</button>
+													</PromptMenu>
+
+													{#if prompt.write_access}
+														<div
+															class="flex h-6 items-center"
+															role="presentation"
+															on:click={(e) => {
+																e.stopPropagation();
+																e.preventDefault();
+															}}
+														>
+															<Tooltip
+																content={prompt.is_active !== false
+																	? $i18n.t('Enabled')
+																	: $i18n.t('Disabled')}
+															>
+																<Switch
+																	bind:state={prompt.is_active}
+																	ariaLabel={$i18n.t('Enabled')}
+																	on:change={async () => {
+																		togglePromptById(localStorage.token, prompt.id);
+																	}}
+																/>
+															</Tooltip>
+														</div>
+													{:else}
+														<Switch
+															state={prompt.is_active}
+															disabled
+															tooltip={$i18n.t('Read Only')}
+															ariaLabel={`${$i18n.t('Enabled')}: ${prompt.name}`}
+														/>
+													{/if}
+												</div>
 											{/if}
 										</div>
 									</div>
 								</div>
-
-								<div class="@max-[48rem]:hidden min-w-0 text-xs text-gray-600 dark:text-gray-400">
-									<ProfilePreview
-										user={prompt?.user ?? null}
-										side="bottom"
-										className="w-full min-w-0"
-									>
-										<span class="flex w-full min-w-0 items-center gap-2">
-											<ProfileImage
-												src={prompt?.user?.id
-													? `/api/v1/users/${prompt.user.id}/profile/image`
-													: '/user.png'}
-												className="size-5 shrink-0 rounded-full!"
-											/>
-											<span class="min-w-0 truncate">
-												{capitalizeFirstLetter(
-													prompt?.user?.name ?? prompt?.user?.email ?? $i18n.t('Deleted User')
-												)}
-											</span>
-										</span>
-									</ProfilePreview>
-								</div>
-								<Tooltip
-									content={dayjs((prompt.updated_at ?? prompt.created_at) * 1000)
-										.locale($i18n.language)
-										.format('LLLL')}
-									className="@max-[36rem]:hidden min-w-0"
+							{/each}
+						</div>
+					{:else if displayOption === 'grid'}
+						<div
+							class="grid grid-cols-[repeat(auto-fill,minmax(min(15rem,100%),1fr))] gap-2.5 py-1"
+							style={gridHeight
+								? `grid-template-rows: repeat(${gridRows}, minmax(0, 1fr)); height: ${gridHeight}px;`
+								: ''}
+						>
+							{#each prompts as prompt (prompt.id)}
+								<div
+									class="group flex min-w-0 flex-col gap-2 rounded-xl border border-black/[0.06] bg-gray-50/40 p-3 text-left transition-colors duration-75 hover:bg-black/[0.03] dark:border-white/[0.06] dark:bg-gray-900 dark:hover:bg-white/[0.03] cursor-pointer"
+									role="presentation"
+									on:click={(e) => {
+										if (shouldIgnoreRowClick(e.target)) return;
+										openPrompt(prompt);
+									}}
 								>
-									<div class="shrink-0 truncate text-xs leading-5 text-gray-500 dark:text-gray-400">
-										{dayjs((prompt.updated_at ?? prompt.created_at) * 1000)
-											.locale($i18n.language)
-											.fromNow()}
-									</div>
-								</Tooltip>
-								<div class="flex min-w-0 items-center justify-end gap-1.5">
-									<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
-										{#if shiftKey}
-											<Tooltip content={$i18n.t('Delete')}>
-												<button
-													class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
-													type="button"
-													aria-label={$i18n.t('Delete')}
-													disabled={!prompt.write_access}
-													on:click={(e) => {
-														e.preventDefault();
-														e.stopPropagation();
-														deleteHandler(prompt);
-													}}
+									<div class="flex min-w-0 items-center gap-2">
+										<div class="flex min-w-0 flex-1 items-center gap-1">
+											<Tooltip content={prompt.name} className="min-w-0" placement="top-start">
+												<a
+													href={`/workspace/prompts/${prompt.id}`}
+													class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+													>{prompt.name}</a
 												>
-													<GarbageBin className="size-4" />
-												</button>
 											</Tooltip>
-										{:else}
-											<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
+											{#if !prompt.write_access}
+												<Badge type="subtle" content={$i18n.t('Read Only')} />
+											{/if}
+										</div>
+										<div class="flex shrink-0 items-center gap-0.5">
+											{#if shiftKey}
+												<Tooltip content={$i18n.t('Delete')}>
+													<button
+														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
+														type="button"
+														aria-label={$i18n.t('Delete')}
+														disabled={!prompt.write_access}
+														on:click={(e) => {
+															e.preventDefault();
+															e.stopPropagation();
+															deleteHandler(prompt);
+														}}
+													>
+														<GarbageBin className="size-4" />
+													</button>
+												</Tooltip>
+											{:else}
 												<Tooltip content={$i18n.t('Copy Prompt')}>
 													<button
 														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
@@ -700,12 +925,6 @@
 													</button>
 												</Tooltip>
 
-												<CommentButton
-													onComment={(request) => (comments = request)}
-													modal
-													className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-													resource={{ resource_type: 'prompt', resource_id: prompt.id }}
-												/>
 												<PromptMenu
 													onComment={(request) => (comments = request)}
 													resourceId={prompt.id}
@@ -748,50 +967,105 @@
 														<EllipsisHorizontal className="size-4" />
 													</button>
 												</PromptMenu>
+											{/if}
+										</div>
+									</div>
 
-												{#if prompt.write_access}
-													<div
-														class="flex h-6 items-center"
-														role="presentation"
-														on:click={(e) => {
-															e.stopPropagation();
-															e.preventDefault();
-														}}
-													>
-														<Tooltip
-															content={prompt.is_active !== false
-																? $i18n.t('Enabled')
-																: $i18n.t('Disabled')}
-														>
-															<Switch
-																bind:state={prompt.is_active}
-																ariaLabel={$i18n.t('Enabled')}
-																on:change={async () => {
-																	togglePromptById(localStorage.token, prompt.id);
-																}}
-															/>
-														</Tooltip>
-													</div>
-												{:else}
-													<Switch
-														state={prompt.is_active}
-														disabled
-														tooltip={$i18n.t('Read Only')}
-														ariaLabel={`${$i18n.t('Enabled')}: ${prompt.name}`}
-													/>
-												{/if}
+									<Tooltip content={prompt.content} className="min-w-0" placement="top-start">
+										<div
+											class="line-clamp-2 min-h-8 break-words text-xs leading-4 text-gray-500 dark:text-gray-400"
+										>
+											{prompt.content}
+										</div>
+									</Tooltip>
+
+									<div class="mt-auto flex min-w-0 items-center justify-between gap-2">
+										<div
+											class="flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400"
+										>
+											<div class="min-w-0">
+												<ProfilePreview
+													user={prompt?.user ?? null}
+													side="bottom"
+													className="w-full min-w-0"
+												>
+													<span class="flex w-full min-w-0 items-center gap-1.5">
+														<ProfileImage
+															src={prompt?.user?.id
+																? `/api/v1/users/${prompt.user.id}/profile/image`
+																: '/user.png'}
+															className="size-4 shrink-0 rounded-full!"
+														/>
+														<span class="min-w-0 truncate">
+															{capitalizeFirstLetter(
+																prompt?.user?.name ?? prompt?.user?.email ?? $i18n.t('Deleted User')
+															)}
+														</span>
+													</span>
+												</ProfilePreview>
 											</div>
-										{/if}
+											<Tooltip
+												content={dayjs((prompt.updated_at ?? prompt.created_at) * 1000)
+													.locale($i18n.language)
+													.format('LLLL')}
+												className="shrink-0"
+											>
+												<span class="whitespace-nowrap text-gray-400 dark:text-gray-500"
+													>{dayjs((prompt.updated_at ?? prompt.created_at) * 1000)
+														.locale($i18n.language)
+														.fromNow()}</span
+												>
+											</Tooltip>
+										</div>
+										<div class="flex shrink-0 items-center gap-1.5">
+											<CommentButton
+												onComment={(request) => (comments = request)}
+												modal
+												className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+												resource={{ resource_type: 'prompt', resource_id: prompt.id }}
+											/>
+											{#if prompt.write_access}
+												<div
+													class="flex h-6 items-center"
+													role="presentation"
+													on:click={(e) => {
+														e.stopPropagation();
+														e.preventDefault();
+													}}
+												>
+													<Tooltip
+														content={prompt.is_active !== false
+															? $i18n.t('Enabled')
+															: $i18n.t('Disabled')}
+													>
+														<Switch
+															bind:state={prompt.is_active}
+															ariaLabel={$i18n.t('Enabled')}
+															on:change={async () => {
+																togglePromptById(localStorage.token, prompt.id);
+															}}
+														/>
+													</Tooltip>
+												</div>
+											{:else}
+												<Switch
+													state={prompt.is_active}
+													disabled
+													tooltip={$i18n.t('Read Only')}
+													ariaLabel={`${$i18n.t('Enabled')}: ${prompt.name}`}
+												/>
+											{/if}
+										</div>
 									</div>
 								</div>
-							</div>
-						{/each}
-					</div>
+							{/each}
+						</div>
+					{/if}
 				</div>
 
-				{#if total > 30}
+				{#if total > perPage}
 					<div class="flex justify-center mt-4 mb-2">
-						<Pagination bind:page count={total} perPage={30} />
+						<Pagination bind:page count={total} {perPage} />
 					</div>
 				{/if}
 			{:else}
@@ -818,7 +1092,11 @@
 			/>
 		{/if}
 	{:else}
-		<div class="w-full h-full flex justify-center items-center">
+		<div
+			class="w-full h-full flex justify-center items-center"
+			bind:this={loadingElement}
+			bind:clientWidth={gridWidth}
+		>
 			<Spinner className="size-5" />
 		</div>
 	{/if}

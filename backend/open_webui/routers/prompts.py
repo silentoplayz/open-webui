@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
@@ -74,11 +74,10 @@ async def get_prompt_list(
     order_by: str | None = None,
     direction: str | None = None,
     page: int | None = 1,
+    limit: int = Query(PAGE_ITEM_COUNT, ge=1, le=100),
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    limit = PAGE_ITEM_COUNT
-
     page = max(1, page)
     skip = (page - 1) * limit
 

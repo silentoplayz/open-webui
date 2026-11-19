@@ -103,7 +103,8 @@ export const getSkillItems = async (
 	page: number | null = null,
 	orderBy: string | null = null,
 	direction: string | null = null,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	limit: number | null = null
 ) => {
 	let error = null;
 
@@ -111,6 +112,7 @@ export const getSkillItems = async (
 	if (query) searchParams.append('query', query);
 	if (viewOption) searchParams.append('view_option', viewOption);
 	if (page) searchParams.append('page', page.toString());
+	if (limit) searchParams.append('limit', limit.toString());
 	if (orderBy) searchParams.append('order_by', orderBy);
 	if (direction) searchParams.append('direction', direction);
 

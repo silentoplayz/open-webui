@@ -145,7 +145,8 @@ export const getPromptItems = async (
 	orderBy: string | null,
 	direction: string | null,
 	page: number,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	limit: number | null = null
 ) => {
 	let error = null;
 
@@ -167,6 +168,9 @@ export const getPromptItems = async (
 	}
 	if (page) {
 		searchParams.append('page', page.toString());
+	}
+	if (limit) {
+		searchParams.append('limit', limit.toString());
 	}
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/list?${searchParams.toString()}`, {

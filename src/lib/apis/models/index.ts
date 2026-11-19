@@ -19,7 +19,8 @@ export const getModelItems = async (
 	orderBy,
 	direction,
 	page,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	limit: number | null = null
 ) => {
 	let error = null;
 
@@ -41,6 +42,9 @@ export const getModelItems = async (
 	}
 	if (page) {
 		searchParams.append('page', page.toString());
+	}
+	if (limit) {
+		searchParams.append('limit', limit.toString());
 	}
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/models/list?${searchParams.toString()}`, {

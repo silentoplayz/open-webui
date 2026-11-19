@@ -34,6 +34,7 @@
 	import ItemMenu from './Knowledge/ItemMenu.svelte';
 	import KnowledgeEditor from './Knowledge/KnowledgeEditor.svelte';
 	import Badge from '../common/Badge.svelte';
+	import DropdownOptions from '$lib/components/common/DropdownOptions.svelte';
 	import ChevronDown from '../icons/ChevronDown.svelte';
 	import ChevronUp from '../icons/ChevronUp.svelte';
 	import Modal from '../common/Modal.svelte';
@@ -76,6 +77,7 @@
 	let searchDebounceTimer: ReturnType<typeof setTimeout>;
 	let searchController: AbortController;
 	let viewOption = '';
+	let displayOption = null;
 	let sourceOption = '';
 	$: hasFilters = Boolean(query || viewOption || sourceOption);
 
@@ -294,6 +296,7 @@
 
 	onMount(async () => {
 		viewOption = localStorage?.workspaceViewOption || '';
+		displayOption = localStorage?.workspaceDisplayOption ?? null;
 		sourceOption = localStorage?.workspaceKnowledgeSourceOption || '';
 		loaded = true;
 		await tick();
@@ -401,6 +404,22 @@
 								await tick();
 							}}
 						/>
+
+						<DropdownOptions
+							align="end"
+							bind:value={displayOption}
+							items={[
+								{ value: null, label: $i18n.t('List') },
+								{ value: 'grid', label: $i18n.t('Grid') }
+							]}
+							onChange={() => {
+								if (displayOption) {
+									localStorage.workspaceDisplayOption = displayOption;
+								} else {
+									delete localStorage.workspaceDisplayOption;
+								}
+							}}
+						/>
 					</div>
 				</div>
 			</div>
@@ -408,170 +427,304 @@
 			{#if items !== null && total !== null}
 				{#if (items ?? []).length !== 0}
 					<div class="@container">
-						<div
-							class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-6 text-xs text-gray-500 dark:text-gray-400"
-						>
-							<button
-								class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
-								type="button"
-								on:click={() => setSortKey('name')}
+						{#if displayOption === null}
+							<div
+								class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-6 text-xs text-gray-500 dark:text-gray-400"
 							>
-								{$i18n.t('Name')}
-								{#if sortKey === 'name'}
-									{#if sortDirection === 'asc'}
-										<ChevronUp className="size-2" />
-									{:else}
-										<ChevronDown className="size-2" />
-									{/if}
-								{/if}
-							</button>
-
-							<div class="@max-[48rem]:hidden">{$i18n.t('Owner')}</div>
-
-							<button
-								class="@max-[36rem]:hidden flex min-w-0 items-center gap-1 py-0.5 text-left"
-								type="button"
-								on:click={() => setSortKey('updated_at')}
-							>
-								{$i18n.t('Updated at')}
-								{#if sortKey === 'updated_at'}
-									{#if sortDirection === 'asc'}
-										<ChevronUp className="size-2" />
-									{:else}
-										<ChevronDown className="size-2" />
-									{/if}
-								{/if}
-							</button>
-							<span class="sr-only">{$i18n.t('Actions')}</span>
-						</div>
-
-						<div class="grid gap-y-0.5">
-							{#each items as item}
-								{@const metaPreview = getKnowledgeMetaPreview(item)}
-								<div
-									class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-12 rounded-lg py-1.5 hover:bg-black/[0.03] dark:hover:bg-white/[0.03] group cursor-pointer text-left"
-									role="presentation"
-									on:click={(e) => {
-										if (shouldIgnoreRowClick(e.target)) return;
-										openKnowledge(item);
-									}}
+								<button
+									class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
+									type="button"
+									on:click={() => setSortKey('name')}
 								>
-									<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-										<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-											<div class="flex min-w-0 items-center gap-2 overflow-hidden">
-												<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-													<Tooltip
-														content={item?.description ?? item.name}
-														className="min-w-0"
-														placement="top-start"
-													>
-														{#if !item?.meta?.document}
-															<a
-																href={`/workspace/knowledge/${item.id}`}
-																class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
-																>{item.name}</a
-															>
-														{:else}
-															<span
-																class="block truncate text-[0.8125rem] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
-																>{item.name}</span
-															>
-														{/if}
-													</Tooltip>
-													{#if !item?.write_access || item?.meta?.source === 'external'}
-														<Badge type="subtle" content={$i18n.t('Read Only')} />
-													{/if}
+									{$i18n.t('Name')}
+									{#if sortKey === 'name'}
+										{#if sortDirection === 'asc'}
+											<ChevronUp className="size-2" />
+										{:else}
+											<ChevronDown className="size-2" />
+										{/if}
+									{/if}
+								</button>
 
-													{#if item?.meta?.source === 'external'}
-														<Badge
-															type="muted"
-															content={item?.meta?.external?.provider ?? $i18n.t('Connected')}
-														/>
+								<div class="@max-[48rem]:hidden">{$i18n.t('Owner')}</div>
+
+								<button
+									class="@max-[36rem]:hidden flex min-w-0 items-center gap-1 py-0.5 text-left"
+									type="button"
+									on:click={() => setSortKey('updated_at')}
+								>
+									{$i18n.t('Updated at')}
+									{#if sortKey === 'updated_at'}
+										{#if sortDirection === 'asc'}
+											<ChevronUp className="size-2" />
+										{:else}
+											<ChevronDown className="size-2" />
+										{/if}
+									{/if}
+								</button>
+								<span class="sr-only">{$i18n.t('Actions')}</span>
+							</div>
+
+							<div class="grid gap-y-0.5">
+								{#each items as item}
+									{@const metaPreview = getKnowledgeMetaPreview(item)}
+									<div
+										class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-12 rounded-lg py-1.5 hover:bg-black/[0.03] dark:hover:bg-white/[0.03] group cursor-pointer text-left"
+										role="presentation"
+										on:click={(e) => {
+											if (shouldIgnoreRowClick(e.target)) return;
+											openKnowledge(item);
+										}}
+									>
+										<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+											<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+												<div class="flex min-w-0 items-center gap-2 overflow-hidden">
+													<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+														<Tooltip
+															content={item?.description ?? item.name}
+															className="min-w-0"
+															placement="top-start"
+														>
+															{#if !item?.meta?.document}
+																<a
+																	href={`/workspace/knowledge/${item.id}`}
+																	class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+																	>{item.name}</a
+																>
+															{:else}
+																<span
+																	class="block truncate text-[0.8125rem] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
+																	>{item.name}</span
+																>
+															{/if}
+														</Tooltip>
+														{#if !item?.write_access || item?.meta?.source === 'external'}
+															<Badge type="subtle" content={$i18n.t('Read Only')} />
+														{/if}
+
+														{#if item?.meta?.source === 'external'}
+															<Badge
+																type="muted"
+																content={item?.meta?.external?.provider ?? $i18n.t('Connected')}
+															/>
+														{/if}
+													</div>
+												</div>
+
+												<div class="mt-0.5 min-w-0">
+													{#if metaPreview}
+														<Tooltip
+															content={metaPreview}
+															className="min-w-0"
+															placement="top-start"
+														>
+															<div
+																class="truncate text-xs leading-4 text-gray-500 dark:text-gray-400"
+															>
+																{metaPreview}
+															</div>
+														</Tooltip>
 													{/if}
 												</div>
 											</div>
+										</div>
 
-											<div class="mt-0.5 min-w-0">
-												{#if metaPreview}
-													<Tooltip content={metaPreview} className="min-w-0" placement="top-start">
-														<div
-															class="truncate text-xs leading-4 text-gray-500 dark:text-gray-400"
+										<div
+											class="@max-[48rem]:hidden min-w-0 text-xs text-gray-600 dark:text-gray-400"
+										>
+											<ProfilePreview
+												user={item?.user ?? null}
+												side="bottom"
+												className="w-full min-w-0"
+											>
+												<span class="flex w-full min-w-0 items-center gap-2">
+													<ProfileImage
+														src={item?.user?.id
+															? `/api/v1/users/${item.user.id}/profile/image`
+															: '/user.png'}
+														className="size-5 shrink-0 rounded-full!"
+													/>
+													<span class="min-w-0 truncate">
+														{capitalizeFirstLetter(
+															item?.user?.name ?? item?.user?.email ?? $i18n.t('Deleted User')
+														)}
+													</span>
+												</span>
+											</ProfilePreview>
+										</div>
+										<Tooltip
+											content={dayjs(item.updated_at * 1000)
+												.locale($i18n.language)
+												.format('LLLL')}
+											className="@max-[36rem]:hidden min-w-0"
+										>
+											<div
+												class="shrink-0 truncate text-xs leading-5 text-gray-500 dark:text-gray-400"
+											>
+												{dayjs(item.updated_at * 1000)
+													.locale($i18n.language)
+													.fromNow()}
+											</div>
+										</Tooltip>
+										<div class="flex min-w-0 items-center justify-end gap-1.5">
+											<CommentButton
+												onComment={(request) => (comments = request)}
+												modal
+												className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+												resource={{ resource_type: 'knowledge', resource_id: item.id }}
+											/>
+											{#if item?.write_access || $user?.role === 'admin'}
+												<div class="flex shrink-0 flex-row items-center self-center">
+													<ItemMenu
+														onComment={(request) => (comments = request)}
+														resourceId={item.id}
+														accessHandler={$user?.permissions?.sharing?.knowledge ||
+														$user?.role === 'admin'
+															? () => accessModal.open(item.id)
+															: null}
+														onExport={$user?.role === 'admin'
+															? () => {
+																	exportHandler(item);
+																}
+															: null}
+														on:delete={() => {
+															selectedItem = item;
+															showDeleteConfirm = true;
+														}}
+													/>
+												</div>
+											{/if}
+										</div>
+									</div>
+								{/each}
+							</div>
+						{:else if displayOption === 'grid'}
+							<div
+								class="grid grid-cols-[repeat(auto-fill,minmax(min(15rem,100%),1fr))] gap-2.5 py-1"
+							>
+								{#each items as item}
+									{@const metaPreview = getKnowledgeMetaPreview(item)}
+									<div
+										class="group flex min-w-0 flex-col gap-2 rounded-xl border border-black/[0.06] bg-gray-50/40 p-3 text-left transition-colors duration-75 hover:bg-black/[0.03] dark:border-white/[0.06] dark:bg-gray-900 dark:hover:bg-white/[0.03] cursor-pointer"
+										role="presentation"
+										on:click={(e) => {
+											if (shouldIgnoreRowClick(e.target)) return;
+											openKnowledge(item);
+										}}
+									>
+										<div class="flex min-w-0 items-center gap-2">
+											<div class="flex min-w-0 flex-1 items-center gap-1">
+												<Tooltip
+													content={item?.description ?? item.name}
+													className="min-w-0"
+													placement="top-start"
+												>
+													{#if !item?.meta?.document}
+														<a
+															href={`/workspace/knowledge/${item.id}`}
+															class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+															>{item.name}</a
 														>
-															{metaPreview}
-														</div>
-													</Tooltip>
+													{:else}
+														<span
+															class="block truncate text-[0.8125rem] leading-5 text-gray-800 dark:text-gray-200"
+															>{item.name}</span
+														>
+													{/if}
+												</Tooltip>
+												{#if !item?.write_access || item?.meta?.source === 'external'}
+													<Badge type="subtle" content={$i18n.t('Read Only')} />
+												{/if}
+
+												{#if item?.meta?.source === 'external'}
+													<Badge
+														type="muted"
+														content={item?.meta?.external?.provider ?? $i18n.t('Connected')}
+													/>
+												{/if}
+											</div>
+											<div class="flex shrink-0 items-center gap-0.5">
+												{#if item?.write_access || $user?.role === 'admin'}
+													<ItemMenu
+														onComment={(request) => (comments = request)}
+														resourceId={item.id}
+														accessHandler={$user?.permissions?.sharing?.knowledge ||
+														$user?.role === 'admin'
+															? () => accessModal.open(item.id)
+															: null}
+														onExport={$user?.role === 'admin'
+															? () => {
+																	exportHandler(item);
+																}
+															: null}
+														on:delete={() => {
+															selectedItem = item;
+															showDeleteConfirm = true;
+														}}
+													/>
 												{/if}
 											</div>
 										</div>
-									</div>
 
-									<div class="@max-[48rem]:hidden min-w-0 text-xs text-gray-600 dark:text-gray-400">
-										<ProfilePreview
-											user={item?.user ?? null}
-											side="bottom"
-											className="w-full min-w-0"
-										>
-											<span class="flex w-full min-w-0 items-center gap-2">
-												<ProfileImage
-													src={item?.user?.id
-														? `/api/v1/users/${item.user.id}/profile/image`
-														: '/user.png'}
-													className="size-5 shrink-0 rounded-full!"
-												/>
-												<span class="min-w-0 truncate">
-													{capitalizeFirstLetter(
-														item?.user?.name ?? item?.user?.email ?? $i18n.t('Deleted User')
-													)}
-												</span>
-											</span>
-										</ProfilePreview>
-									</div>
-									<Tooltip
-										content={dayjs(item.updated_at * 1000)
-											.locale($i18n.language)
-											.format('LLLL')}
-										className="@max-[36rem]:hidden min-w-0"
-									>
-										<div
-											class="shrink-0 truncate text-xs leading-5 text-gray-500 dark:text-gray-400"
-										>
-											{dayjs(item.updated_at * 1000)
-												.locale($i18n.language)
-												.fromNow()}
-										</div>
-									</Tooltip>
-									<div class="flex min-w-0 items-center justify-end gap-1.5">
-										<CommentButton
-											onComment={(request) => (comments = request)}
-											modal
-											className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-											resource={{ resource_type: 'knowledge', resource_id: item.id }}
-										/>
-										{#if item?.write_access || $user?.role === 'admin'}
-											<div class="flex shrink-0 flex-row items-center self-center">
-												<ItemMenu
+										<Tooltip content={metaPreview} className="min-w-0" placement="top-start">
+											<div
+												class="line-clamp-2 min-h-8 break-words text-xs leading-4 text-gray-500 dark:text-gray-400"
+											>
+												{metaPreview}
+											</div>
+										</Tooltip>
+
+										<div class="mt-auto flex min-w-0 items-center justify-between gap-2">
+											<div
+												class="flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400"
+											>
+												<div class="min-w-0">
+													<ProfilePreview
+														user={item?.user ?? null}
+														side="bottom"
+														className="w-full min-w-0"
+													>
+														<span class="flex w-full min-w-0 items-center gap-1.5">
+															<ProfileImage
+																src={item?.user?.id
+																	? `/api/v1/users/${item.user.id}/profile/image`
+																	: '/user.png'}
+																className="size-4 shrink-0 rounded-full!"
+															/>
+															<span class="min-w-0 truncate">
+																{capitalizeFirstLetter(
+																	item?.user?.name ?? item?.user?.email ?? $i18n.t('Deleted User')
+																)}
+															</span>
+														</span>
+													</ProfilePreview>
+												</div>
+												<Tooltip
+													content={dayjs(item.updated_at * 1000)
+														.locale($i18n.language)
+														.format('LLLL')}
+													className="shrink-0"
+												>
+													<span class="whitespace-nowrap text-gray-400 dark:text-gray-500"
+														>{dayjs(item.updated_at * 1000)
+															.locale($i18n.language)
+															.fromNow()}</span
+													>
+												</Tooltip>
+											</div>
+											<div class="flex shrink-0 items-center gap-1.5">
+												<CommentButton
 													onComment={(request) => (comments = request)}
-													resourceId={item.id}
-													accessHandler={$user?.permissions?.sharing?.knowledge ||
-													$user?.role === 'admin'
-														? () => accessModal.open(item.id)
-														: null}
-													onExport={$user?.role === 'admin'
-														? () => {
-																exportHandler(item);
-															}
-														: null}
-													on:delete={() => {
-														selectedItem = item;
-														showDeleteConfirm = true;
-													}}
+													modal
+													className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+													resource={{ resource_type: 'knowledge', resource_id: item.id }}
 												/>
 											</div>
-										{/if}
+										</div>
 									</div>
-								</div>
-							{/each}
-						</div>
+								{/each}
+							</div>
+						{/if}
 					</div>
 
 					{#if !allItemsLoaded}

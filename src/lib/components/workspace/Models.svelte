@@ -80,6 +80,7 @@
 	import CommunityDiscover from './common/CommunityDiscover.svelte';
 	import Pagination from '../common/Pagination.svelte';
 	import Badge from '$lib/components/common/Badge.svelte';
+	import DropdownOptions from '$lib/components/common/DropdownOptions.svelte';
 
 	let shiftKey = false;
 
@@ -101,12 +102,20 @@
 
 	let query = '';
 	let viewOption = '';
+	let displayOption = null;
 	$: hasFilters = Boolean(query || viewOption || selectedTag);
 
 	let sortKey = 'updated_at';
 	let sortDirection = 'desc';
 
 	let page = 1;
+	let perPage = 0;
+	let gridWidth = 0;
+	let innerHeight = 0;
+	let gridHeight = 0;
+	let gridRows = 1;
+	let wrapperElement: HTMLDivElement;
+	let loadingElement: HTMLDivElement;
 	let models = null;
 	let total = null;
 
@@ -142,13 +151,46 @@
 		]);
 	}
 
+	const setPerPage = (value: number) => {
+		if (value === perPage) return;
+		page = Math.floor(((page - 1) * perPage) / value) + 1;
+		perPage = value;
+	};
+
+	$: if (gridWidth && innerHeight && $settings) {
+		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+		const gap = rem * 0.625;
+		const columns = Math.max(
+			1,
+			Math.floor((gridWidth + gap) / (Math.min(rem * 15, gridWidth) + gap))
+		);
+		gridHeight =
+			columns > 1
+				? Math.max(
+						rem * 7.6,
+						innerHeight -
+							(wrapperElement?.firstElementChild?.getBoundingClientRect().bottom ??
+								(loadingElement?.getBoundingClientRect().top ?? 0) + rem * 2) -
+							rem * ($config?.features?.enable_community_sharing ? 13 : 5.5)
+					)
+				: 0;
+		gridRows = gridHeight
+			? Math.max(
+					1,
+					Math.min(Math.floor(100 / columns), Math.floor((gridHeight + gap) / (rem * 7.6 + gap)))
+				)
+			: 30;
+		setPerPage(displayOption === 'grid' ? columns * gridRows : 30);
+	}
+
 	$: if (
 		loaded &&
 		page !== undefined &&
 		selectedTag !== undefined &&
 		viewOption !== undefined &&
 		sortKey !== undefined &&
-		sortDirection !== undefined
+		sortDirection !== undefined &&
+		perPage
 	) {
 		getModelList();
 	}
@@ -219,7 +261,8 @@
 				sortKey,
 				sortDirection,
 				page,
-				signal
+				signal,
+				perPage
 			).catch((error) => {
 				if (!signal.aborted) toast.error(`${error}`);
 				return null;
@@ -466,6 +509,7 @@
 
 	onMount(async () => {
 		viewOption = localStorage.workspaceViewOption ?? '';
+		displayOption = localStorage?.workspaceDisplayOption ?? null;
 		page = 1;
 
 		let groups = await getGroups(localStorage.token);
@@ -512,6 +556,8 @@
 	});
 	import PageTitle from '$lib/components/common/PageTitle.svelte';
 </script>
+
+<svelte:window bind:innerHeight />
 
 <WorkspaceAccessModal bind:this={accessModal} resourceType="models" onUpdated={getModelList} />
 
@@ -576,7 +622,7 @@
 			}}
 		/>
 
-		<div class="space-y-0">
+		<div class="space-y-0" bind:this={wrapperElement} bind:clientWidth={gridWidth}>
 			<div class="flex h-8 flex-1 items-center w-full gap-2">
 				<div class="flex min-w-0 flex-1 items-center">
 					<div class=" self-center ml-1 mr-3">
@@ -651,6 +697,22 @@
 								}}
 							/>
 						{/if}
+
+						<DropdownOptions
+							align="end"
+							bind:value={displayOption}
+							items={[
+								{ value: null, label: $i18n.t('List') },
+								{ value: 'grid', label: $i18n.t('Grid') }
+							]}
+							onChange={() => {
+								if (displayOption) {
+									localStorage.workspaceDisplayOption = displayOption;
+								} else {
+									delete localStorage.workspaceDisplayOption;
+								}
+							}}
+						/>
 					</div>
 
 					<Dropdown align="end">
@@ -721,212 +783,396 @@
 				{#if (models ?? []).length !== 0}
 					<!-- Previous labels retained for i18n extraction: {$i18n.t('Sort by')} -->
 					<div class="@container" id="model-list">
-						<div
-							class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-6 text-xs text-gray-500 dark:text-gray-400"
-						>
-							<button
-								class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
-								type="button"
-								on:click={() => setSortKey('name')}
+						{#if displayOption === null}
+							<div
+								class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-6 text-xs text-gray-500 dark:text-gray-400"
 							>
-								{$i18n.t('Name')}
-								{#if sortKey === 'name'}
-									{#if sortDirection === 'asc'}
-										<ChevronUp className="size-2" />
-									{:else}
-										<ChevronDown className="size-2" />
-									{/if}
-								{/if}
-							</button>
-
-							<div class="@max-[48rem]:hidden">{$i18n.t('Owner')}</div>
-
-							<button
-								class="@max-[36rem]:hidden flex min-w-0 items-center gap-1 py-0.5 text-left"
-								type="button"
-								on:click={() => setSortKey('updated_at')}
-							>
-								{$i18n.t('Updated at')}
-								{#if sortKey === 'updated_at'}
-									{#if sortDirection === 'asc'}
-										<ChevronUp className="size-2" />
-									{:else}
-										<ChevronDown className="size-2" />
-									{/if}
-								{/if}
-							</button>
-							<span class="sr-only">{$i18n.t('Actions')}</span>
-						</div>
-
-						<div class="grid gap-y-0.5">
-							{#each models as model (model.id)}
-								{@const localizedModelName = resolveLocalizedModelName(model, $i18n.language)}
-								<div
-									class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-12 rounded-lg py-1.5 hover:bg-black/[0.03] dark:hover:bg-white/[0.03] group text-left {model.write_access
-										? 'cursor-pointer'
-										: ''} {model?.meta?.hidden ? 'opacity-50 dark:opacity-50' : ''}"
-									id="model-item-{model.id}"
-									role="presentation"
-									on:click={(e) => {
-										if (shouldIgnoreRowClick(e.target)) return;
-										openModel(model);
-									}}
+								<button
+									class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
+									type="button"
+									on:click={() => setSortKey('name')}
 								>
-									<div class="flex min-w-0 items-center gap-2">
-										<div class="shrink-0 self-center">
-											<div
-												class="{model.is_active ? '' : 'opacity-50 dark:opacity-50'} bg-transparent"
-											>
-												<img
-													src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model.id}&lang=${$i18n.language}`}
-													alt=""
-													class="size-7 rounded-lg object-cover"
-													loading="lazy"
-													decoding="async"
-													on:error={(e) => {
-														// LICENSE covers this Open WebUI fallback logo.
-														// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-														// https://docs.openwebui.com/license.
-														e.target.src = '/favicon.png';
-													}}
-												/>
-											</div>
-										</div>
-										<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-											<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-												<div class="flex min-w-0 items-center gap-2 overflow-hidden">
-													<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-														<Tooltip content={model.id} className="min-w-0" placement="top-start">
-															{#if model.write_access}
-																<a
-																	href={`/workspace/models/edit?id=${encodeURIComponent(model.id)}`}
-																	class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
-																	>{localizedModelName}</a
-																>
-															{:else}
-																<span
-																	class="block truncate text-[0.8125rem] leading-5 text-gray-800 dark:text-gray-200"
-																	>{localizedModelName}</span
-																>
-															{/if}
-														</Tooltip>
-														{#if !model.write_access}
-															<Badge type="subtle" content={$i18n.t('Read Only')} />
-														{/if}
+									{$i18n.t('Name')}
+									{#if sortKey === 'name'}
+										{#if sortDirection === 'asc'}
+											<ChevronUp className="size-2" />
+										{:else}
+											<ChevronDown className="size-2" />
+										{/if}
+									{/if}
+								</button>
 
-														<Tooltip
-															content={$i18n.t('Try in chat')}
-															className="-ml-0.5 h-5 w-4 shrink-0"
-															tippyOptions={{ trigger: 'mouseenter focusin' }}
-														>
-															<a
-																href={`/?model=${encodeURIComponent(model.id)}`}
-																aria-label={`${$i18n.t('Try in chat')}: ${localizedModelName}`}
-																class="focus-ring flex h-5 w-4 items-center justify-center rounded text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
-																><ArrowRight className="size-3 -rotate-45" strokeWidth="2" /></a
+								<div class="@max-[48rem]:hidden">{$i18n.t('Owner')}</div>
+
+								<button
+									class="@max-[36rem]:hidden flex min-w-0 items-center gap-1 py-0.5 text-left"
+									type="button"
+									on:click={() => setSortKey('updated_at')}
+								>
+									{$i18n.t('Updated at')}
+									{#if sortKey === 'updated_at'}
+										{#if sortDirection === 'asc'}
+											<ChevronUp className="size-2" />
+										{:else}
+											<ChevronDown className="size-2" />
+										{/if}
+									{/if}
+								</button>
+								<span class="sr-only">{$i18n.t('Actions')}</span>
+							</div>
+
+							<div class="grid gap-y-0.5">
+								{#each models as model (model.id)}
+									{@const localizedModelName = resolveLocalizedModelName(model, $i18n.language)}
+									<div
+										class="grid grid-cols-[minmax(0,1fr)_9rem_8rem_9.5rem] items-center gap-x-4 px-2 @max-[48rem]:grid-cols-[minmax(0,1fr)_7rem_9.5rem] @max-[48rem]:gap-x-3 @max-[36rem]:grid-cols-[minmax(0,1fr)_9.5rem] @max-[36rem]:gap-x-2 min-h-12 rounded-lg py-1.5 hover:bg-black/[0.03] dark:hover:bg-white/[0.03] group text-left {model.write_access
+											? 'cursor-pointer'
+											: ''} {model?.meta?.hidden ? 'opacity-50 dark:opacity-50' : ''}"
+										id="model-item-{model.id}"
+										role="presentation"
+										on:click={(e) => {
+											if (shouldIgnoreRowClick(e.target)) return;
+											openModel(model);
+										}}
+									>
+										<div class="flex min-w-0 items-center gap-2">
+											<div class="shrink-0 self-center">
+												<div
+													class="{model.is_active
+														? ''
+														: 'opacity-50 dark:opacity-50'} bg-transparent"
+												>
+													<img
+														src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model.id}&lang=${$i18n.language}`}
+														alt=""
+														class="size-7 rounded-lg object-cover"
+														loading="lazy"
+														decoding="async"
+														on:error={(e) => {
+															// LICENSE covers this Open WebUI fallback logo.
+															// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+															// https://docs.openwebui.com/license.
+															e.target.src = '/favicon.png';
+														}}
+													/>
+												</div>
+											</div>
+											<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+												<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+													<div class="flex min-w-0 items-center gap-2 overflow-hidden">
+														<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+															<Tooltip content={model.id} className="min-w-0" placement="top-start">
+																{#if model.write_access}
+																	<a
+																		href={`/workspace/models/edit?id=${encodeURIComponent(model.id)}`}
+																		class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+																		>{localizedModelName}</a
+																	>
+																{:else}
+																	<span
+																		class="block truncate text-[0.8125rem] leading-5 text-gray-800 dark:text-gray-200"
+																		>{localizedModelName}</span
+																	>
+																{/if}
+															</Tooltip>
+															{#if !model.write_access}
+																<Badge type="subtle" content={$i18n.t('Read Only')} />
+															{/if}
+
+															<Tooltip
+																content={$i18n.t('Try in chat')}
+																className="-ml-0.5 h-5 w-4 shrink-0"
+																tippyOptions={{ trigger: 'mouseenter focusin' }}
 															>
+																<a
+																	href={`/?model=${encodeURIComponent(model.id)}`}
+																	aria-label={`${$i18n.t('Try in chat')}: ${localizedModelName}`}
+																	class="focus-ring flex h-5 w-4 items-center justify-center rounded text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
+																	><ArrowRight className="size-3 -rotate-45" strokeWidth="2" /></a
+																>
+															</Tooltip>
+														</div>
+													</div>
+
+													<div class="mt-0.5 min-w-0">
+														<Tooltip
+															content={(
+																resolveLocalizedModelDescription(model, $i18n.language) ?? ''
+															).trim() || $i18n.t('No description')}
+															className="min-w-0"
+															placement="top-start"
+														>
+															<div
+																class="truncate text-xs leading-4 text-gray-500 dark:text-gray-400"
+															>
+																{(
+																	resolveLocalizedModelDescription(model, $i18n.language) ?? ''
+																).trim() || $i18n.t('No description')}
+															</div>
 														</Tooltip>
 													</div>
 												</div>
+											</div>
+										</div>
 
-												<div class="mt-0.5 min-w-0">
+										<div
+											class="@max-[48rem]:hidden min-w-0 text-xs text-gray-600 dark:text-gray-400"
+										>
+											<ProfilePreview
+												user={model?.user ?? null}
+												side="bottom"
+												className="w-full min-w-0"
+											>
+												<span class="flex w-full min-w-0 items-center gap-2">
+													<ProfileImage
+														src={model?.user?.id
+															? `/api/v1/users/${model.user.id}/profile/image`
+															: '/user.png'}
+														className="size-5 shrink-0 rounded-full!"
+													/>
+													<span class="min-w-0 truncate">
+														{capitalizeFirstLetter(
+															model?.user?.name ?? model?.user?.email ?? $i18n.t('Deleted User')
+														)}
+													</span>
+												</span>
+											</ProfilePreview>
+										</div>
+										<Tooltip
+											content={dayjs(model.updated_at * 1000)
+												.locale($i18n.language)
+												.format('LLLL')}
+											className="@max-[36rem]:hidden min-w-0"
+										>
+											<span class="text-xs leading-5 text-gray-500 dark:text-gray-400"
+												>{dayjs(model.updated_at * 1000)
+													.locale($i18n.language)
+													.fromNow()}</span
+											>
+										</Tooltip>
+										<div class="flex min-w-0 items-center justify-end gap-1.5">
+											<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
+												{#if shiftKey && model.write_access}
 													<Tooltip
-														content={(
-															resolveLocalizedModelDescription(model, $i18n.language) ?? ''
-														).trim() || $i18n.t('No description')}
-														className="min-w-0"
-														placement="top-start"
+														content={model?.meta?.hidden ? $i18n.t('Show') : $i18n.t('Hide')}
 													>
-														<div
-															class="truncate text-xs leading-4 text-gray-500 dark:text-gray-400"
+														<button
+															class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															type="button"
+															aria-label={model?.meta?.hidden ? $i18n.t('Show') : $i18n.t('Hide')}
+															on:click={(e) => {
+																e.preventDefault();
+																e.stopPropagation();
+																hideModelHandler(model);
+															}}
 														>
-															{(
-																resolveLocalizedModelDescription(model, $i18n.language) ?? ''
-															).trim() || $i18n.t('No description')}
-														</div>
+															{#if model?.meta?.hidden}
+																<EyeSlash className="size-4" />
+															{:else}
+																<Eye className="size-4" />
+															{/if}
+														</button>
 													</Tooltip>
-												</div>
+
+													<Tooltip content={$i18n.t('Delete')}>
+														<button
+															class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															type="button"
+															aria-label={$i18n.t('Delete')}
+															on:click={(e) => {
+																e.preventDefault();
+																e.stopPropagation();
+																confirmDeleteModel(model);
+															}}
+														>
+															<GarbageBin className="size-4" />
+														</button>
+													</Tooltip>
+												{:else}
+													<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
+														<CommentButton
+															onComment={(request) => (comments = request)}
+															modal
+															className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															resource={{ resource_type: 'model', resource_id: model.id }}
+														/>
+														<ModelMenu
+															onComment={(request) => (comments = request)}
+															accessHandler={$user?.permissions?.sharing?.models ||
+															$user?.role === 'admin'
+																? () => accessModal.open(model.id)
+																: null}
+															user={$user}
+															{model}
+															writeAccess={model.write_access}
+															editHandler={() => {
+																goto(`/workspace/models/edit?id=${encodeURIComponent(model.id)}`);
+															}}
+															shareHandler={() => {
+																shareModelHandler(model);
+															}}
+															cloneHandler={() => {
+																cloneModelHandler(model);
+															}}
+															exportHandler={() => {
+																exportModelHandler(model);
+															}}
+															hideHandler={() => {
+																hideModelHandler(model);
+															}}
+															pinModelHandler={() => {
+																pinModelHandler(model.id);
+															}}
+															copyLinkHandler={() => {
+																copyLinkHandler(model);
+															}}
+															deleteHandler={() => {
+																confirmDeleteModel(model);
+															}}
+															onClose={() => {}}
+														>
+															<div
+																class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															>
+																<EllipsisHorizontal className="size-4" />
+															</div>
+														</ModelMenu>
+
+														{#if model.write_access}
+															<Tooltip
+																content={updatingModels[model.id]
+																	? $i18n.t('Saving...')
+																	: model.is_active
+																		? $i18n.t('Enabled')
+																		: $i18n.t('Disabled')}
+															>
+																<Switch
+																	bind:state={model.is_active}
+																	disabled={updatingModels[model.id] ?? false}
+																	ariaLabel={`${$i18n.t('Enabled')}: ${localizedModelName}`}
+																	on:change={() => toggleModelHandler(model)}
+																/>
+															</Tooltip>
+														{:else}
+															<Switch
+																state={model.is_active}
+																disabled
+																tooltip={$i18n.t('Read Only')}
+																ariaLabel={`${$i18n.t('Enabled')}: ${localizedModelName}`}
+															/>
+														{/if}
+													</div>
+												{/if}
 											</div>
 										</div>
 									</div>
-
-									<div class="@max-[48rem]:hidden min-w-0 text-xs text-gray-600 dark:text-gray-400">
-										<ProfilePreview
-											user={model?.user ?? null}
-											side="bottom"
-											className="w-full min-w-0"
-										>
-											<span class="flex w-full min-w-0 items-center gap-2">
-												<ProfileImage
-													src={model?.user?.id
-														? `/api/v1/users/${model.user.id}/profile/image`
-														: '/user.png'}
-													className="size-5 shrink-0 rounded-full!"
-												/>
-												<span class="min-w-0 truncate">
-													{capitalizeFirstLetter(
-														model?.user?.name ?? model?.user?.email ?? $i18n.t('Deleted User')
-													)}
-												</span>
-											</span>
-										</ProfilePreview>
-									</div>
-									<Tooltip
-										content={dayjs(model.updated_at * 1000)
-											.locale($i18n.language)
-											.format('LLLL')}
-										className="@max-[36rem]:hidden min-w-0"
+								{/each}
+							</div>
+						{:else if displayOption === 'grid'}
+							<div
+								class="grid grid-cols-[repeat(auto-fill,minmax(min(15rem,100%),1fr))] gap-2.5 py-1"
+								style={gridHeight
+									? `grid-template-rows: repeat(${gridRows}, minmax(0, 1fr)); height: ${gridHeight}px;`
+									: ''}
+							>
+								{#each models as model (model.id)}
+									{@const localizedModelName = resolveLocalizedModelName(model, $i18n.language)}
+									<div
+										class="group flex min-w-0 flex-col gap-2 rounded-xl border border-black/[0.06] bg-gray-50/40 p-3 text-left transition-colors duration-75 hover:bg-black/[0.03] dark:border-white/[0.06] dark:bg-gray-900 dark:hover:bg-white/[0.03] {model.write_access
+											? 'cursor-pointer'
+											: ''} {model?.meta?.hidden ? 'opacity-50 dark:opacity-50' : ''}"
+										role="presentation"
+										on:click={(e) => {
+											if (shouldIgnoreRowClick(e.target)) return;
+											openModel(model);
+										}}
 									>
-										<span class="text-xs leading-5 text-gray-500 dark:text-gray-400"
-											>{dayjs(model.updated_at * 1000)
-												.locale($i18n.language)
-												.fromNow()}</span
-										>
-									</Tooltip>
-									<div class="flex min-w-0 items-center justify-end gap-1.5">
-										<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
-											{#if shiftKey && model.write_access}
-												<Tooltip content={model?.meta?.hidden ? $i18n.t('Show') : $i18n.t('Hide')}>
-													<button
-														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-														type="button"
-														aria-label={model?.meta?.hidden ? $i18n.t('Show') : $i18n.t('Hide')}
-														on:click={(e) => {
-															e.preventDefault();
-															e.stopPropagation();
-															hideModelHandler(model);
-														}}
-													>
-														{#if model?.meta?.hidden}
-															<EyeSlash className="size-4" />
-														{:else}
-															<Eye className="size-4" />
-														{/if}
-													</button>
+										<div class="flex min-w-0 items-center gap-2">
+											<img
+												src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model.id}&lang=${$i18n.language}`}
+												alt=""
+												class="size-8 shrink-0 rounded-lg object-cover {model.is_active
+													? ''
+													: 'opacity-50 dark:opacity-50'}"
+												loading="lazy"
+												decoding="async"
+												on:error={(e) => {
+													// LICENSE covers this Open WebUI fallback logo.
+													// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+													// https://docs.openwebui.com/license.
+													e.target.src = '/favicon.png';
+												}}
+											/>
+											<div class="flex min-w-0 flex-1 items-center gap-1">
+												<Tooltip content={model.id} className="min-w-0" placement="top-start">
+													{#if model.write_access}
+														<a
+															href={`/workspace/models/edit?id=${encodeURIComponent(model.id)}`}
+															class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+															>{localizedModelName}</a
+														>
+													{:else}
+														<span
+															class="block truncate text-[0.8125rem] leading-5 text-gray-800 dark:text-gray-200"
+															>{localizedModelName}</span
+														>
+													{/if}
 												</Tooltip>
+												{#if !model.write_access}
+													<Badge type="subtle" content={$i18n.t('Read Only')} />
+												{/if}
 
-												<Tooltip content={$i18n.t('Delete')}>
-													<button
-														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-														type="button"
-														aria-label={$i18n.t('Delete')}
-														on:click={(e) => {
-															e.preventDefault();
-															e.stopPropagation();
-															confirmDeleteModel(model);
-														}}
+												<Tooltip
+													content={$i18n.t('Try in chat')}
+													className="-ml-0.5 h-5 w-4 shrink-0"
+													tippyOptions={{ trigger: 'mouseenter focusin' }}
+												>
+													<a
+														href={`/?model=${encodeURIComponent(model.id)}`}
+														aria-label={`${$i18n.t('Try in chat')}: ${localizedModelName}`}
+														class="focus-ring flex h-5 w-4 items-center justify-center rounded text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
+														><ArrowRight className="size-3 -rotate-45" strokeWidth="2" /></a
 													>
-														<GarbageBin className="size-4" />
-													</button>
 												</Tooltip>
-											{:else}
-												<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
-													<CommentButton
-														onComment={(request) => (comments = request)}
-														modal
-														className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-														resource={{ resource_type: 'model', resource_id: model.id }}
-													/>
+											</div>
+											<div class="flex shrink-0 items-center gap-0.5">
+												{#if shiftKey && model.write_access}
+													<Tooltip
+														content={model?.meta?.hidden ? $i18n.t('Show') : $i18n.t('Hide')}
+													>
+														<button
+															class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															type="button"
+															aria-label={model?.meta?.hidden ? $i18n.t('Show') : $i18n.t('Hide')}
+															on:click={(e) => {
+																e.preventDefault();
+																e.stopPropagation();
+																hideModelHandler(model);
+															}}
+														>
+															{#if model?.meta?.hidden}
+																<EyeSlash className="size-4" />
+															{:else}
+																<Eye className="size-4" />
+															{/if}
+														</button>
+													</Tooltip>
+
+													<Tooltip content={$i18n.t('Delete')}>
+														<button
+															class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															type="button"
+															aria-label={$i18n.t('Delete')}
+															on:click={(e) => {
+																e.preventDefault();
+																e.stopPropagation();
+																confirmDeleteModel(model);
+															}}
+														>
+															<GarbageBin className="size-4" />
+														</button>
+													</Tooltip>
+												{:else}
 													<ModelMenu
 														onComment={(request) => (comments = request)}
 														accessHandler={$user?.permissions?.sharing?.models ||
@@ -968,41 +1214,103 @@
 															<EllipsisHorizontal className="size-4" />
 														</div>
 													</ModelMenu>
+												{/if}
+											</div>
+										</div>
 
-													{#if model.write_access}
-														<Tooltip
-															content={updatingModels[model.id]
-																? $i18n.t('Saving...')
-																: model.is_active
-																	? $i18n.t('Enabled')
-																	: $i18n.t('Disabled')}
-														>
-															<Switch
-																bind:state={model.is_active}
-																disabled={updatingModels[model.id] ?? false}
-																ariaLabel={`${$i18n.t('Enabled')}: ${localizedModelName}`}
-																on:change={() => toggleModelHandler(model)}
+										<Tooltip
+											content={(
+												resolveLocalizedModelDescription(model, $i18n.language) ?? ''
+											).trim() || $i18n.t('No description')}
+											className="min-w-0"
+											placement="top-start"
+										>
+											<div
+												class="line-clamp-2 min-h-8 break-words text-xs leading-4 text-gray-500 dark:text-gray-400"
+											>
+												{(resolveLocalizedModelDescription(model, $i18n.language) ?? '').trim() ||
+													$i18n.t('No description')}
+											</div>
+										</Tooltip>
+
+										<div class="mt-auto flex min-w-0 items-center justify-between gap-2">
+											<div
+												class="flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400"
+											>
+												<div class="min-w-0">
+													<ProfilePreview
+														user={model?.user ?? null}
+														side="bottom"
+														className="w-full min-w-0"
+													>
+														<span class="flex w-full min-w-0 items-center gap-1.5">
+															<ProfileImage
+																src={model?.user?.id
+																	? `/api/v1/users/${model.user.id}/profile/image`
+																	: '/user.png'}
+																className="size-4 shrink-0 rounded-full!"
 															/>
-														</Tooltip>
-													{:else}
-														<Switch
-															state={model.is_active}
-															disabled
-															tooltip={$i18n.t('Read Only')}
-															ariaLabel={`${$i18n.t('Enabled')}: ${localizedModelName}`}
-														/>
-													{/if}
+															<span class="min-w-0 truncate">
+																{capitalizeFirstLetter(
+																	model?.user?.name ?? model?.user?.email ?? $i18n.t('Deleted User')
+																)}
+															</span>
+														</span>
+													</ProfilePreview>
 												</div>
-											{/if}
+												<Tooltip
+													content={dayjs(model.updated_at * 1000)
+														.locale($i18n.language)
+														.format('LLLL')}
+													className="shrink-0"
+												>
+													<span class="whitespace-nowrap text-gray-400 dark:text-gray-500"
+														>{dayjs(model.updated_at * 1000)
+															.locale($i18n.language)
+															.fromNow()}</span
+													>
+												</Tooltip>
+											</div>
+											<div class="flex shrink-0 items-center gap-1.5">
+												<CommentButton
+													onComment={(request) => (comments = request)}
+													modal
+													className="flex size-6 shrink-0 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+													resource={{ resource_type: 'model', resource_id: model.id }}
+												/>
+												{#if model.write_access}
+													<Tooltip
+														content={updatingModels[model.id]
+															? $i18n.t('Saving...')
+															: model.is_active
+																? $i18n.t('Enabled')
+																: $i18n.t('Disabled')}
+													>
+														<Switch
+															bind:state={model.is_active}
+															disabled={updatingModels[model.id] ?? false}
+															ariaLabel={`${$i18n.t('Enabled')}: ${localizedModelName}`}
+															on:change={() => toggleModelHandler(model)}
+														/>
+													</Tooltip>
+												{:else}
+													<Switch
+														state={model.is_active}
+														disabled
+														tooltip={$i18n.t('Read Only')}
+														ariaLabel={`${$i18n.t('Enabled')}: ${localizedModelName}`}
+													/>
+												{/if}
+											</div>
 										</div>
 									</div>
-								</div>
-							{/each}
-						</div>
+								{/each}
+							</div>
+						{/if}
 					</div>
 
-					{#if total > 30}
-						<Pagination bind:page count={total} perPage={30} />
+					{#if total > perPage}
+						<Pagination bind:page count={total} {perPage} />
 					{/if}
 				{:else}
 					<div class="flex w-full flex-col items-center justify-center py-16 pb-24">
@@ -1033,7 +1341,11 @@
 			/>
 		{/if}
 	{:else}
-		<div class="w-full h-full flex justify-center items-center">
+		<div
+			class="w-full h-full flex justify-center items-center"
+			bind:this={loadingElement}
+			bind:clientWidth={gridWidth}
+		>
 			<Spinner className="size-5" />
 		</div>
 	{/if}

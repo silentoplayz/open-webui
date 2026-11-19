@@ -48,6 +48,8 @@
 	import SplitCreateButton from '../common/SplitCreateButton.svelte';
 	import ChevronDown from '../icons/ChevronDown.svelte';
 	import ChevronUp from '../icons/ChevronUp.svelte';
+	import DropdownOptions from '$lib/components/common/DropdownOptions.svelte';
+	import Pagination from '../common/Pagination.svelte';
 
 	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
@@ -58,6 +60,7 @@
 
 	let tagsContainerElement: HTMLDivElement;
 	let viewOption = '';
+	let displayOption = null;
 	let sortKey = 'updated_at';
 	let sortDirection = 'desc';
 	let openFunctionMenuId: string | null = null;
@@ -80,6 +83,13 @@
 	let loaded = false;
 	let functions = null;
 	let filteredItems = [];
+	let page = 1;
+	let perPage = 30;
+	let gridWidth = 0;
+	let innerHeight = 0;
+	let gridHeight = 0;
+	let gridRows = 1;
+	let wrapperElement: HTMLDivElement;
 
 	const handleSearchInput = () => {
 		clearTimeout(searchDebounceTimer);
@@ -112,7 +122,39 @@
 		setFilteredItems();
 	}
 
+	const setPerPage = (value: number) => {
+		if (value === perPage) return;
+		page = Math.floor(((page - 1) * perPage) / value) + 1;
+		perPage = value;
+	};
+
+	$: if (gridWidth && innerHeight && $settings) {
+		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+		const gap = rem * 0.625;
+		const columns = Math.max(
+			1,
+			Math.floor((gridWidth + gap) / (Math.min(rem * 15, gridWidth) + gap))
+		);
+		gridHeight =
+			columns > 1
+				? Math.max(
+						rem * 7.6,
+						innerHeight -
+							(wrapperElement?.firstElementChild?.getBoundingClientRect().bottom ?? 0) -
+							rem * ($config?.features?.enable_community_sharing ? 13 : 5.5)
+					)
+				: 0;
+		gridRows = gridHeight
+			? Math.max(
+					1,
+					Math.min(Math.floor(100 / columns), Math.floor((gridHeight + gap) / (rem * 7.6 + gap)))
+				)
+			: 30;
+		setPerPage(displayOption === 'grid' ? columns * gridRows : 30);
+	}
+
 	const setFilteredItems = () => {
+		page = 1;
 		filteredItems = (functions ?? [])
 			.filter(
 				(f) =>
@@ -255,6 +297,7 @@
 
 	onMount(async () => {
 		viewOption = localStorage?.workspaceViewOption || '';
+		displayOption = localStorage?.workspaceDisplayOption ?? null;
 		functions = await getFunctionList(localStorage.token).catch((error) => {
 			toast.error(`${error}`);
 			return [];
@@ -294,6 +337,8 @@
 		clearTimeout(searchDebounceTimer);
 	});
 </script>
+
+<svelte:window bind:innerHeight />
 
 <svelte:head>
 	<!-- LICENSE covers this Open WebUI browser-title identifier.
@@ -379,7 +424,7 @@
 			</div>
 		</div>
 
-		<div class="space-y-1">
+		<div class="space-y-1" bind:this={wrapperElement} bind:clientWidth={gridWidth}>
 			<div class="flex h-8 flex-1 items-center w-full gap-2">
 				<div class="flex min-w-0 flex-1">
 					<div class=" self-center ml-1 mr-3">
@@ -442,272 +487,527 @@
 								{ value: 'event', label: $i18n.t('Event') }
 							]}
 						/>
+
+						<DropdownOptions
+							align="end"
+							bind:value={displayOption}
+							items={[
+								{ value: null, label: $i18n.t('List') },
+								{ value: 'grid', label: $i18n.t('Grid') }
+							]}
+							onChange={() => {
+								if (displayOption) {
+									localStorage.workspaceDisplayOption = displayOption;
+								} else {
+									delete localStorage.workspaceDisplayOption;
+								}
+							}}
+						/>
 					</div>
 				</div>
 			</div>
 
 			{#if (filteredItems ?? []).length !== 0}
 				<div class="my-1">
-					<div
-						class="flex w-full items-center gap-2 px-1.5 pb-0.5 text-xs text-gray-400 dark:text-gray-600"
-					>
-						<button
-							class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
-							type="button"
-							on:click={() => setSortKey('name')}
+					{#if displayOption === null}
+						<div
+							class="flex w-full items-center gap-2 px-1.5 pb-0.5 text-xs text-gray-400 dark:text-gray-600"
 						>
-							{$i18n.t('Title')}
-							{#if sortKey === 'name'}
-								{#if sortDirection === 'asc'}
-									<ChevronUp className="size-2" />
-								{:else}
-									<ChevronDown className="size-2" />
-								{/if}
-							{/if}
-						</button>
-
-						<div class="hidden w-44 shrink-0 md:block"></div>
-
-						<button
-							class="flex w-36 shrink-0 items-center justify-end gap-1 py-0.5 text-right"
-							type="button"
-							on:click={() => setSortKey('updated_at')}
-						>
-							{$i18n.t('Updated at')}
-							{#if sortKey === 'updated_at'}
-								{#if sortDirection === 'asc'}
-									<ChevronUp className="size-2" />
-								{:else}
-									<ChevronDown className="size-2" />
-								{/if}
-							{/if}
-						</button>
-					</div>
-
-					<div class="grid gap-y-0.5">
-						{#each filteredItems as func (func.id)}
-							<div
-								class="group flex min-h-8 w-full cursor-pointer items-center gap-2 overflow-hidden rounded-xl px-2 py-1 text-left"
-								role="presentation"
-								on:click={(e) => {
-									if (shouldIgnoreRowClick(e.target)) return;
-									openFunction(func);
-								}}
+							<button
+								class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
+								type="button"
+								on:click={() => setSortKey('name')}
 							>
-								<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-									<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-										<div class="flex min-w-0 items-center gap-2 overflow-hidden">
-											<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-												<div
-													class="shrink-0 rounded-sm bg-gray-500/20 px-1 text-[0.625rem] uppercase leading-4 text-gray-700 dark:text-gray-200"
-												>
-													{func.type}
-												</div>
-
-												<Tooltip content={func.id} className="min-w-0" placement="top-start">
-													<a
-														href={`/admin/functions/edit?id=${encodeURIComponent(func.id)}`}
-														class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
-														>{resolveLocalizedResource(func, $i18n.language)}</a
-													>
-												</Tooltip>
-
-												{#if func?.meta?.manifest?.version}
-													<div
-														class="min-w-0 max-w-[40%] shrink-0 truncate text-[0.6875rem] leading-5 text-gray-500"
-													>
-														v{func?.meta?.manifest?.version ?? ''}
-													</div>
-												{/if}
-
-												<Tooltip
-													content={dayjs(func.updated_at * 1000)
-														.locale($i18n.language)
-														.format('LLLL')}
-												>
-													<div
-														class="shrink-0 truncate text-[0.6875rem] leading-5 text-gray-400 dark:text-gray-600"
-													>
-														{dayjs(func.updated_at * 1000)
-															.locale($i18n.language)
-															.fromNow()}
-													</div>
-												</Tooltip>
-											</div>
-										</div>
-
-										{#if resolveLocalizedResource(func, $i18n.language, 'description')}
-											<Tooltip
-												content={resolveLocalizedResource(func, $i18n.language, 'description')}
-												className="min-w-0"
-												placement="top-start"
-											>
-												<div
-													class="mt-0.5 truncate text-[0.6875rem] leading-4 text-gray-400 dark:text-gray-600"
-												>
-													{resolveLocalizedResource(func, $i18n.language, 'description')}
-												</div>
-											</Tooltip>
-										{/if}
-									</div>
-								</div>
-
-								<div
-									class="hidden max-w-44 shrink-0 self-center truncate text-right text-[0.6875rem] leading-5 text-gray-500 dark:text-gray-500 md:block"
-								>
-									<ProfilePreview user={func?.user ?? null} side="left">
-										<span class="flex max-w-44 items-center gap-1.75">
-											<ProfileImage
-												src={func?.user?.id
-													? `/api/v1/users/${func.user.id}/profile/image`
-													: '/user.png'}
-												className="size-4 shrink-0 rounded-full!"
-											/>
-											<span class="min-w-0 max-w-24 truncate">
-												{capitalizeFirstLetter(
-													func?.user?.name ?? func?.user?.email ?? $i18n.t('Deleted User')
-												)}
-											</span>
-										</span>
-									</ProfilePreview>
-								</div>
-
-								<div class="ml-2 flex shrink-0 flex-row items-center gap-1.5 self-center">
-									{#if shiftKey}
-										<Tooltip content={$i18n.t('Delete')}>
-											<button
-												class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-												type="button"
-												aria-label={$i18n.t('Delete')}
-												on:click={(e) => {
-													e.preventDefault();
-													e.stopPropagation();
-													deleteHandler(func);
-												}}
-											>
-												<GarbageBin className="size-4" />
-											</button>
-										</Tooltip>
+								{$i18n.t('Title')}
+								{#if sortKey === 'name'}
+									{#if sortDirection === 'asc'}
+										<ChevronUp className="size-2" />
 									{:else}
-										{#if func?.meta?.manifest?.funding_url ?? false}
-											<Tooltip content={$i18n.t('Support')}>
+										<ChevronDown className="size-2" />
+									{/if}
+								{/if}
+							</button>
+
+							<div class="hidden w-44 shrink-0 md:block"></div>
+
+							<button
+								class="flex w-36 shrink-0 items-center justify-end gap-1 py-0.5 text-right"
+								type="button"
+								on:click={() => setSortKey('updated_at')}
+							>
+								{$i18n.t('Updated at')}
+								{#if sortKey === 'updated_at'}
+									{#if sortDirection === 'asc'}
+										<ChevronUp className="size-2" />
+									{:else}
+										<ChevronDown className="size-2" />
+									{/if}
+								{/if}
+							</button>
+						</div>
+
+						<div class="grid gap-y-0.5">
+							{#each filteredItems as func (func.id)}
+								<div
+									class="group flex min-h-8 w-full cursor-pointer items-center gap-2 overflow-hidden rounded-xl px-2 py-1 text-left"
+									role="presentation"
+									on:click={(e) => {
+										if (shouldIgnoreRowClick(e.target)) return;
+										openFunction(func);
+									}}
+								>
+									<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+										<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+											<div class="flex min-w-0 items-center gap-2 overflow-hidden">
+												<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+													<div
+														class="shrink-0 rounded-sm bg-gray-500/20 px-1 text-[0.625rem] uppercase leading-4 text-gray-700 dark:text-gray-200"
+													>
+														{func.type}
+													</div>
+
+													<Tooltip content={func.id} className="min-w-0" placement="top-start">
+														<a
+															href={`/admin/functions/edit?id=${encodeURIComponent(func.id)}`}
+															class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+															>{resolveLocalizedResource(func, $i18n.language)}</a
+														>
+													</Tooltip>
+
+													{#if func?.meta?.manifest?.version}
+														<div
+															class="min-w-0 max-w-[40%] shrink-0 truncate text-[0.6875rem] leading-5 text-gray-500"
+														>
+															v{func?.meta?.manifest?.version ?? ''}
+														</div>
+													{/if}
+
+													<Tooltip
+														content={dayjs(func.updated_at * 1000)
+															.locale($i18n.language)
+															.format('LLLL')}
+													>
+														<div
+															class="shrink-0 truncate text-[0.6875rem] leading-5 text-gray-400 dark:text-gray-600"
+														>
+															{dayjs(func.updated_at * 1000)
+																.locale($i18n.language)
+																.fromNow()}
+														</div>
+													</Tooltip>
+												</div>
+											</div>
+
+											{#if resolveLocalizedResource(func, $i18n.language, 'description')}
+												<Tooltip
+													content={resolveLocalizedResource(func, $i18n.language, 'description')}
+													className="min-w-0"
+													placement="top-start"
+												>
+													<div
+														class="mt-0.5 truncate text-[0.6875rem] leading-4 text-gray-400 dark:text-gray-600"
+													>
+														{resolveLocalizedResource(func, $i18n.language, 'description')}
+													</div>
+												</Tooltip>
+											{/if}
+										</div>
+									</div>
+
+									<div
+										class="hidden max-w-44 shrink-0 self-center truncate text-right text-[0.6875rem] leading-5 text-gray-500 dark:text-gray-500 md:block"
+									>
+										<ProfilePreview user={func?.user ?? null} side="left">
+											<span class="flex max-w-44 items-center gap-1.75">
+												<ProfileImage
+													src={func?.user?.id
+														? `/api/v1/users/${func.user.id}/profile/image`
+														: '/user.png'}
+													className="size-4 shrink-0 rounded-full!"
+												/>
+												<span class="min-w-0 max-w-24 truncate">
+													{capitalizeFirstLetter(
+														func?.user?.name ?? func?.user?.email ?? $i18n.t('Deleted User')
+													)}
+												</span>
+											</span>
+										</ProfilePreview>
+									</div>
+
+									<div class="ml-2 flex shrink-0 flex-row items-center gap-1.5 self-center">
+										{#if shiftKey}
+											<Tooltip content={$i18n.t('Delete')}>
 												<button
 													class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
 													type="button"
-													aria-label={$i18n.t('Support')}
+													aria-label={$i18n.t('Delete')}
+													on:click={(e) => {
+														e.preventDefault();
+														e.stopPropagation();
+														deleteHandler(func);
+													}}
+												>
+													<GarbageBin className="size-4" />
+												</button>
+											</Tooltip>
+										{:else}
+											{#if func?.meta?.manifest?.funding_url ?? false}
+												<Tooltip content={$i18n.t('Support')}>
+													<button
+														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+														type="button"
+														aria-label={$i18n.t('Support')}
+														on:click={(e) => {
+															e.preventDefault();
+															e.stopPropagation();
+															selectedFunction = func;
+															showManifestModal = true;
+														}}
+													>
+														<Heart className="size-4" />
+													</button>
+												</Tooltip>
+											{/if}
+
+											<Tooltip content={$i18n.t('Valves')}>
+												<button
+													class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+													type="button"
+													aria-label={$i18n.t('Valves')}
 													on:click={(e) => {
 														e.preventDefault();
 														e.stopPropagation();
 														selectedFunction = func;
-														showManifestModal = true;
+														showValvesModal = true;
 													}}
 												>
-													<Heart className="size-4" />
+													<svg
+														xmlns="http://www.w3.org/2000/svg"
+														fill="none"
+														viewBox="0 0 24 24"
+														stroke-width="1.5"
+														stroke="currentColor"
+														class="size-4"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															d="M9.594 3.94c.09-.542.56-.940 1.11-.940h2.593c.55 0 1.02.398 1.11.940l.213 1.281c.063.374.313.686.645.870.074.040.147.083.220.127.325.196.720.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.370.490l1.296 2.247a1.125 1.125 0 0 1-.260 1.431l-1.003.827c-.293.241-.438.613-.430.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.750.430.991l1.004.827c.424.350.534.955.260 1.430l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.750-.072-1.076.124a6.47 6.47 0 0 1-.220.128c-.331.183-.581.495-.644.869l-.213 1.281c-.090.543-.560.940-1.110.940h-2.594c-.550 0-1.019-.398-1.110-.940l-.213-1.281c-.062-.374-.312-.686-.644-.870a6.52 6.52 0 0 1-.220-.127c-.325-.196-.720-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.490l-1.297-2.247a1.125 1.125 0 0 1 .260-1.431l1.004-.827c.292-.240.437-.613.430-.991a6.932 6.932 0 0 1 0-.255c.007-.380-.138-.751-.430-.992l-1.004-.827a1.125 1.125 0 0 1-.260-1.430l1.297-2.247a1.125 1.125 0 0 1 1.370-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.220-.128.332-.183.582-.495.644-.869l.214-1.280Z"
+														/>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+														/>
+													</svg>
 												</button>
 											</Tooltip>
-										{/if}
 
-										<Tooltip content={$i18n.t('Valves')}>
-											<button
-												class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-												type="button"
-												aria-label={$i18n.t('Valves')}
-												on:click={(e) => {
-													e.preventDefault();
-													e.stopPropagation();
+											<FunctionMenu
+												{func}
+												show={openFunctionMenuId === func.id}
+												editHandler={() => {
+													goto(`/admin/functions/edit?id=${encodeURIComponent(func.id)}`);
+												}}
+												shareHandler={() => {
+													shareHandler(func);
+												}}
+												cloneHandler={() => {
+													cloneHandler(func);
+												}}
+												exportHandler={() => {
+													exportHandler(func);
+												}}
+												deleteHandler={async () => {
 													selectedFunction = func;
-													showValvesModal = true;
+													showDeleteConfirm = true;
+												}}
+												toggleGlobalHandler={() => {
+													if (['filter', 'action'].includes(func.type)) {
+														toggleGlobalHandler(func);
+													}
+												}}
+												onClose={() => {
+													openFunctionMenuId = null;
 												}}
 											>
-												<svg
-													xmlns="http://www.w3.org/2000/svg"
-													fill="none"
-													viewBox="0 0 24 24"
-													stroke-width="1.5"
-													stroke="currentColor"
-													class="size-4"
-												>
-													<path
-														stroke-linecap="round"
-														stroke-linejoin="round"
-														d="M9.594 3.94c.09-.542.56-.940 1.11-.940h2.593c.55 0 1.02.398 1.11.940l.213 1.281c.063.374.313.686.645.870.074.040.147.083.220.127.325.196.720.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.370.490l1.296 2.247a1.125 1.125 0 0 1-.260 1.431l-1.003.827c-.293.241-.438.613-.430.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.750.430.991l1.004.827c.424.350.534.955.260 1.430l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.750-.072-1.076.124a6.47 6.47 0 0 1-.220.128c-.331.183-.581.495-.644.869l-.213 1.281c-.090.543-.560.940-1.110.940h-2.594c-.550 0-1.019-.398-1.110-.940l-.213-1.281c-.062-.374-.312-.686-.644-.870a6.52 6.52 0 0 1-.220-.127c-.325-.196-.720-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.490l-1.297-2.247a1.125 1.125 0 0 1 .260-1.431l1.004-.827c.292-.240.437-.613.430-.991a6.932 6.932 0 0 1 0-.255c.007-.380-.138-.751-.430-.992l-1.004-.827a1.125 1.125 0 0 1-.260-1.430l1.297-2.247a1.125 1.125 0 0 1 1.370-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.220-.128.332-.183.582-.495.644-.869l.214-1.280Z"
-													/>
-													<path
-														stroke-linecap="round"
-														stroke-linejoin="round"
-														d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-													/>
-												</svg>
-											</button>
-										</Tooltip>
-
-										<FunctionMenu
-											{func}
-											show={openFunctionMenuId === func.id}
-											editHandler={() => {
-												goto(`/admin/functions/edit?id=${encodeURIComponent(func.id)}`);
-											}}
-											shareHandler={() => {
-												shareHandler(func);
-											}}
-											cloneHandler={() => {
-												cloneHandler(func);
-											}}
-											exportHandler={() => {
-												exportHandler(func);
-											}}
-											deleteHandler={async () => {
-												selectedFunction = func;
-												showDeleteConfirm = true;
-											}}
-											toggleGlobalHandler={() => {
-												if (['filter', 'action'].includes(func.type)) {
-													toggleGlobalHandler(func);
-												}
-											}}
-											onClose={() => {
-												openFunctionMenuId = null;
-											}}
-										>
-											<button
-												class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-												type="button"
-												aria-label={$i18n.t('Function Menu')}
-												on:click={(e) => {
-													e.preventDefault();
-													e.stopPropagation();
-													openFunctionMenuId = openFunctionMenuId === func.id ? null : func.id;
-												}}
-											>
-												<EllipsisHorizontal className="size-4" />
-											</button>
-										</FunctionMenu>
-
-										<div
-											class="flex h-6 items-center"
-											role="presentation"
-											on:click={(e) => {
-												e.stopPropagation();
-												e.preventDefault();
-											}}
-										>
-											<Tooltip content={func.is_active ? $i18n.t('Enabled') : $i18n.t('Disabled')}>
-												<Switch
-													bind:state={func.is_active}
-													ariaLabel={$i18n.t('Enabled')}
-													on:change={async () => {
-														toggleFunctionById(localStorage.token, func.id);
-														models.set(await getModels(localStorage.token, false, true));
+												<button
+													class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+													type="button"
+													aria-label={$i18n.t('Function Menu')}
+													on:click={(e) => {
+														e.preventDefault();
+														e.stopPropagation();
+														openFunctionMenuId = openFunctionMenuId === func.id ? null : func.id;
 													}}
-												/>
+												>
+													<EllipsisHorizontal className="size-4" />
+												</button>
+											</FunctionMenu>
+
+											<div
+												class="flex h-6 items-center"
+												role="presentation"
+												on:click={(e) => {
+													e.stopPropagation();
+													e.preventDefault();
+												}}
+											>
+												<Tooltip
+													content={func.is_active ? $i18n.t('Enabled') : $i18n.t('Disabled')}
+												>
+													<Switch
+														bind:state={func.is_active}
+														ariaLabel={$i18n.t('Enabled')}
+														on:change={async () => {
+															toggleFunctionById(localStorage.token, func.id);
+															models.set(await getModels(localStorage.token, false, true));
+														}}
+													/>
+												</Tooltip>
+											</div>
+										{/if}
+									</div>
+								</div>
+							{/each}
+						</div>
+					{:else if displayOption === 'grid'}
+						<div
+							class="grid grid-cols-[repeat(auto-fill,minmax(min(15rem,100%),1fr))] gap-2.5 py-1"
+							style={gridHeight
+								? `grid-template-rows: repeat(${gridRows}, minmax(0, 1fr)); height: ${gridHeight}px;`
+								: ''}
+						>
+							{#each filteredItems.slice((page - 1) * perPage, page * perPage) as func (func.id)}
+								<div
+									class="group flex min-w-0 flex-col gap-2 rounded-xl border border-black/[0.06] bg-gray-50/40 p-3 text-left transition-colors duration-75 hover:bg-black/[0.03] dark:border-white/[0.06] dark:bg-gray-900 dark:hover:bg-white/[0.03] cursor-pointer"
+									role="presentation"
+									on:click={(e) => {
+										if (shouldIgnoreRowClick(e.target)) return;
+										openFunction(func);
+									}}
+								>
+									<div class="flex min-w-0 items-center gap-2">
+										<div class="flex min-w-0 flex-1 items-center gap-1.5">
+											<div
+												class="shrink-0 rounded-sm bg-gray-500/20 px-1 text-[0.625rem] uppercase leading-4 text-gray-700 dark:text-gray-200"
+											>
+												{func.type}
+											</div>
+
+											<Tooltip content={func.id} className="min-w-0" placement="top-start">
+												<a
+													href={`/admin/functions/edit?id=${encodeURIComponent(func.id)}`}
+													class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+													>{resolveLocalizedResource(func, $i18n.language)}</a
+												>
+											</Tooltip>
+
+											{#if func?.meta?.manifest?.version}
+												<span class="shrink-0 text-xs leading-5 text-gray-400 dark:text-gray-500"
+													>v{func?.meta?.manifest?.version ?? ''}</span
+												>
+											{/if}
+										</div>
+										<div class="flex shrink-0 items-center gap-0.5">
+											{#if shiftKey}
+												<Tooltip content={$i18n.t('Delete')}>
+													<button
+														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+														type="button"
+														aria-label={$i18n.t('Delete')}
+														on:click={(e) => {
+															e.preventDefault();
+															e.stopPropagation();
+															deleteHandler(func);
+														}}
+													>
+														<GarbageBin className="size-4" />
+													</button>
+												</Tooltip>
+											{:else}
+												{#if func?.meta?.manifest?.funding_url ?? false}
+													<Tooltip content={$i18n.t('Support')}>
+														<button
+															class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+															type="button"
+															aria-label={$i18n.t('Support')}
+															on:click={(e) => {
+																e.preventDefault();
+																e.stopPropagation();
+																selectedFunction = func;
+																showManifestModal = true;
+															}}
+														>
+															<Heart className="size-4" />
+														</button>
+													</Tooltip>
+												{/if}
+
+												<Tooltip content={$i18n.t('Valves')}>
+													<button
+														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+														type="button"
+														aria-label={$i18n.t('Valves')}
+														on:click={(e) => {
+															e.preventDefault();
+															e.stopPropagation();
+															selectedFunction = func;
+															showValvesModal = true;
+														}}
+													>
+														<svg
+															xmlns="http://www.w3.org/2000/svg"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke-width="1.5"
+															stroke="currentColor"
+															class="size-4"
+														>
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																d="M9.594 3.94c.09-.542.56-.940 1.11-.940h2.593c.55 0 1.02.398 1.11.940l.213 1.281c.063.374.313.686.645.870.074.040.147.083.220.127.325.196.720.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.370.490l1.296 2.247a1.125 1.125 0 0 1-.260 1.431l-1.003.827c-.293.241-.438.613-.430.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.750.430.991l1.004.827c.424.350.534.955.260 1.430l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.750-.072-1.076.124a6.47 6.47 0 0 1-.220.128c-.331.183-.581.495-.644.869l-.213 1.281c-.090.543-.560.940-1.110.940h-2.594c-.550 0-1.019-.398-1.110-.940l-.213-1.281c-.062-.374-.312-.686-.644-.870a6.52 6.52 0 0 1-.220-.127c-.325-.196-.720-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.490l-1.297-2.247a1.125 1.125 0 0 1 .260-1.431l1.004-.827c.292-.240.437-.613.430-.991a6.932 6.932 0 0 1 0-.255c.007-.380-.138-.751-.430-.992l-1.004-.827a1.125 1.125 0 0 1-.260-1.430l1.297-2.247a1.125 1.125 0 0 1 1.370-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.220-.128.332-.183.582-.495.644-.869l.214-1.280Z"
+															/>
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+															/>
+														</svg>
+													</button>
+												</Tooltip>
+
+												<FunctionMenu
+													{func}
+													show={openFunctionMenuId === func.id}
+													editHandler={() => {
+														goto(`/admin/functions/edit?id=${encodeURIComponent(func.id)}`);
+													}}
+													shareHandler={() => {
+														shareHandler(func);
+													}}
+													cloneHandler={() => {
+														cloneHandler(func);
+													}}
+													exportHandler={() => {
+														exportHandler(func);
+													}}
+													deleteHandler={async () => {
+														selectedFunction = func;
+														showDeleteConfirm = true;
+													}}
+													toggleGlobalHandler={() => {
+														if (['filter', 'action'].includes(func.type)) {
+															toggleGlobalHandler(func);
+														}
+													}}
+													onClose={() => {
+														openFunctionMenuId = null;
+													}}
+												>
+													<button
+														class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+														type="button"
+														aria-label={$i18n.t('Function Menu')}
+														on:click={(e) => {
+															e.preventDefault();
+															e.stopPropagation();
+															openFunctionMenuId = openFunctionMenuId === func.id ? null : func.id;
+														}}
+													>
+														<EllipsisHorizontal className="size-4" />
+													</button>
+												</FunctionMenu>
+											{/if}
+										</div>
+									</div>
+
+									<Tooltip
+										content={resolveLocalizedResource(func, $i18n.language, 'description') ?? ''}
+										className="min-w-0"
+										placement="top-start"
+									>
+										<div
+											class="line-clamp-2 min-h-8 break-words text-xs leading-4 text-gray-500 dark:text-gray-400"
+										>
+											{resolveLocalizedResource(func, $i18n.language, 'description') ?? ''}
+										</div>
+									</Tooltip>
+
+									<div class="mt-auto flex min-w-0 items-center justify-between gap-2">
+										<div
+											class="flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400"
+										>
+											<div class="min-w-0">
+												<ProfilePreview
+													user={func?.user ?? null}
+													side="bottom"
+													className="w-full min-w-0"
+												>
+													<span class="flex w-full min-w-0 items-center gap-1.5">
+														<ProfileImage
+															src={func?.user?.id
+																? `/api/v1/users/${func.user.id}/profile/image`
+																: '/user.png'}
+															className="size-4 shrink-0 rounded-full!"
+														/>
+														<span class="min-w-0 truncate">
+															{capitalizeFirstLetter(
+																func?.user?.name ?? func?.user?.email ?? $i18n.t('Deleted User')
+															)}
+														</span>
+													</span>
+												</ProfilePreview>
+											</div>
+											<Tooltip
+												content={dayjs(func.updated_at * 1000)
+													.locale($i18n.language)
+													.format('LLLL')}
+												className="shrink-0"
+											>
+												<span class="whitespace-nowrap text-gray-400 dark:text-gray-500"
+													>{dayjs(func.updated_at * 1000)
+														.locale($i18n.language)
+														.fromNow()}</span
+												>
 											</Tooltip>
 										</div>
-									{/if}
+										<div class="flex shrink-0 items-center gap-1.5">
+											<div
+												class="flex h-6 items-center"
+												role="presentation"
+												on:click={(e) => {
+													e.stopPropagation();
+													e.preventDefault();
+												}}
+											>
+												<Tooltip
+													content={func.is_active ? $i18n.t('Enabled') : $i18n.t('Disabled')}
+												>
+													<Switch
+														bind:state={func.is_active}
+														ariaLabel={$i18n.t('Enabled')}
+														on:change={async () => {
+															toggleFunctionById(localStorage.token, func.id);
+															models.set(await getModels(localStorage.token, false, true));
+														}}
+													/>
+												</Tooltip>
+											</div>
+										</div>
+									</div>
 								</div>
-							</div>
-						{/each}
-					</div>
+							{/each}
+						</div>
+					{/if}
 				</div>
+
+				{#if displayOption === 'grid' && filteredItems.length > perPage}
+					<div class="flex justify-center mt-4 mb-2">
+						<Pagination bind:page count={filteredItems.length} {perPage} />
+					</div>
+				{/if}
 			{:else}
 				<div class="flex w-full flex-col items-center justify-center py-16 pb-24">
 					<div class="max-w-sm text-center text-gray-900 dark:text-gray-100">

@@ -232,11 +232,10 @@ async def get_models(
     order_by: str | None = None,
     direction: str | None = None,
     page: int | None = 1,
+    limit: int = Query(PAGE_ITEM_COUNT, ge=1, le=100),
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    limit = PAGE_ITEM_COUNT
-
     page = max(1, page)
     skip = (page - 1) * limit
 
