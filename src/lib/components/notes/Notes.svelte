@@ -774,136 +774,137 @@
 									<div
 										class="{groupedNotes.length - 1 !== idx
 											? 'mb-3'
-											: ''} grid grid-cols-[repeat(auto-fill,minmax(min(160px,100%),1fr))] gap-2.5 p-3"
+											: ''} grid grid-cols-[repeat(auto-fill,minmax(min(15rem,100%),1fr))] gap-2.5 py-1"
 									>
 										{#each notesList as note, idx (note.id)}
 											<div
-												class="group relative flex h-26 min-w-0 w-full flex-col rounded-md border border-black/[0.06] bg-gray-50/40 p-2 text-left transition-colors duration-75 hover:bg-gray-50/40 focus-within:bg-gray-50/40 dark:border-white/[0.06] dark:bg-gray-900 dark:hover:bg-white/4 dark:focus-within:bg-white/4"
+												class="group flex min-w-0 flex-col gap-2 rounded-xl border border-black/[0.06] bg-gray-50/40 p-3 text-left transition-colors duration-75 hover:bg-black/[0.03] focus-within:bg-black/[0.03] dark:border-white/[0.06] dark:bg-gray-900 dark:hover:bg-white/[0.03] dark:focus-within:bg-white/[0.03]"
 											>
-												<div class="flex min-w-0 items-start">
-													<a href={noteUrl(note)} class="min-w-0 flex-1 pr-5">
-														<Tooltip content={note.title} placement="top-start">
-															<div
-																class="line-clamp-2 break-words text-xs text-gray-800 dark:text-gray-200"
-															>
-																{note.title}
-															</div>
-														</Tooltip>
-													</a>
+												<div class="flex min-w-0 items-center gap-2">
+													<Tooltip
+														content={note.title}
+														className="min-w-0 flex-1"
+														placement="top-start"
+													>
+														<a
+															href={noteUrl(note)}
+															dir="auto"
+															class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+														>
+															{note.title}
+														</a>
+													</Tooltip>
 
-													{#if shiftKey}
-														<Tooltip content={$i18n.t('Delete')}>
-															<button
-																class="absolute right-1 top-1 flex {($settings?.highContrastMode ??
-																false)
-																	? 'size-6'
-																	: 'size-5'} shrink-0 items-center justify-center rounded text-gray-400 transition hover:bg-gray-50/40 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-white/4 dark:hover:text-gray-400"
-																type="button"
-																aria-label={$i18n.t('Delete')}
-																on:click={(e) => {
-																	e.preventDefault();
-																	e.stopPropagation();
-																	deleteNoteHandler(note.id);
+													<div class="flex shrink-0 items-center gap-0.5">
+														{#if shiftKey}
+															<Tooltip content={$i18n.t('Delete')}>
+																<button
+																	class="flex {($settings?.highContrastMode ?? false)
+																		? 'size-6'
+																		: 'size-5'} shrink-0 items-center justify-center rounded-lg text-gray-400 transition hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
+																	type="button"
+																	aria-label={$i18n.t('Delete')}
+																	on:click={(e) => {
+																		e.preventDefault();
+																		e.stopPropagation();
+																		deleteNoteHandler(note.id);
+																	}}
+																>
+																	<GarbageBin className="size-3.5" />
+																</button>
+															</Tooltip>
+														{:else}
+															<NoteMenu
+																onAccess={(note.user_id === $user?.id &&
+																	$user?.permissions?.sharing?.notes) ||
+																$user?.role === 'admin'
+																	? () => accessModal.open(note.id)
+																	: null}
+																onDownload={(type) => {
+																	selectedNote = note;
+
+																	downloadHandler(type);
+																}}
+																onCopyLink={async () => {
+																	const baseUrl = window.location.origin;
+																	const res = await copyToClipboard(`${baseUrl}/notes/${note.id}`);
+
+																	if (res) {
+																		toast.success($i18n.t('Copied link to clipboard'));
+																	} else {
+																		toast.error($i18n.t('Failed to copy link'));
+																	}
+																}}
+																onDelete={() => {
+																	selectedNote = note;
+																	showDeleteConfirm = true;
+																}}
+																isPinned={$pinnedNotes.some((n) => n.id === note.id)}
+																onPin={async () => {
+																	await toggleNotePinnedStatusById(localStorage.token, note.id);
+																	pinnedNotes.set(
+																		await getPinnedNoteList(localStorage.token).catch(() => [])
+																	);
+																	init();
 																}}
 															>
-																<GarbageBin className="size-3.5" />
-															</button>
-														</Tooltip>
-													{:else}
-														<NoteMenu
-															onAccess={(note.user_id === $user?.id &&
-																$user?.permissions?.sharing?.notes) ||
-															$user?.role === 'admin'
-																? () => accessModal.open(note.id)
-																: null}
-															onDownload={(type) => {
-																selectedNote = note;
-
-																downloadHandler(type);
-															}}
-															onCopyLink={async () => {
-																const baseUrl = window.location.origin;
-																const res = await copyToClipboard(`${baseUrl}/notes/${note.id}`);
-
-																if (res) {
-																	toast.success($i18n.t('Copied link to clipboard'));
-																} else {
-																	toast.error($i18n.t('Failed to copy link'));
-																}
-															}}
-															onDelete={() => {
-																selectedNote = note;
-																showDeleteConfirm = true;
-															}}
-															isPinned={$pinnedNotes.some((n) => n.id === note.id)}
-															onPin={async () => {
-																await toggleNotePinnedStatusById(localStorage.token, note.id);
-																pinnedNotes.set(
-																	await getPinnedNoteList(localStorage.token).catch(() => [])
-																);
-																init();
-															}}
-														>
-															<button
-																class="absolute right-1 top-1 flex {($settings?.highContrastMode ??
-																false)
-																	? 'size-6'
-																	: 'size-5'} shrink-0 items-center justify-center rounded text-gray-400 transition hover:bg-gray-50/40 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-white/4 dark:hover:text-gray-400"
-																type="button"
-																aria-label={$i18n.t('Note Menu')}
-															>
-																<EllipsisHorizontal className="size-3" />
-															</button>
-														</NoteMenu>
-													{/if}
+																<button
+																	class="flex {($settings?.highContrastMode ?? false)
+																		? 'size-6'
+																		: 'size-5'} shrink-0 items-center justify-center rounded-lg text-gray-400 transition hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
+																	type="button"
+																	aria-label={$i18n.t('Note Menu')}
+																>
+																	<EllipsisHorizontal className="size-3.5" />
+																</button>
+															</NoteMenu>
+														{/if}
+													</div>
 												</div>
 
 												<a
 													href={noteUrl(note)}
-													class="mt-2 min-h-0 flex-1 overflow-hidden text-[0.6875rem] leading-4 text-gray-500 dark:text-gray-400"
-													style="mask-image: linear-gradient(to bottom, black 65%, transparent 100%);"
+													class="line-clamp-2 min-h-8 whitespace-pre-line break-words text-xs leading-4 text-gray-500 dark:text-gray-400"
 												>
-													<div class="line-clamp-4 whitespace-pre-line break-words">
-														{note.data?.content?.md || $i18n.t('No content')}
-													</div>
+													{note.data?.content?.md || $i18n.t('No content')}
 												</a>
 
-												<a href={noteUrl(note)} class="mt-2 block min-w-0">
-													<div
-														class="flex min-w-0 w-full items-center justify-between gap-1 text-[0.5625rem] leading-3 text-gray-500 dark:text-gray-400"
+												<a
+													href={noteUrl(note)}
+													class="mt-auto flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400"
+												>
+													<Tooltip
+														content={note?.user?.email ?? $i18n.t('Deleted User')}
+														className="min-w-0"
+														placement="top-start"
 													>
-														<Tooltip
-															content={note?.user?.email ?? $i18n.t('Deleted User')}
-															className="min-w-0"
-															placement="top-start"
-														>
-															<span class="flex min-w-0 max-w-44 items-center gap-1.75">
-																<ProfileImage
-																	src={note?.user?.id
-																		? `/api/v1/users/${note.user.id}/profile/image`
-																		: '/user.png'}
-																	className="size-4 shrink-0 rounded-full!"
-																/>
-																<span class="min-w-0 max-w-24 truncate">
-																	{capitalizeFirstLetter(
-																		note?.user?.name ?? note?.user?.email ?? $i18n.t('Deleted User')
-																	)}
-																</span>
+														<span class="flex min-w-0 items-center gap-1.5">
+															<ProfileImage
+																src={note?.user?.id
+																	? `/api/v1/users/${note.user.id}/profile/image`
+																	: '/user.png'}
+																className="size-4 shrink-0 rounded-full!"
+															/>
+															<span class="min-w-0 truncate">
+																{capitalizeFirstLetter(
+																	note?.user?.name ?? note?.user?.email ?? $i18n.t('Deleted User')
+																)}
 															</span>
-														</Tooltip>
+														</span>
+													</Tooltip>
 
-														<Tooltip
-															content={dayjs(note.updated_at / 1000000)
+													<Tooltip
+														content={dayjs(note.updated_at / 1000000)
+															.locale($i18n.language)
+															.format('LLLL')}
+														className="shrink-0"
+													>
+														<span class="whitespace-nowrap text-gray-400 dark:text-gray-500"
+															>{dayjs(note.updated_at / 1000000)
 																.locale($i18n.language)
-																.format('LLLL')}
+																.fromNow()}</span
 														>
-															<div class="max-w-full shrink-0 truncate">
-																{dayjs(note.updated_at / 1000000)
-																	.locale($i18n.language)
-																	.fromNow()}
-															</div>
-														</Tooltip>
-													</div>
+													</Tooltip>
 												</a>
 											</div>
 										{/each}
