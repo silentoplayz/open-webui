@@ -2,7 +2,6 @@
 # Requires Valkey core >= 9.0.1 with the valkey-search module >= 1.2.0 loaded.
 
 import atexit
-import json
 import logging
 import re
 import struct
@@ -24,6 +23,7 @@ from open_webui.retrieval.vector.main import (
     VectorItem,
 )
 from open_webui.retrieval.vector.utils import process_metadata
+from open_webui.utils.json_codec import JSONCodec
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def _import_glide():
         )
     except ImportError as e:
         raise ImportError(
-            'valkey-glide-sync is required when VECTOR_DB=valkey. Install it with: pip install valkey-glide-sync==2.3.1'
+            'valkey-glide-sync is required when VECTOR_DB=valkey. Install it with: pip install valkey-glide-sync==2.5.2'
         ) from e
     return {
         'Batch': Batch,
@@ -193,6 +193,7 @@ class ValkeyClient(VectorDBBase):
             database_id=db if db else None,
             request_timeout=5000,
             client_name='open_webui_vector_store_client',
+            client_info_tag='open-webui',
         )
         try:
             self.client = GlideClient.create(config)
@@ -206,6 +207,7 @@ class ValkeyClient(VectorDBBase):
             database_id=db if db else None,
             request_timeout=10000,  # 10s — HNSW indexing can take 1-4s per vector
             client_name='open_webui_vector_store_batch_client',
+            client_info_tag='open-webui',
         )
         try:
             self.batch_client = GlideClient.create(batch_config)
@@ -235,7 +237,7 @@ class ValkeyClient(VectorDBBase):
         except Exception:
             pass
 
-    # ----- version checks ----------------------------------------------------
+    # Version checks
 
     @staticmethod
     def _parse_semver(version_str: str) -> tuple[int, int, int] | None:
@@ -279,7 +281,7 @@ class ValkeyClient(VectorDBBase):
                 f'{self._format_version(MIN_VALKEY_VERSION)}. valkey-search 1.2.0 requires Valkey core '
                 '9.0.1 or later. Upgrade your server or use valkey-bundle:9.1.0-rc2+.'
             )
-        log.info(f'Valkey core version: {self._format_version(version) if version else "unknown"}')
+        log.info('Valkey core version: %s', self._format_version(version) if version else 'unknown')
 
     def _check_search_module(self) -> None:
         try:
@@ -331,7 +333,7 @@ class ValkeyClient(VectorDBBase):
                 'TEXT field type and filter-only FT.SEARCH support required by this backend. '
                 'Upgrade to valkey-bundle:9.1.0-rc2+ or load valkey-search 1.2.0+ as a module.'
             )
-        log.info(f'valkey-search version: {self._format_version(search_version) if search_version else "unknown"}')
+        log.info('valkey-search version: %s', self._format_version(search_version) if search_version else 'unknown')
 
     def _index_name(self, collection_name: str) -> str:
         return f'idx:{self.collection_prefix}:{collection_name}'
@@ -385,12 +387,15 @@ class ValkeyClient(VectorDBBase):
         try:
             g['glide_ft'].create(self.client, index_name, schema, options)
             log.info(
-                f'Created Valkey index {index_name} with dimension={dimension}, '
-                f'type={self.index_type}, metric={self.distance_metric}'
+                'Created Valkey index %s with dimension=%s, type=%s, metric=%s',
+                index_name,
+                dimension,
+                self.index_type,
+                self.distance_metric,
             )
         except g['RequestError'] as e:
             if 'already exists' in str(e).lower():
-                log.debug(f'Index {index_name} already exists, skipping creation.')
+                log.debug('Index %s already exists, skipping creation.', index_name)
             else:
                 raise
 
@@ -456,9 +461,9 @@ class ValkeyClient(VectorDBBase):
         index_name = self._index_name(collection_name)
         try:
             self._g['glide_ft'].dropindex(self.client, index_name)
-            log.info(f'Dropped index {index_name}')
+            log.info('Dropped index %s', index_name)
         except self._g['RequestError'] as e:
-            log.debug(f'Could not drop index {index_name}: {e}')
+            log.debug('Could not drop index %s: %s', index_name, e)
 
         self._delete_keys_by_prefix(self._key_prefix(collection_name))
 
@@ -482,7 +487,7 @@ class ValkeyClient(VectorDBBase):
                 'id': item['id'],
                 'vector': _vector_to_bytes(item['vector']),
                 'text': item['text'],
-                'metadata_json': json.dumps(metadata),
+                'metadata_json': JSONCodec.dumps(metadata),
                 # `or ''` prevents indexing literal 'None' as a TAG value, which would
                 # poison $ne / equality queries.
                 'hash': str(metadata.get('hash') or ''),
@@ -492,7 +497,7 @@ class ValkeyClient(VectorDBBase):
             }
             self.batch_client.hset(self._item_key(collection_name, item['id']), mapping)
 
-        log.debug(f'Inserted {len(items)} items into collection {collection_name}')
+        log.debug('Inserted %s items into collection %s', len(items), collection_name)
 
     def upsert(self, collection_name: str, items: list[VectorItem]):
         self.insert(collection_name, items)
@@ -588,8 +593,8 @@ class ValkeyClient(VectorDBBase):
                     ids.append(_decode(fields.get(b'id', b'')))
                     documents.append(_decode(fields.get(b'text', b'')))
                     try:
-                        metadatas.append(json.loads(_decode(fields.get(b'metadata_json', b'{}'))))
-                    except (json.JSONDecodeError, TypeError):
+                        metadatas.append(JSONCodec.loads(_decode(fields.get(b'metadata_json', b'{}'))))
+                    except (ValueError, TypeError):
                         metadatas.append({})
                     if limit is not None and limit > 0 and len(ids) >= limit:
                         return GetResult(ids=[ids], documents=[documents], metadatas=[metadatas])
@@ -656,7 +661,7 @@ class ValkeyClient(VectorDBBase):
                     collections.append(name[len(idx_prefix) :])
                     try:
                         glide_ft.dropindex(self.client, idx)
-                        log.info(f'Dropped index: {name}')
+                        log.info('Dropped index: %s', name)
                     except Exception as e:
                         log.error(f'Error dropping index {name}: {e}')
         except Exception as e:
@@ -664,7 +669,7 @@ class ValkeyClient(VectorDBBase):
 
         for collection in collections:
             self._delete_keys_by_prefix(self._key_prefix(collection))
-        log.info(f'Valkey vector store reset complete (prefix: {self.collection_prefix})')
+        log.info('Valkey vector store reset complete (prefix: %s)', self.collection_prefix)
 
     def _delete_keys_by_prefix(self, prefix: str) -> None:
         cursor = '0'
@@ -734,8 +739,8 @@ class ValkeyClient(VectorDBBase):
             ids.append(_decode(fields.get(b'id', b'')))
             documents.append(_decode(fields.get(b'text', b'')))
             try:
-                metadatas.append(json.loads(_decode(fields.get(b'metadata_json', b'{}'))))
-            except (json.JSONDecodeError, TypeError):
+                metadatas.append(JSONCodec.loads(_decode(fields.get(b'metadata_json', b'{}'))))
+            except (ValueError, TypeError):
                 metadatas.append({})
 
             if include_score:

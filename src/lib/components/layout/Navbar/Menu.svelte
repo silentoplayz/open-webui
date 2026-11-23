@@ -5,37 +5,36 @@
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
-	import { downloadChatAsPDF } from '$lib/apis/utils';
 	import { copyToClipboard, createMessagesList } from '$lib/utils';
 	import { getOutputText } from '$lib/components/chat/Messages/structuredOutput';
 
 	import {
-		showControls,
-		showArtifacts,
 		mobile,
-		temporaryChatEnabled,
+		temporaryChat,
 		theme,
 		user,
 		settings,
 		folders,
-		showEmbeds,
-		artifactContents
+		visibleControls
 	} from '$lib/stores';
 
 	import { getChatById } from '$lib/apis/chats';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
+	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import DropdownSub from '$lib/components/common/DropdownSub.svelte';
-	import Tags from '$lib/components/chat/Tags.svelte';
+	import ChevronRight from '$lib/components/icons/ChevronRight.svelte';
+	import TagPicker from '$lib/components/chat/TagPicker.svelte';
+	import Tag from '$lib/components/icons/Tag.svelte';
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import AdjustmentsHorizontal from '$lib/components/icons/AdjustmentsHorizontal.svelte';
-	import Cube from '$lib/components/icons/Cube.svelte';
 	import Folder from '$lib/components/icons/Folder.svelte';
 	import Share from '$lib/components/icons/Share.svelte';
 	import ArchiveBox from '$lib/components/icons/ArchiveBox.svelte';
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
+	import EditPencilIcon from '$lib/components/layout/Sidebar/icons/EditPencil.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -43,6 +42,7 @@
 	export let readOnly: boolean = false;
 
 	export let shareHandler: Function;
+	export let renameHandler: Function;
 	export let moveChatHandler: Function;
 
 	export let archiveChatHandler: Function;
@@ -53,8 +53,12 @@
 	export let chat;
 	export let onClose: Function = () => {};
 	export let scrollToTop: (() => void) | null = null;
+	/** Overrides the global temporary chat state for chats with their own (side chats). */
+	export let temporary: boolean | null = null;
+	$: isTemporary = temporary ?? $temporaryChat;
 
 	let showFullMessages = false;
+	let show = false;
 
 	const getChatAsText = async () => {
 		const history = chat.chat.history;
@@ -104,70 +108,109 @@
 					document.body.appendChild(clonedElement);
 
 					// Override content-visibility so html2canvas can capture all messages
-					clonedElement.querySelectorAll('.message-listitem').forEach((el) => {
+					clonedElement.querySelectorAll('.message-virtualized').forEach((el) => {
 						el.style.contentVisibility = 'visible';
 					});
 
 					// Let the browser compute layout for the cloned element
 					await new Promise((r) => requestAnimationFrame(r));
 
-					// Render entire content once
-					const canvas = await html2canvas(clonedElement, {
-						backgroundColor: isDarkMode ? '#000' : '#fff',
-						useCORS: true,
-						scale: 2, // increase resolution
-						width: virtualWidth
-					});
-
-					document.body.removeChild(clonedElement);
-
 					const pdf = new jsPDF('p', 'mm', 'a4');
 					const pageWidthMM = 210;
 					const pageHeightMM = 297;
 
-					// Convert page height in mm to px on canvas scale for cropping
-					// Get canvas DPI scale:
-					const pxPerMM = canvas.width / virtualWidth; // width in px / width in px?
-					// Since 1 page width is 210 mm, but canvas width is 800 px at scale 2
-					// Assume 1 mm = px / (pageWidthMM scaled)
-					// Actually better: Calculate scale factor from px/mm:
-					// virtualWidth px corresponds directly to 210mm in PDF, so pxPerMM:
-					const pxPerPDFMM = canvas.width / pageWidthMM; // canvas px per PDF mm
+					const pagePixelHeight = Math.floor((virtualWidth * pageHeightMM) / pageWidthMM);
+					const rootTop = clonedElement.getBoundingClientRect().top;
+					const contentHeight = Math.ceil(clonedElement.getBoundingClientRect().height);
 
-					// Height in px for one page slice:
-					const pagePixelHeight = Math.floor(pxPerPDFMM * pageHeightMM);
+					const blocks = [];
+					const trackedElements = new Set();
+					const collectBlocks = (element) => {
+						const children = Array.from(element.children);
+						const splittable =
+							children.length > 0 &&
+							(getComputedStyle(element).display === 'contents' ||
+								(element.getBoundingClientRect().height > pagePixelHeight / 4 &&
+									!Array.from(element.childNodes).some(
+										(childNode) =>
+											childNode.nodeType === Node.TEXT_NODE && childNode.textContent?.trim()
+									) &&
+									children.every(
+										(child) => !getComputedStyle(child).display.startsWith('inline')
+									)));
+
+						if (element !== clonedElement) trackedElements.add(element);
+
+						if (splittable) {
+							children.forEach(collectBlocks);
+						} else {
+							const { top, bottom } = element.getBoundingClientRect();
+							blocks.push({ element, top: top - rootTop, bottom: bottom - rootTop });
+						}
+					};
+					collectBlocks(clonedElement);
+
+					clonedElement.setAttribute('data-pdf-root', '');
 
 					let offsetY = 0;
 					let page = 0;
 
-					while (offsetY < canvas.height) {
-						// Height of slice
-						const sliceHeight = Math.min(pagePixelHeight, canvas.height - offsetY);
-
-						// Create temp canvas for slice
-						const pageCanvas = document.createElement('canvas');
-						pageCanvas.width = canvas.width;
-						pageCanvas.height = sliceHeight;
-
-						const ctx = pageCanvas.getContext('2d');
-
-						// Draw the slice of original canvas onto pageCanvas
-						ctx.drawImage(
-							canvas,
-							0,
-							offsetY,
-							canvas.width,
-							sliceHeight,
-							0,
-							0,
-							canvas.width,
-							sliceHeight
+					while (offsetY < contentHeight) {
+						const sliceHeight = Math.min(pagePixelHeight, contentHeight - offsetY);
+						const sliceBlocks = blocks.filter(
+							(block) => block.bottom > offsetY && block.top < offsetY + sliceHeight
 						);
 
-						const imgData = pageCanvas.toDataURL('image/jpeg', 0.7);
+						const keptElements = new Set();
+						for (const { element } of sliceBlocks) {
+							for (
+								let current = element;
+								current && current !== clonedElement;
+								current = current.parentElement
+							) {
+								keptElements.add(current);
+							}
+						}
 
-						// Calculate image height in PDF units keeping aspect ratio
-						const imgHeightMM = (sliceHeight * pageWidthMM) / canvas.width;
+						const anchor = sliceBlocks.find((block) => block.bottom > block.top);
+						anchor?.element.setAttribute('data-pdf-anchor', '');
+
+						const canvas = await html2canvas(clonedElement, {
+							backgroundColor: isDarkMode ? '#000' : '#fff',
+							useCORS: true,
+							logging: false,
+							scale: 2, // increase resolution
+							width: virtualWidth,
+							height: sliceHeight,
+							y: offsetY,
+							ignoreElements: (element) =>
+								(element.parentElement === document.body &&
+									element !== clonedElement &&
+									!['STYLE', 'LINK'].includes(element.tagName)) ||
+								(trackedElements.has(element) && !keptElements.has(element)),
+							onclone: (clonedDocument) => {
+								const clonedRoot = clonedDocument.querySelector('[data-pdf-root]');
+								const clonedAnchor = clonedDocument.querySelector('[data-pdf-anchor]');
+								if (!clonedRoot || !clonedAnchor) return;
+
+								const spacer = clonedDocument.createElement('div');
+								clonedRoot.prepend(spacer);
+
+								let spacerHeight = 0;
+								for (let pass = 0; pass < 2; pass++) {
+									spacerHeight +=
+										anchor.top -
+										(clonedAnchor.getBoundingClientRect().top -
+											clonedRoot.getBoundingClientRect().top);
+									spacer.style.height = `${spacerHeight}px`;
+								}
+							}
+						});
+
+						anchor?.element.removeAttribute('data-pdf-anchor');
+
+						const imgData = canvas.toDataURL('image/jpeg', 0.7);
+						const imgHeightMM = (sliceHeight * pageWidthMM) / virtualWidth;
 
 						if (page > 0) pdf.addPage();
 
@@ -181,6 +224,8 @@
 						offsetY += sliceHeight;
 						page++;
 					}
+
+					document.body.removeChild(clonedElement);
 
 					pdf.save(`chat-${chat.chat.title}.pdf`);
 
@@ -242,7 +287,7 @@
 		if (chat.id) {
 			let chatObj = null;
 
-			if ((chat?.id ?? '').startsWith('local') || $temporaryChatEnabled) {
+			if ((chat?.id ?? '').startsWith('local') || isTemporary) {
 				chatObj = chat;
 			} else {
 				chatObj = await getChatById(localStorage.token, chat.id);
@@ -278,22 +323,22 @@
 {/if}
 
 <Dropdown
+	bind:show
+	closeOnSelect
 	onOpenChange={(state) => {
 		if (state === false) {
 			onClose();
 		}
 	}}
-	align="end"
+	align="start"
 	sideOffset={8}
 >
 	<slot />
 
 	<div slot="content">
-		<div
-			class="select-none min-w-[200px] max-w-[200px] rounded-2xl px-1 py-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg transition"
-		>
+		<DropdownMenu className="select-none min-w-[12.5rem] max-w-[12.5rem] transition">
 			<!-- <DropdownMenu.Item draggable="false"
-				class="flex gap-2 items-center px-3 py-1.5 text-sm  cursor-pointer dark:hover:bg-gray-800 rounded-xl"
+				class="flex gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal  cursor-pointer dark:hover:bg-gray-800 rounded-xl"
 				on:click={async () => {
 					await showSettings.set(!$showSettings);
 				}}
@@ -304,7 +349,7 @@
 					viewBox="0 0 24 24"
 					stroke-width="1.5"
 					stroke="currentColor"
-					class="size-4"
+					class="size-3.5"
 				>
 					<path
 						stroke-linecap="round"
@@ -324,7 +369,7 @@
 			{#if scrollToTop}
 				<button
 					draggable="false"
-					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 					on:click={() => {
 						scrollToTop();
 					}}
@@ -335,7 +380,7 @@
 						viewBox="0 0 24 24"
 						stroke-width="1.5"
 						stroke="currentColor"
-						class="size-4"
+						class="size-3.5"
 					>
 						<path
 							stroke-linecap="round"
@@ -345,57 +390,41 @@
 					</svg>
 					<div class="flex items-center">{$i18n.t('Scroll to Top')}</div>
 				</button>
-
-				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
 			{/if}
 
-			{#if ($artifactContents ?? []).length > 0}
-				<button
-					draggable="false"
-					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
-					id="chat-artifacts-button"
-					on:click={async () => {
-						await showControls.set(true);
-						await showArtifacts.set(true);
-						await showEmbeds.set(false);
-					}}
-				>
-					<Cube className=" size-4" strokeWidth="1.5" />
-					<div class="flex items-center">{$i18n.t('Artifacts')}</div>
-				</button>
-
-				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
+			{#if scrollToTop}
+				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
 			{/if}
 
-			{#if !readOnly && !$temporaryChatEnabled && ($user?.role === 'admin' || ($user.permissions?.chat?.share ?? true))}
+			{#if !readOnly && !isTemporary && ($user?.role === 'admin' || ($user.permissions?.chat?.share ?? true))}
 				<button
 					draggable="false"
-					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 					id="chat-share-button"
 					on:click={() => {
 						shareHandler();
 					}}
 				>
-					<Share strokeWidth="1.5" />
+					<Share className="size-3.5" strokeWidth="1.5" />
 					<div class="flex items-center">{$i18n.t('Share')}</div>
 				</button>
 			{/if}
 
 			{#if $user?.role === 'admin' || ($user.permissions?.chat?.export ?? true)}
-				<DropdownSub>
+				<DropdownSub contentClass="select-none z-50">
 					<button
 						slot="trigger"
 						draggable="false"
-						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+						class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 					>
-						<Download strokeWidth="1.5" />
+						<Download className="size-3.5" strokeWidth="1.5" />
 
 						<div class="flex items-center">{$i18n.t('Download')}</div>
 					</button>
 
 					<button
 						draggable="false"
-						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+						class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 						on:click={() => {
 							downloadJSONExport();
 						}}
@@ -405,7 +434,7 @@
 
 					<button
 						draggable="false"
-						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+						class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 						on:click={() => {
 							downloadTxt();
 						}}
@@ -415,7 +444,7 @@
 
 					<button
 						draggable="false"
-						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+						class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 						on:click={() => {
 							downloadPdf();
 						}}
@@ -425,35 +454,50 @@
 				</DropdownSub>
 			{/if}
 
-			<button
-				draggable="false"
-				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
-				id="chat-copy-button"
-				on:click={async () => {
-					const res = await copyToClipboard(await getChatAsText()).catch((e) => {
-						console.error(e);
-					});
+			{#if (!readOnly || $folders.find((folder) => folder.id === chat?.folder_id)?.user_id === $user?.id) && !isTemporary && chat?.id}
+				<button
+					draggable="false"
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+					on:click={() => {
+						renameHandler();
+					}}
+				>
+					<EditPencilIcon className="size-3.5" strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Rename')}</div>
+				</button>
+			{/if}
 
-					if (res) {
-						toast.success($i18n.t('Copied to clipboard'));
-					}
-				}}
-			>
-				<Clipboard className=" size-4" strokeWidth="1.5" />
-				<div class="flex items-center">{$i18n.t('Copy')}</div>
-			</button>
+			{#if $user?.role === 'admin' || ($user.permissions?.chat?.export ?? true)}
+				<button
+					draggable="false"
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+					id="chat-copy-button"
+					on:click={async () => {
+						const res = await copyToClipboard(await getChatAsText()).catch((e) => {
+							console.error(e);
+						});
 
-			{#if !readOnly && !$temporaryChatEnabled && chat?.id}
-				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
+						if (res) {
+							toast.success($i18n.t('Copied to clipboard'));
+						}
+					}}
+				>
+					<Clipboard className="size-3.5" strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Copy')}</div>
+				</button>
+			{/if}
+
+			{#if !readOnly && !isTemporary && chat?.id}
+				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
 
 				{#if $folders.length > 0}
-					<DropdownSub maxWidth={200}>
+					<DropdownSub contentClass="select-none z-50" maxWidth={200}>
 						<button
 							slot="trigger"
 							draggable="false"
-							class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+							class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 						>
-							<Folder strokeWidth="1.5" />
+							<Folder className="size-3.5" strokeWidth="1.5" />
 
 							<div class="flex items-center">{$i18n.t('Move')}</div>
 						</button>
@@ -461,13 +505,13 @@
 							{#if folder?.id}
 								<button
 									draggable="false"
-									class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl overflow-hidden w-full"
+									class="flex h-[1.6875rem] w-full items-center gap-2 overflow-hidden rounded-xl px-2 text-[0.8125rem] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 									on:click={() => {
 										moveChatHandler(chat.id, folder.id);
 									}}
 								>
 									<div class="shrink-0">
-										<Folder strokeWidth="1.5" />
+										<Folder className="size-3.5" strokeWidth="1.5" />
 									</div>
 
 									<div class="truncate">{folder.name ?? 'Folder'}</div>
@@ -477,34 +521,60 @@
 					</DropdownSub>
 				{/if}
 
-				<button
-					draggable="false"
-					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
-					on:click={() => {
-						archiveChatHandler();
-					}}
-				>
-					<ArchiveBox className="size-4" strokeWidth="1.5" />
-					<div class="flex items-center">{$i18n.t('Archive')}</div>
-				</button>
+				{#if $visibleControls['chat.archive']}
+					<button
+						draggable="false"
+						class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						on:click={() => {
+							archiveChatHandler();
+						}}
+					>
+						<ArchiveBox className="size-3.5" strokeWidth="1.5" />
+						<div class="flex items-center">
+							{chat?.archived ? $i18n.t('Unarchive') : $i18n.t('Archive')}
+						</div>
+					</button>
+				{/if}
 
-				<button
-					draggable="false"
-					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
-					on:click={() => {
-						deleteChatHandler();
-					}}
-				>
-					<GarbageBin strokeWidth="1.5" />
-					<div class="flex items-center">{$i18n.t('Delete')}</div>
-				</button>
+				{#if $user?.role === 'admin' || ($user?.permissions?.chat?.delete ?? true)}
+					<button
+						draggable="false"
+						class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						on:click={() => {
+							deleteChatHandler();
+						}}
+					>
+						<GarbageBin className="size-3.5" strokeWidth="1.5" />
+						<div class="flex items-center">{$i18n.t('Delete')}</div>
+					</button>
+				{/if}
 
-				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
+				{#if $visibleControls['chat.tags']}
+					<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
 
-				<div class="flex p-1 max-h-28 overflow-y-auto">
-					<Tags chatId={chat.id} />
-				</div>
+					<!-- Same picker as folder chats. -->
+					<DropdownSub contentClass="select-none z-50 w-52" maxWidth={240}>
+						<button
+							slot="trigger"
+							draggable="false"
+							class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						>
+							<Tag className="size-3.5" strokeWidth="1.5" />
+							<div class="flex flex-1 items-center">{$i18n.t('Tags')}</div>
+							{#if chat?.meta?.tags?.length}<span class="text-xs tabular-nums text-gray-400"
+									>{chat.meta.tags.length}</span
+								>{/if}
+							<ChevronRight className="size-3.5 shrink-0 text-gray-400 rtl:rotate-180" />
+						</button>
+						<TagPicker
+							chatId={chat.id}
+							onChange={(next) => {
+								if (chat?.meta) chat.meta.tags = next.map((tag) => tag.id);
+							}}
+						/>
+					</DropdownSub>
+				{/if}
 			{/if}
-		</div>
+		</DropdownMenu>
 	</div>
 </Dropdown>

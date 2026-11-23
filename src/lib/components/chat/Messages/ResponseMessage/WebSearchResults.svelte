@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { safeLinkUrl } from '$lib/utils';
+
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
@@ -9,17 +11,21 @@
 </script>
 
 <Collapsible grow={true} className="w-full" buttonClassName="w-full" bind:open={state}>
-	<div class="flex items-center gap-2 text-gray-500 transition">
+	<button
+		type="button"
+		class="pointer-events-auto flex w-full items-center gap-2 text-gray-500 transition"
+		aria-expanded={state}
+	>
 		<slot />
 		{#if state}
 			<ChevronUp strokeWidth="2.5" className="size-3.5 " />
 		{:else}
 			<ChevronDown strokeWidth="2.5" className="size-3.5 " />
 		{/if}
-	</div>
+	</button>
 
 	<div
-		class="text-sm border border-gray-50 dark:border-gray-850/30 rounded-xl my-1.5 p-2 w-full"
+		class="pointer-events-auto text-sm border border-gray-50 dark:border-gray-850/30 rounded-xl my-1.5 p-2 w-full"
 		slot="content"
 	>
 		{#if status?.query}
@@ -39,7 +45,6 @@
 				<div
 					class=" ml-1 text-white dark:text-gray-900 group-hover/item:text-gray-600 dark:group-hover/item:text-white transition"
 				>
-					<!--  -->
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						viewBox="0 0 16 16"
@@ -59,7 +64,7 @@
 		{#if status?.items}
 			{#each status.items as item, itemIdx}
 				<a
-					href={item.link}
+					href={safeLinkUrl(item.link)}
 					target="_blank"
 					class="flex w-full items-center p-1 px-3 group/item justify-between text-gray-800 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 rounded-lg font-normal! no-underline! mb-1"
 				>
@@ -80,7 +85,6 @@
 					<div
 						class=" ml-1 text-white dark:text-gray-900 group-hover/item:text-gray-600 dark:group-hover/item:text-white transition"
 					>
-						<!--  -->
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
 							viewBox="0 0 16 16"
@@ -99,7 +103,7 @@
 		{:else if status?.urls}
 			{#each status.urls as url, urlIdx}
 				<a
-					href={url}
+					href={safeLinkUrl(url)}
 					target="_blank"
 					class="flex w-full items-center p-1 px-3 group/item justify-between text-gray-800 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 rounded-lg no-underline mb-1"
 				>
@@ -120,7 +124,6 @@
 					<div
 						class=" ml-1 text-white dark:text-gray-900 group-hover/item:text-gray-600 dark:group-hover/item:text-white transition"
 					>
-						<!--  -->
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
 							viewBox="0 0 16 16"

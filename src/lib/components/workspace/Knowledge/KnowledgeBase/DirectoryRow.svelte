@@ -7,10 +7,11 @@
 	dayjs.extend(relativeTime);
 
 	import { getContext } from 'svelte';
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
+	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Pencil from '$lib/components/icons/Pencil.svelte';
 	import Folder from '$lib/components/icons/Folder.svelte';
@@ -33,12 +34,10 @@
 	let editName = '';
 	let editInput: HTMLInputElement;
 	let dragOver = false;
-	let showDropdown = false;
 
 	const startRename = () => {
 		editName = directory.name;
 		editing = true;
-		showDropdown = false;
 		setTimeout(() => editInput?.select(), 0);
 	};
 
@@ -128,7 +127,7 @@
 					<input
 						bind:this={editInput}
 						bind:value={editName}
-						class="text-sm w-full bg-transparent border-none outline-hidden"
+						class="text-xs w-full bg-transparent border-none outline-hidden"
 						on:keydown={(e) => {
 							if (e.key === 'Enter') submitRename();
 							if (e.key === 'Escape') cancelRename();
@@ -142,7 +141,7 @@
 						autofocus
 					/>
 				{:else}
-					<div class="line-clamp-1 text-sm">
+					<div class="line-clamp-1 text-xs">
 						{directory.name}
 					</div>
 				{/if}
@@ -151,9 +150,15 @@
 
 		<div class="flex items-center gap-2 shrink-0">
 			{#if directory.updated_at}
-				<Tooltip content={dayjs(directory.updated_at * 1000).format('LLLL')}>
+				<Tooltip
+					content={dayjs(directory.updated_at * 1000)
+						.locale($i18n.language)
+						.format('LLLL')}
+				>
 					<div class="text-xs text-gray-400">
-						{dayjs(directory.updated_at * 1000).fromNow()}
+						{dayjs(directory.updated_at * 1000)
+							.locale($i18n.language)
+							.fromNow()}
 					</div>
 				</Tooltip>
 			{/if}
@@ -162,7 +167,7 @@
 
 	{#if writeAccess}
 		<div class="flex items-center">
-			<Dropdown bind:show={showDropdown} align="end" sideOffset={4}>
+			<Dropdown closeOnSelect align="end" sideOffset={4}>
 				<button
 					class="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-850 transition"
 					type="button"
@@ -171,12 +176,10 @@
 				</button>
 
 				<div slot="content">
-					<div
-						class="min-w-[140px] rounded-2xl p-1 z-[9999999] bg-white dark:bg-gray-850 dark:text-white shadow-lg border border-gray-100 dark:border-gray-800"
-					>
+					<DropdownMenu className="min-w-[8.75rem] z-[9999999]">
 						<button
 							type="button"
-							class="select-none flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition items-center gap-2 text-sm"
+							class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-xs transition hover:text-gray-900 dark:hover:text-gray-100"
 							on:click={() => startRename()}
 						>
 							<Pencil className="size-3.5" />
@@ -184,13 +187,13 @@
 						</button>
 						<button
 							type="button"
-							class="select-none flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition items-center gap-2 text-sm"
+							class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-xs transition hover:text-gray-900 dark:hover:text-gray-100"
 							on:click={() => onDelete(directory.id)}
 						>
 							<GarbageBin className="size-3.5" />
 							{$i18n.t('Delete')}
 						</button>
-					</div>
+					</DropdownMenu>
 				</div>
 			</Dropdown>
 		</div>

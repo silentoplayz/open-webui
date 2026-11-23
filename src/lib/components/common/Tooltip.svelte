@@ -19,7 +19,7 @@
 	export let touch = true;
 	export let theme = '';
 	export let offset: TippyProps['offset'] = [0, 4];
-	export let allowHTML = true;
+	export let allowHTML = false;
 	export let tippyOptions: Partial<TippyProps> = {};
 	export let interactive = false;
 
@@ -41,7 +41,7 @@
 		if (elementId) {
 			tooltipContent = document.getElementById(elementId);
 		} else {
-			tooltipContent = DOMPurify.sanitize(content);
+			tooltipContent = allowHTML ? DOMPurify.sanitize(content) : content;
 		}
 
 		// After the element changes, the old instance must be destroyed, otherwise the detached tippy floating DOM will be left behind
@@ -58,10 +58,39 @@
 					placement,
 					allowHTML,
 					touch,
+					trigger: 'mouseenter focusin',
+					onShow: () => {
+						const focused = document.activeElement;
+						if (
+							!tooltipElement?.matches(':hover') &&
+							tooltipElement?.contains(focused) &&
+							!focused?.matches(':focus-visible')
+						) {
+							return false;
+						}
+					},
 					...(theme !== '' ? { theme } : { theme: 'dark' }),
 					arrow: false,
 					offset,
-					...(interactive ? { interactive: true } : {}),
+					...(interactive ? { interactive: true, aria: { expanded: false } } : {}),
+					plugins: [
+						{
+							fn: (instance) => {
+								const onKeyDown = (e: KeyboardEvent) => {
+									if (e.key === 'Escape') {
+										e.stopPropagation();
+										instance.hide();
+									}
+								};
+
+								return {
+									onMount: () => document.addEventListener('keydown', onKeyDown),
+									onHide: () => document.removeEventListener('keydown', onKeyDown),
+									onDestroy: () => document.removeEventListener('keydown', onKeyDown)
+								};
+							}
+						}
+					],
 					...tippyOptions
 				});
 			}

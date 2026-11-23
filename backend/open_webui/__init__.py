@@ -1,6 +1,6 @@
 import base64
 import os
-import random
+import secrets
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -9,6 +9,8 @@ import typer
 import uvicorn
 
 app = typer.Typer()
+mfa_app = typer.Typer(help='Manage multi-factor authentication.')
+app.add_typer(mfa_app, name='mfa')
 
 KEY_FILE = Path.cwd() / '.webui_secret_key'
 DEFAULT_SECRET_KEY_LENGTH = 24
@@ -18,6 +20,9 @@ def version_callback(value: bool) -> None:
     if value:
         from open_webui.env import VERSION
 
+        # LICENSE covers this Open WebUI CLI identifier.
+        # Do not alter, remove, obscure, or replace it except as LICENSE permits:
+        # https://docs.openwebui.com/license.
         typer.echo(f'Open WebUI version: {VERSION}')
         raise typer.Exit()
 
@@ -42,7 +47,7 @@ def serve(
             if key_length < 1:
                 raise ValueError('WEBUI_SECRET_KEY_LENGTH must be a positive integer')
             typer.echo(f'Generating a new secret key and saving it to {KEY_FILE}')
-            KEY_FILE.write_bytes(base64.b64encode(random.randbytes(key_length)))
+            KEY_FILE.write_bytes(base64.b64encode(secrets.token_bytes(key_length)))
         typer.echo(f'Loading WEBUI_SECRET_KEY from {KEY_FILE}')
         os.environ['WEBUI_SECRET_KEY'] = KEY_FILE.read_text()
 
@@ -52,8 +57,8 @@ def serve(
         os.environ['LD_LIBRARY_PATH'] = ':'.join(
             LD_LIBRARY_PATH
             + [
-                '/usr/local/lib/python3.11/site-packages/torch/lib',
-                '/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib',
+                '/usr/local/lib/python3.12/site-packages/torch/lib',
+                '/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib',
             ]
         )
         try:
@@ -71,7 +76,7 @@ def serve(
             os.environ['LD_LIBRARY_PATH'] = ':'.join(LD_LIBRARY_PATH)
 
     import open_webui.main  # noqa: F401
-    from open_webui.env import UVICORN_WORKERS  # Import the workers setting
+    from open_webui.env import UVICORN_WORKERS, UVICORN_WS_PER_MESSAGE_DEFLATE
 
     # On Windows, uvicorn's default loop factory hardcodes ProactorEventLoop,
     # which is incompatible with psycopg v3 async.  Setting loop='none' lets
@@ -82,8 +87,9 @@ def serve(
         'open_webui.main:app',
         host=host,
         port=port,
-        forwarded_allow_ips='*',
+        forwarded_allow_ips=os.getenv('FORWARDED_ALLOW_IPS', '*'),
         workers=UVICORN_WORKERS,
+        ws_per_message_deflate=UVICORN_WS_PER_MESSAGE_DEFLATE,
         loop=loop,
     )
 
@@ -94,13 +100,38 @@ def dev(
     port: int = 8080,
     reload: bool = True,
 ):
+    from open_webui.env import UVICORN_WS_PER_MESSAGE_DEFLATE
+
     uvicorn.run(
         'open_webui.main:app',
         host=host,
         port=port,
         reload=reload,
-        forwarded_allow_ips='*',
+        forwarded_allow_ips=os.getenv('FORWARDED_ALLOW_IPS', '*'),
+        ws_per_message_deflate=UVICORN_WS_PER_MESSAGE_DEFLATE,
     )
+
+
+@mfa_app.command()
+def reset(email: str, reason: Annotated[str, typer.Option('--reason')]):
+    """Issue a one-time recovery ticket after the operator verifies the user's identity."""
+    import asyncio
+
+    if not os.getenv('WEBUI_SECRET_KEY'):
+        if not KEY_FILE.exists():
+            raise typer.BadParameter(
+                'Provide the existing WEBUI_SECRET_KEY or run in the directory containing .webui_secret_key.'
+            )
+        os.environ['WEBUI_SECRET_KEY'] = KEY_FILE.read_text()
+    from open_webui.utils.mfa import reset_mfa
+
+    try:
+        ticket = asyncio.run(reset_mfa(email, reason))
+    except Exception as error:
+        typer.echo(f'Reset failed: {error}', err=True)
+        raise typer.Exit(1) from None
+    typer.echo('Recovery token (expires in 30 minutes; deliver securely to the verified user):')
+    typer.echo(ticket)
 
 
 if __name__ == '__main__':

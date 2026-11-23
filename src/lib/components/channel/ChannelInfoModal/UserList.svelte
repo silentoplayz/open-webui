@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ProfileImage from '$lib/components/chat/Messages/ProfileImage.svelte';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import { WEBUI_NAME, config, user as _user, showSidebar } from '$lib/stores';
 	import { goto } from '$app/navigation';
@@ -20,10 +21,18 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import ProfilePreview from '../Messages/Message/ProfilePreview.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
+	import Grid from '$lib/components/icons/Grid.svelte';
+	import type { App } from '$lib/apis/apps';
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<any>('i18n');
 
 	export let channel = null;
+	export let apps: App[] = [];
+	export let onRemoveApp: ((appId: string) => Promise<void>) | null = null;
+	let removingApp = '';
+	$: filteredApps = apps.filter((app) =>
+		`${app.name} ${app.slug}`.toLowerCase().includes(query.toLowerCase())
+	);
 
 	export let onAdd = null;
 	export let onRemove = null;
@@ -83,7 +92,11 @@
 
 		clearTimeout(debounceTimer);
 		debounceTimer = setTimeout(() => {
-			getUserList();
+			if (page !== 1) {
+				page = 1;
+			} else {
+				getUserList();
+			}
 		}, 300);
 	};
 
@@ -93,28 +106,28 @@
 	}
 </script>
 
-<div class="flex flex-col justify-center">
+<div class="flex min-h-0 flex-col">
 	{#if users === null || total === null}
 		<div class="my-10">
 			<Spinner className="size-5" />
 		</div>
 	{:else}
-		<div class="flex items-center justify-between px-2 mb-1">
+		<div class="flex shrink-0 items-center justify-between px-2 mb-1">
 			<div class="flex gap-1 items-center">
 				<span class="text-sm">
 					{$i18n.t('Members')}
 				</span>
-				<span class="text-sm text-gray-500">{total}</span>
+				<span class="text-sm text-gray-500">{total + filteredApps.length}</span>
 			</div>
 
 			{#if onAdd}
 				<div class="">
 					<button
 						type="button"
-						class=" px-3 py-1.5 gap-1 rounded-xl bg-gray-100/50 dark:text-white dark:bg-gray-850/50 text-black transition font-medium text-xs flex items-center justify-center"
+						class="inline-flex h-6 items-center gap-1 rounded-lg px-1.5 text-xs font-normal text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
 						on:click={onAdd}
 					>
-						<Plus className="size-3.5 " />
+						<Plus className="size-3" />
 						<span>{$i18n.t('Add Member')}</span>
 					</button>
 				</div>
@@ -123,7 +136,7 @@
 		<!-- <hr class="my-1 border-gray-100/5- dark:border-gray-850/50" /> -->
 
 		{#if search}
-			<div class="flex gap-1 px-1 mb-1">
+			<div class="flex shrink-0 gap-1 px-1 mb-1">
 				<div class=" flex w-full space-x-2">
 					<div class="flex flex-1 items-center">
 						<div class=" self-center ml-1 mr-3">
@@ -145,14 +158,17 @@
 							bind:value={query}
 							on:input={handleSearchInput}
 							placeholder={$i18n.t('Search')}
+							aria-label={$i18n.t('Search')}
 						/>
 					</div>
 				</div>
 			</div>
 		{/if}
 
-		{#if users.length > 0}
-			<div class="scrollbar-hidden relative whitespace-nowrap w-full max-w-full">
+		{#if users.length > 0 || filteredApps.length > 0}
+			<div
+				class="min-h-0 overflow-y-auto overscroll-contain relative whitespace-nowrap w-full max-w-full"
+			>
 				<div class=" text-sm text-left text-gray-500 dark:text-gray-400 w-full max-w-full">
 					<!-- <div
 						class="text-xs text-gray-800 uppercase bg-transparent dark:text-gray-200 w-full mb-0.5"
@@ -210,9 +226,48 @@
 						</div>
 					</div> -->
 					<div class="w-full">
+						{#each filteredApps as app (app.id)}
+							<div class="text-xs flex items-center justify-between">
+								<div class="px-2 py-1.5 font-normal text-gray-900 dark:text-white flex-1 min-w-0">
+									<div class="flex items-center gap-2">
+										<div
+											class="size-6 rounded-lg bg-gray-100 dark:bg-gray-850 flex items-center justify-center shrink-0"
+										>
+											{#if app.data.manifest.profile_image_url}
+												<ProfileImage
+													src={app.data.manifest.profile_image_url}
+													allowExternal
+													className="size-6 rounded-lg!"
+												/>
+											{:else}<Grid className="size-3.5" />{/if}
+										</div>
+										<span class="truncate">{app.name}</span>
+									</div>
+								</div>
+								<div class="px-2 py-1 flex items-center gap-1 translate-y-0.5">
+									<Badge type="muted" content={$i18n.t('App')} />
+									{#if onRemoveApp}
+										<button
+											type="button"
+											aria-label={$i18n.t('Remove {{name}}', { name: app.name })}
+											disabled={!!removingApp}
+											class="rounded-lg py-1 transition disabled:opacity-50 hover:text-gray-900 dark:hover:text-gray-100 text-gray-500 dark:text-gray-400 px-0"
+											on:click={async () => {
+												removingApp = app.id;
+												try {
+													await onRemoveApp?.(app.id);
+												} finally {
+													removingApp = '';
+												}
+											}}><XMark /></button
+										>
+									{/if}
+								</div>
+							</div>
+						{/each}
 						{#each users as user, userIdx (user.id)}
 							<div class=" dark:border-gray-850 text-xs flex items-center justify-between">
-								<div class="px-2 py-1.5 font-medium text-gray-900 dark:text-white flex-1">
+								<div class="px-2 py-1.5 font-normal text-gray-900 dark:text-white flex-1">
 									<div class="flex items-center gap-2">
 										<ProfilePreview {user} side="right" align="center" sideOffset={6}>
 											<img
@@ -222,7 +277,7 @@
 											/>
 										</ProfilePreview>
 										<Tooltip content={user.email} placement="top-start">
-											<div class="font-medium truncate">{user.name}</div>
+											<div class="font-normal truncate">{user.name}</div>
 										</Tooltip>
 
 										{#if user?.is_active}
@@ -254,7 +309,8 @@
 									{#if onRemove}
 										<div>
 											<button
-												class=" rounded-full p-1 hover:bg-gray-100 dark:hover:bg-gray-850 transition disabled:opacity-50 disabled:cursor-not-allowed"
+												aria-label={$i18n.t('Remove {{name}}', { name: user.name })}
+												class="rounded-full py-1 transition disabled:opacity-50 disabled:cursor-not-allowed hover:text-gray-900 dark:hover:text-gray-100 text-gray-500 dark:text-gray-400 px-0"
 												type="button"
 												disabled={user.id === $_user?.id}
 												on:click={() => {
@@ -273,7 +329,9 @@
 			</div>
 
 			{#if total > 30}
-				<Pagination bind:page count={total} perPage={30} />
+				<div class="shrink-0">
+					<Pagination bind:page count={total} perPage={30} />
+				</div>
 			{/if}
 		{:else}
 			<div class="text-gray-500 text-xs text-center py-5 px-10">

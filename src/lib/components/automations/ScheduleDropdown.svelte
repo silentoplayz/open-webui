@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type i18nType from '$lib/i18n';
 	import { getContext } from 'svelte';
+	import dayjs from 'dayjs';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 
@@ -18,6 +19,8 @@
 
 	export let side: 'top' | 'bottom' = 'top';
 	export let align: 'start' | 'end' = 'start';
+	/** Render the trigger as a bare value, for label | value rows. */
+	export let plain = false;
 
 	/** Optional callback when any value changes */
 	export let onChange: () => void = () => {};
@@ -52,7 +55,7 @@
 
 	$: if (frequency === 'ONCE' && !onceDate) {
 		const soon = new Date(Date.now() + 5 * 60_000);
-		onceDate = soon.toISOString().split('T')[0];
+		onceDate = dayjs(soon).format('YYYY-MM-DD');
 		onceTime = `${String(soon.getHours()).padStart(2, '0')}:${String(soon.getMinutes()).padStart(2, '0')}`;
 	}
 
@@ -105,10 +108,10 @@
 	};
 
 	export const parseRrule = (s: string) => {
+		const match = s.match(/DTSTART[^:]*:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/i);
 		// Detect ONCE (COUNT=1 with DTSTART)
-		if (s.includes('COUNT=1')) {
+		if (/COUNT=1(?!\d)/.test(s)) {
 			frequency = 'ONCE';
-			const match = s.match(/DTSTART:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/);
 			if (match) {
 				onceDate = `${match[1]}-${match[2]}-${match[3]}`;
 				onceTime = `${match[4]}:${match[5]}`;
@@ -116,22 +119,26 @@
 			return;
 		}
 		const parts: Record<string, string> = {};
-		s.replace('RRULE:', '')
+		s.split(/\s+/)
+			.filter((line) => !line.toUpperCase().startsWith('DTSTART'))
+			.join('')
+			.replace('RRULE:', '')
 			.split(';')
 			.forEach((p) => {
 				const [k, v] = p.split('=');
 				if (k && v) parts[k] = v;
 			});
 		const freq = parts.FREQ || 'DAILY';
-		if (!['HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY'].includes(freq)) {
+		if (!['HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY'].includes(freq) || parts.COUNT || parts.UNTIL) {
 			frequency = 'CUSTOM';
+			prevFrequency = 'CUSTOM';
 			customRrule = s;
 			return;
 		}
 		frequency = freq;
 		interval = parseInt(parts.INTERVAL || '1');
-		hour = parseInt(parts.BYHOUR || '9');
-		minute = parseInt(parts.BYMINUTE || '0');
+		hour = parseInt(parts.BYHOUR || match?.[4] || '9');
+		minute = parseInt(parts.BYMINUTE || match?.[5] || '0');
 		selectedDays = parts.BYDAY ? parts.BYDAY.split(',') : [];
 		monthDay = parseInt(parts.BYMONTHDAY || '1');
 	};
@@ -146,61 +153,56 @@
 		return 'Schedule';
 	};
 
-	$: scheduleLabel = (() => {
-		if (frequency === 'ONCE') return 'Once';
-		if (frequency === 'HOURLY') return 'Hourly';
-		if (frequency === 'DAILY') return 'Daily';
-		if (frequency === 'WEEKLY') return 'Weekly';
-		if (frequency === 'MONTHLY') return 'Monthly';
-		if (frequency === 'CUSTOM') return 'Custom';
-		return 'Schedule';
-	})();
+	$: scheduleLabel =
+		FREQUENCIES.find((option) => option.key === frequency)?.label ?? $i18n.t('Schedule');
 </script>
 
 <Dropdown bind:show={showDropdown} {side} {align}>
 	<button
 		type="button"
-		class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl text-xs transition
-			text-gray-600 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/5"
+		class={plain
+			? 'flex w-full min-w-0 items-center text-left text-xs font-normal leading-6 text-gray-700 dark:text-gray-300'
+			: 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl text-xs transition text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'}
 	>
-		<svg
-			xmlns="http://www.w3.org/2000/svg"
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke-width="1.5"
-			stroke="currentColor"
-			class="size-3.5"
-		>
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-			/>
-		</svg>
-		<span class="whitespace-nowrap">{scheduleLabel}</span>
-		<svg
-			xmlns="http://www.w3.org/2000/svg"
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke-width="2"
-			stroke="currentColor"
-			class="size-2.5"
-		>
-			<path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-		</svg>
+		{#if !plain}<svg
+				xmlns="http://www.w3.org/2000/svg"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke-width="1.5"
+				stroke="currentColor"
+				class="size-3.5"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+				/>
+			</svg>{/if}
+		<span class={plain ? 'truncate' : 'whitespace-nowrap'}>{scheduleLabel}</span>
+		{#if !plain}<svg
+				xmlns="http://www.w3.org/2000/svg"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke-width="2"
+				stroke="currentColor"
+				class="size-2.5"
+			>
+				<path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+			</svg>{/if}
 	</button>
 
 	<div
 		slot="content"
-		class="rounded-2xl shadow-lg border border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-850 w-48 p-1"
+		class="rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-850 w-48 p-0.5"
 	>
-		<div class="px-2 text-xs text-gray-500 pt-1">
+		<div class="px-2 text-[0.6875rem] text-gray-500 pt-0.5">
 			{$i18n.t('Schedule')}
 		</div>
 
 		<div class="px-1.5 py-0.5">
 			<select
-				class="w-full bg-transparent rounded-xl text-xs py-1.5 px-1.5 outline-hidden"
+				aria-label={$i18n.t('Schedule')}
+				class="w-full h-[1.6875rem] bg-transparent rounded-xl text-[0.8125rem] px-1.5 outline-hidden"
 				bind:value={frequency}
 				on:click={(e) => e.stopPropagation()}
 				on:change={onChange}
@@ -214,32 +216,35 @@
 		{#if frequency === 'CUSTOM'}
 			<div class="px-2 pb-2">
 				<input
+					aria-label={$i18n.t('Custom schedule')}
 					type="text"
 					bind:value={customRrule}
 					placeholder="RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
-					class="w-full bg-transparent outline-hidden text-xs placeholder:text-gray-400 dark:placeholder:text-gray-600"
+					class="w-full bg-transparent outline-hidden text-[0.8125rem] placeholder:text-gray-400 dark:placeholder:text-gray-600"
 					on:click={(e) => e.stopPropagation()}
 					on:input={onChange}
 				/>
 			</div>
 		{:else if frequency !== 'HOURLY'}
-			<div class="flex gap-2 flex-wrap items-center px-3 pb-2 text-xs">
+			<div class="flex gap-2 flex-wrap items-center px-3 pb-2 text-[0.8125rem]">
 				{#if frequency === 'ONCE'}
 					<div class="flex items-center gap-1.5">
 						<input
+							aria-label={$i18n.t('Date')}
 							type="date"
 							bind:value={onceDate}
-							min={new Date().toISOString().split('T')[0]}
-							class="bg-transparent outline-hidden text-xs dark:color-scheme-dark"
+							min={dayjs().format('YYYY-MM-DD')}
+							class="bg-transparent outline-hidden text-xs dark:scheme-dark"
 							on:click={(e) => e.stopPropagation()}
 							on:input={onChange}
 						/>
 					</div>
 					<div class="flex items-center gap-1.5">
 						<input
+							aria-label={$i18n.t('Time')}
 							type="time"
 							bind:value={onceTime}
-							class="bg-transparent outline-hidden text-xs dark:color-scheme-dark"
+							class="bg-transparent outline-hidden text-xs dark:scheme-dark"
 							on:click={(e) => e.stopPropagation()}
 							on:input={onChange}
 						/>
@@ -248,6 +253,7 @@
 					<div class="flex items-center gap-1.5">
 						<span class="text-xs text-gray-500 mr-0.5">{$i18n.t('Time')}</span>
 						<input
+							aria-label={$i18n.t('Time')}
 							type="time"
 							value={`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`}
 							on:input={(e) => {
@@ -256,7 +262,7 @@
 								minute = m;
 								onChange();
 							}}
-							class="bg-transparent text-center outline-hidden text-xs dark:color-scheme-dark"
+							class="bg-transparent text-center outline-hidden text-xs dark:scheme-dark"
 							on:click={(e) => e.stopPropagation()}
 						/>
 					</div>
@@ -266,6 +272,7 @@
 					<div class="flex items-center gap-1.5">
 						<span class="text-xs text-gray-500">{$i18n.t('Day')}</span>
 						<input
+							aria-label={$i18n.t('Day')}
 							type="number"
 							bind:value={monthDay}
 							min={1}
@@ -284,7 +291,7 @@
 						<button
 							type="button"
 							class="flex-1 py-1 text-xs rounded-xl transition {selectedDays.includes(d.key)
-								? 'bg-gray-50 dark:bg-gray-800 text-black dark:text-gray-100'
+								? 'text-black dark:text-gray-100'
 								: 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'}"
 							on:click={() => {
 								if (selectedDays.includes(d.key)) {

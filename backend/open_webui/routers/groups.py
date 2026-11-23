@@ -1,16 +1,24 @@
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from open_webui.config import CACHE_DIR
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
+from open_webui.config import CACHE_DIR, DEFAULT_USER_PERMISSIONS
+from open_webui.models.config import Config
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.groups import (
     GroupForm,
+    group_default_models,
+    resolve_group_default_models,
+    GroupHierarchyError,
+    Group,
+    GroupMember,
+    group_user_memberships,
+    descendant_groups,
     GroupInfoResponse,
     GroupResponse,
     Groups,
@@ -20,17 +28,19 @@ from open_webui.models.groups import (
 from open_webui.models.knowledge import Knowledges
 from open_webui.models.models import Models
 from open_webui.models.tools import Tools
-from open_webui.models.users import UserInfoResponse, Users
+from open_webui.models.users import UserInfoResponse, Users, User
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, or_
+from pydantic import BaseModel
+from open_webui.utils.access_control import combine_permissions, fill_missing_permissions
+from open_webui.utils.json_codec import JSONCodec
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-############################
-# GetFunctions
-############################
+# Get Functions
 
 
 @router.get('/', response_model=list[GroupResponse])
@@ -52,9 +62,7 @@ async def get_groups(
     return groups
 
 
-############################
-# CreateNewGroup
-############################
+# Create New Group
 
 
 @router.post('/create', response_model=Optional[GroupResponse])
@@ -83,6 +91,8 @@ async def create_new_group(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ERROR_MESSAGES.DEFAULT('Error creating group'),
             )
+    except GroupHierarchyError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -93,9 +103,7 @@ async def create_new_group(
         )
 
 
-############################
-# GetGroupById
-############################
+# Get Group By Id
 
 
 @router.get('/id/{id}', response_model=Optional[GroupResponse])
@@ -108,7 +116,7 @@ async def get_group_by_id(id: str, user=Depends(get_admin_user), db: AsyncSessio
         )
     else:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
@@ -123,14 +131,12 @@ async def get_group_info_by_id(id: str, user=Depends(get_verified_user), db: Asy
         )
     else:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
 
-############################
-# ExportGroupById
-############################
+# Export Group By Id
 
 
 class GroupExportResponse(GroupResponse):
@@ -149,14 +155,12 @@ async def export_group_by_id(id: str, user=Depends(get_admin_user), db: AsyncSes
         )
     else:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
 
-############################
-# GetUsersInGroupById
-############################
+# Get Users In Group By Id
 
 
 @router.post('/id/{id}/users', response_model=list[UserInfoResponse])
@@ -172,9 +176,7 @@ async def get_users_in_group(id: str, user=Depends(get_admin_user), db: AsyncSes
         )
 
 
-############################
-# UpdateGroupById
-############################
+# Update Group By Id
 
 
 @router.post('/id/{id}/update', response_model=Optional[GroupResponse])
@@ -186,14 +188,15 @@ async def update_group_by_id(
     db: AsyncSession = Depends(get_async_session),
 ):
     try:
-        group = await Groups.update_group_by_id(id, form_data, db=db)
+        changes = {}
+        group = await Groups.update_group_by_id(id, form_data, db=db, changes=changes)
         if group:
             await publish_event(
                 request,
                 EVENTS.GROUP_UPDATED,
                 actor=user,
                 subject_id=id,
-                data={'name': group.name},
+                data={'name': group.name, **changes},
             )
             return GroupResponse(
                 **group.model_dump(),
@@ -204,6 +207,8 @@ async def update_group_by_id(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ERROR_MESSAGES.DEFAULT('Error updating group'),
             )
+    except GroupHierarchyError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -214,9 +219,7 @@ async def update_group_by_id(
         )
 
 
-############################
-# AddUserToGroupByUserIdAndGroupId
-############################
+# Add User To Group By User Id And Group Id
 
 
 @router.post('/id/{id}/users/add', response_model=Optional[GroupResponse])
@@ -249,6 +252,8 @@ async def add_user_to_group(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ERROR_MESSAGES.DEFAULT('Error adding users to group'),
             )
+    except GroupHierarchyError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -286,6 +291,8 @@ async def remove_users_from_group(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ERROR_MESSAGES.DEFAULT('Error removing users from group'),
             )
+    except GroupHierarchyError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -296,9 +303,7 @@ async def remove_users_from_group(
         )
 
 
-############################
-# DeleteGroupById
-############################
+# Delete Group By Id
 
 
 @router.delete('/id/{id}/delete', response_model=bool)
@@ -306,20 +311,32 @@ async def delete_group_by_id(
     request: Request, id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
 ):
     try:
-        result = await Groups.delete_group_by_id(id, db=db)
+        changes = {}
+        result = await Groups.delete_group_by_id(id, db=db, changes=changes)
         if result:
             await publish_event(
                 request,
                 EVENTS.GROUP_DELETED,
                 actor=user,
                 subject_id=id,
+                data=changes,
             )
+            for child_id in changes['promoted_child_ids']:
+                await publish_event(
+                    request,
+                    EVENTS.GROUP_UPDATED,
+                    actor=user,
+                    subject_id=child_id,
+                    data={'old_parent_group_id': id, 'parent_group_id': changes['parent_group_id']},
+                )
             return result
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ERROR_MESSAGES.DEFAULT('Error deleting group'),
             )
+    except GroupHierarchyError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -330,9 +347,7 @@ async def delete_group_by_id(
         )
 
 
-############################
-# PreviewGroupAccess
-############################
+# Preview Group Access
 
 
 @router.get('/id/{id}/preview')
@@ -349,7 +364,7 @@ async def preview_group_access(
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
-    group_ids = {group.id}
+    group_ids = await Groups.get_ancestor_ids(group.id, db=db)
 
     # Batch-check accessible resources using existing AccessGrants
     all_models = await Models.get_all_models(db=db)
@@ -384,8 +399,29 @@ async def preview_group_access(
 
     active_models = [m for m in all_models if m.is_active]
 
+    ancestors = (await db.execute(select(Group).where(Group.id.in_(group_ids - {id})))).scalars().all()
+    inherited_permissions = fill_missing_permissions(
+        JSONCodec.loads(JSONCodec.dumps(await Config.get('user.permissions') or {})), DEFAULT_USER_PERMISSIONS
+    )
+    for ancestor in ancestors:
+        inherited_permissions = combine_permissions(inherited_permissions, ancestor.permissions or {})
+    effective_permissions = combine_permissions(
+        JSONCodec.loads(JSONCodec.dumps(inherited_permissions)), group.permissions or {}
+    )
+
+    default_models, source_group_id = resolve_group_default_models([group, *ancestors])
+    if default_models is None:
+        default_models = [
+            model.strip() for model in (await Config.get('ui.default_models') or '').split(',') if model.strip()
+        ]
+
     return {
         'group': {'id': group.id, 'name': group.name},
+        'default_models': {
+            'local': group_default_models(group),
+            'effective': default_models,
+            'source_group_id': source_group_id,
+        },
         'models': {
             'items': [{'id': m.id, 'name': m.name} for m in active_models if m.id in accessible_model_ids],
             'total': len(active_models),
@@ -399,4 +435,72 @@ async def preview_group_access(
             'total': len(all_tools),
         },
         'permissions': group.permissions or {},
+        'inherited_permissions': inherited_permissions,
+        'effective_permissions': effective_permissions,
     }
+
+
+class GroupMemberInfo(UserInfoResponse):
+    membership_type: Literal['direct', 'inherited']
+    via_group_ids: list[str] = []
+
+
+class GroupMembersResponse(BaseModel):
+    items: list[GroupMemberInfo]
+    total: int
+    counts: dict[str, int]
+
+
+@router.get('/id/{id}/members', response_model=GroupMembersResponse)
+async def inspect_group_members(
+    id: str,
+    membership: Literal['direct', 'inherited', 'effective'] = 'effective',
+    query: str = '',
+    page: int = Query(default=1, ge=1),
+    user=Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    if not await db.get(Group, id):
+        raise HTTPException(status_code=404, detail='Group not found.')
+    direct = select(GroupMember.user_id).where(GroupMember.group_id == id)
+    effective = group_user_memberships([id], True)
+    direct_count = (await db.execute(select(func.count()).select_from(direct.subquery()))).scalar_one()
+    effective_count = (await db.execute(select(func.count()).select_from(effective))).scalar_one()
+    stmt = select(User).where(User.id.in_(select(effective.c.user_id)))
+    if membership == 'direct':
+        stmt = stmt.where(User.id.in_(direct))
+    elif membership == 'inherited':
+        stmt = stmt.where(User.id.not_in(direct))
+    if query:
+        stmt = stmt.where(or_(User.name.ilike(f'%{query}%'), User.email.ilike(f'%{query}%')))
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    users = (await db.execute(stmt.order_by(User.name, User.id).offset((page - 1) * 30).limit(30))).scalars().all()
+    descendant = descendant_groups([id])
+    sources = {u.id: [] for u in users}
+    if sources:
+        rows = await db.execute(
+            select(GroupMember.user_id, GroupMember.group_id).where(
+                GroupMember.user_id.in_(sources), GroupMember.group_id.in_(select(descendant.c.group_id))
+            )
+        )
+        for uid, gid in rows:
+            sources[uid].append(gid)
+    return GroupMembersResponse(
+        items=[
+            GroupMemberInfo(
+                id=u.id,
+                name=u.name,
+                email=u.email,
+                role=u.role,
+                membership_type='direct' if id in sources[u.id] else 'inherited',
+                via_group_ids=sorted(gid for gid in sources[u.id] if gid != id),
+            )
+            for u in users
+        ],
+        total=total,
+        counts={
+            'direct': direct_count,
+            'effective': effective_count,
+            'inherited': effective_count - direct_count,
+        },
+    )

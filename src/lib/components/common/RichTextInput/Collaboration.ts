@@ -1,17 +1,22 @@
 import * as Y from 'yjs';
+import { marked } from 'marked';
 import {
 	ySyncPlugin,
+	ySyncPluginKey,
 	yCursorPlugin,
 	yUndoPlugin,
 	undo,
 	redo,
-	prosemirrorJSONToYDoc
+	prosemirrorJSONToYDoc,
+	relativePositionToAbsolutePosition
 } from 'y-prosemirror';
 import type { Socket } from 'socket.io-client';
 import type { SessionUser } from '$lib/stores';
-import { Editor, Extension } from '@tiptap/core';
+import { createNodeFromContent, Editor, Extension } from '@tiptap/core';
 import { keymap } from 'prosemirror-keymap';
+import { Plugin } from 'prosemirror-state';
 import { tick } from 'svelte';
+import tippy, { type Instance } from 'tippy.js';
 
 const USER_COLORS = [
 	'#FF6B6B',
@@ -32,25 +37,57 @@ const generateUserColor = () => {
 export type EditorContentGetter = () => {
 	md: string;
 	html: string;
-	json: string;
+	json: unknown;
 };
 
-// Custom Yjs Socket.IO provider
+// Collaborative editing for one editor. Editors showing the same document on
+// the same socket share one DocumentSession, so they edit one Y.Doc.
 export class SocketIOCollaborationProvider {
-	private readonly doc = new Y.Doc();
-	private readonly awareness = new SimpleAwareness(this.doc);
-	private isConnected = false;
-	private synced = false;
-	private editor: Editor | null = null;
-	private editorContentGetter: EditorContentGetter | null = null;
+	private readonly session: DocumentSession;
+	private readonly awareness: EditorAwareness;
+	public editor: Editor | null = null;
+	public getContent: EditorContentGetter | null = null;
+	private cursorTarget: any = null;
 
 	constructor(
-		private readonly documentId: string,
-		private readonly socket: Socket,
-		private readonly user: SessionUser,
-		private readonly initialContent: string | null = null
+		documentId: string,
+		socket: Socket,
+		user: SessionUser,
+		initialContent: unknown = null
 	) {
-		this.setupEventListeners();
+		this.session = DocumentSession.acquire(socket, documentId, user, initialContent, this);
+		this.awareness = new EditorAwareness(this.session, this);
+	}
+
+	public revealCursor(target: any) {
+		this.cursorTarget = target;
+		this.revealPendingCursor();
+	}
+
+	public revealPendingCursor() {
+		if (!this.session.synced || !this.editor || !this.cursorTarget) return;
+		const target = this.cursorTarget;
+		this.cursorTarget = null;
+		const editor = this.editor;
+		let position = target.cursor_position ?? 0;
+		try {
+			const state = ySyncPluginKey.getState(editor.state);
+			if (target.cursor?.head && state?.binding) {
+				position =
+					relativePositionToAbsolutePosition(
+						this.session.doc,
+						state.type,
+						Y.createRelativePositionFromJSON(target.cursor.head),
+						state.binding.mapping
+					) ?? position;
+			}
+		} catch {
+			// A replaced document can no longer resolve the old relative cursor.
+		}
+		queueMicrotask(() => {
+			if (!editor.isDestroyed)
+				editor.commands.focus(Math.min(position, editor.state.doc.content.size));
+		});
 	}
 
 	public getEditorExtension() {
@@ -58,10 +95,79 @@ export class SocketIOCollaborationProvider {
 			name: 'yjsCollaboration',
 
 			addProseMirrorPlugins: () => {
-				const yXmlFragment = this.doc.getXmlFragment('prosemirror');
+				const yXmlFragment = this.session.doc.getXmlFragment('prosemirror');
 				if (!yXmlFragment) return [];
 
 				const plugins = [
+					new Plugin({
+						filterTransaction: (tr) => {
+							// Wait for the saved content before accepting local edits.
+							if (
+								!this.session.synced &&
+								this.session.isConnected &&
+								tr.docChanged &&
+								!tr.getMeta(ySyncPluginKey)?.isChangeOrigin
+							) {
+								return false;
+							}
+							// Preserve literal URLs received from another editor.
+							if (tr.getMeta(ySyncPluginKey)?.isChangeOrigin) {
+								tr.setMeta('preventAutolink', true);
+							}
+							return true;
+						},
+						view: (view) => {
+							const labels = new Map<HTMLElement, Instance>();
+							const update = () => {
+								for (const [cursor, label] of labels) {
+									if (!view.dom.contains(cursor)) {
+										label.destroy();
+										labels.delete(cursor);
+									}
+								}
+								for (const cursor of view.dom.querySelectorAll<HTMLElement>(
+									'.ProseMirror-yjs-cursor'
+								)) {
+									if (!labels.has(cursor)) {
+										const label = cursor.querySelector('div');
+										if (!label) continue;
+										// Float above the caret without being clipped by the editor's scroll area.
+										label.remove();
+										label.className = 'ProseMirror-yjs-cursor-label';
+										labels.set(
+											cursor,
+											tippy(cursor, {
+												appendTo: () => document.body,
+												render: () => ({ popper: label }),
+												trigger: 'manual',
+												showOnCreate: true,
+												hideOnClick: false,
+												animation: false,
+												placement: 'top-start',
+												offset: [0, 2],
+												zIndex: 30,
+												popperOptions: {
+													strategy: 'fixed',
+													modifiers: [{ name: 'flip', enabled: false }]
+												}
+											})
+										);
+									}
+									labels.get(cursor)?.popperInstance?.forceUpdate();
+								}
+							};
+							update();
+							const resizeObserver = new ResizeObserver(update);
+							resizeObserver.observe(view.dom);
+							return {
+								update,
+								destroy: () => {
+									resizeObserver.disconnect();
+									labels.forEach((label) => label.destroy());
+								}
+							};
+						}
+					}),
 					ySyncPlugin(yXmlFragment),
 					yUndoPlugin(),
 					keymap({
@@ -79,12 +185,128 @@ export class SocketIOCollaborationProvider {
 		});
 	}
 
-	public setEditor(editor: Editor, editorContentGetter: EditorContentGetter) {
+	public setEditor(editor: Editor, getContent: EditorContentGetter) {
 		this.editor = editor;
-		this.editorContentGetter = editorContentGetter;
+		this.getContent = getContent;
+		this.session.editorReady();
 	}
 
-	private joinDocument() {
+	public flush() {
+		return this.session.flush(this);
+	}
+
+	public destroy() {
+		this.session.release(this);
+		this.editor = null;
+		this.getContent = null;
+	}
+}
+
+// One Y.Doc and room membership per socket and document. The server tracks
+// room membership per socket, so this joins once for every editor showing the
+// document, and leaves only when the last of them closes.
+class DocumentSession {
+	private static readonly sessions = new WeakMap<Socket, Map<string, DocumentSession>>();
+
+	public static acquire(
+		socket: Socket,
+		documentId: string,
+		user: SessionUser,
+		initialContent: unknown,
+		provider: SocketIOCollaborationProvider
+	) {
+		let bySocket = DocumentSession.sessions.get(socket);
+		if (!bySocket) DocumentSession.sessions.set(socket, (bySocket = new Map()));
+		let session = bySocket.get(documentId);
+		if (!session) {
+			session = new DocumentSession(documentId, socket, user, initialContent);
+			bySocket.set(documentId, session);
+		}
+		session.providers.add(provider);
+		return session;
+	}
+
+	public readonly doc = new Y.Doc();
+	public readonly awareness = new SimpleAwareness(this.doc);
+	public isConnected: boolean;
+	public synced = false;
+	public cursorOwner: SocketIOCollaborationProvider | null = null;
+	private joined = false;
+	private readonly providers = new Set<SocketIOCollaborationProvider>();
+	private listeners: Array<[string, (...args: any[]) => void]> = [];
+	private contentSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+
+	private constructor(
+		private readonly documentId: string,
+		private readonly socket: Socket,
+		private readonly user: SessionUser,
+		private readonly initialContent: unknown
+	) {
+		this.isConnected = socket.connected;
+		this.setupEventListeners();
+	}
+
+	// Every editor renders the same Y.Doc, so any of them can supply the content.
+	private get primary() {
+		for (const provider of this.providers) if (provider.editor) return provider;
+		return null;
+	}
+
+	public editorReady() {
+		this.isConnected ||= this.socket.connected;
+		if (this.isConnected && !this.joined) this.join();
+	}
+
+	public release(provider: SocketIOCollaborationProvider) {
+		if (!this.providers.has(provider)) return;
+		// Close while the last editor is still attached so its final snapshot is sent.
+		if (this.providers.size === 1) this.close();
+		else this.providers.delete(provider);
+	}
+
+	private markSynced() {
+		this.synced = true;
+		for (const provider of this.providers) provider.revealPendingCursor();
+	}
+
+	private initializeContent(content = this.initialContent) {
+		const editor = this.primary?.editor;
+		if (!editor) return;
+
+		if (typeof content === 'string') {
+			content = createNodeFromContent(content, editor.schema, { slice: false }).toJSON();
+		}
+
+		const doc = prosemirrorJSONToYDoc(editor.schema, content);
+		const update = Array.from(Y.encodeStateAsUpdate(doc));
+		doc.destroy();
+		this.socket.emit(
+			'ydoc:document:update',
+			{ document_id: this.documentId, update, initialize: true },
+			(state: number[] | null) => {
+				if (!state || !this.primary) return;
+				Y.applyUpdate(this.doc, new Uint8Array(state), 'server');
+				this.markSynced();
+				if (!this.contentSnapshotTimer) this.sendContentSnapshot();
+			}
+		);
+	}
+
+	// Send the merged content; the remote sender had not seen our edits yet.
+	private sendContentSnapshot() {
+		this.contentSnapshotTimer = null;
+		const getContent = this.primary?.getContent;
+		if (!this.isConnected || !getContent) return;
+
+		this.socket.emit('ydoc:document:update', {
+			document_id: this.documentId,
+			data: { content: getContent() }
+		});
+	}
+
+	private join() {
+		if (!this.primary) return;
+
 		const userColor = generateUserColor();
 		this.socket.emit('ydoc:document:join', {
 			document_id: this.documentId,
@@ -92,6 +314,7 @@ export class SocketIOCollaborationProvider {
 			user_name: this.user?.name,
 			user_color: userColor
 		});
+		this.joined = true;
 
 		// Set user awareness info
 		if (this.user) {
@@ -103,13 +326,42 @@ export class SocketIOCollaborationProvider {
 		}
 	}
 
+	private listen(event: string, handler: (...args: any[]) => void) {
+		this.listeners.push([event, handler]);
+		this.socket.on(event, handler);
+	}
+
+	public async flush(provider: SocketIOCollaborationProvider) {
+		await tick();
+		const getContent = provider.getContent;
+		if (!this.isConnected || !this.synced || !getContent) {
+			throw new Error('Tab is not connected. Reconnect before leaving this tab.');
+		}
+		if (this.contentSnapshotTimer) {
+			clearTimeout(this.contentSnapshotTimer);
+			this.contentSnapshotTimer = null;
+		}
+		const result = await this.socket.timeout(10000).emitWithAck('ydoc:document:update', {
+			document_id: this.documentId,
+			flush: true,
+			data: { content: getContent() }
+		});
+		if (!result?.ok) throw new Error(result?.error || 'Failed to save page');
+	}
+
 	private setupEventListeners() {
 		// Listen for document updates from server
-		this.socket.on('ydoc:document:update', (data) => {
+		this.listen('ydoc:document:update', (data) => {
 			if (data.document_id === this.documentId && data.socket_id !== this.socket.id) {
 				try {
 					const update = new Uint8Array(data.update);
-					Y.applyUpdate(this.doc, update);
+					// 'server' stops the local update listener sending this straight back out
+					Y.applyUpdate(this.doc, update, 'server');
+
+					if (this.contentSnapshotTimer) {
+						clearTimeout(this.contentSnapshotTimer);
+					}
+					this.contentSnapshotTimer = setTimeout(() => this.sendContentSnapshot(), 500);
 				} catch (error) {
 					console.error('Error applying Yjs update:', error);
 				}
@@ -117,35 +369,29 @@ export class SocketIOCollaborationProvider {
 		});
 
 		// Listen for document state from server
-		this.socket.on('ydoc:document:state', async (data) => {
+		this.listen('ydoc:document:state', async (data) => {
 			if (data.document_id === this.documentId) {
 				try {
 					if (data.state) {
 						const state = new Uint8Array(data.state);
 
 						if (state.length === 2 && state[0] === 0 && state[1] === 0) {
-							// Empty state, check if we have content to initialize
-							// check if editor empty as well
-							// const editor = await getEditorInstance();
-
-							const isEmptyEditor = !this.editor?.getText().trim();
-							if (isEmptyEditor && this.editor) {
-								if (this.initialContent && (data?.sessions ?? ['']).length === 1) {
-									// Check if initialContent is HTML (string) or JSON (object)
-									if (typeof this.initialContent === 'string') {
-										// HTML content - let the editor parse it, then sync to Yjs
-										this.editor.commands.setContent(this.initialContent);
-										// The Yjs plugin will automatically sync the content
-									} else {
-										// JSON content - use the existing approach
-										const editorYdoc = prosemirrorJSONToYDoc(
-											this.editor.schema,
-											this.initialContent
-										);
-										if (editorYdoc) {
-											Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(editorYdoc));
-										}
-									}
+							const editor = this.primary?.editor;
+							if (
+								editor &&
+								!editor.getText().trim() &&
+								this.doc.getXmlFragment('prosemirror').length === 0
+							) {
+								if (data.content || this.initialContent) {
+									// The HTTP snapshot may predate the last socket save.
+									this.initializeContent(
+										data.content
+											? data.content.json ||
+													data.content.html ||
+													marked.parse(data.content.md ?? '', { async: false })
+											: this.initialContent
+									);
+									return;
 								}
 							} else {
 								// If the editor already has content, we don't need to send an empty state
@@ -154,7 +400,7 @@ export class SocketIOCollaborationProvider {
 										document_id: this.documentId,
 										user_id: this.user?.id,
 										socket_id: this.socket.id,
-										update: Y.encodeStateAsUpdate(this.doc)
+										update: Array.from(Y.encodeStateAsUpdate(this.doc))
 									});
 								} else {
 									console.warn('Yjs document is empty, not sending state.');
@@ -164,7 +410,7 @@ export class SocketIOCollaborationProvider {
 							Y.applyUpdate(this.doc, state, 'server');
 						}
 					}
-					this.synced = true;
+					this.markSynced();
 				} catch (error) {
 					console.error('Error applying Yjs state:', error);
 
@@ -177,7 +423,7 @@ export class SocketIOCollaborationProvider {
 		});
 
 		// Listen for awareness updates
-		this.socket.on('ydoc:awareness:update', (data) => {
+		this.listen('ydoc:awareness:update', (data) => {
 			if (data.document_id === this.documentId) {
 				try {
 					const awarenessUpdate = new Uint8Array(data.update);
@@ -194,21 +440,22 @@ export class SocketIOCollaborationProvider {
 
 		// Listen for document updates from Yjs
 		this.doc.on('update', async (update, origin) => {
-			if (this.editor && origin !== 'server' && this.isConnected) {
+			if (this.primary && origin !== 'server' && this.isConnected) {
 				await tick(); // Ensure the DOM is updated before sending
+				const getContent = this.primary?.getContent;
+				if (!getContent || !this.isConnected) return;
 				this.socket.emit('ydoc:document:update', {
 					document_id: this.documentId,
 					user_id: this.user?.id,
 					socket_id: this.socket.id,
 					update: Array.from(update),
-					data: {
-						content: this.editorContentGetter?.() ?? {
-							md: '',
-							html: '',
-							json: ''
-						}
-					}
+					data: { content: getContent() }
 				});
+
+				if (this.contentSnapshotTimer) {
+					clearTimeout(this.contentSnapshotTimer);
+					this.contentSnapshotTimer = null;
+				}
 			}
 		});
 
@@ -225,34 +472,36 @@ export class SocketIOCollaborationProvider {
 					this.socket.emit('ydoc:awareness:update', {
 						document_id: this.documentId,
 						user_id: this.socket.id,
-						update: Array.from(awarenessUpdate)
+						update: Array.from(awarenessUpdate),
+						cursor: this.awareness.getLocalState()?.cursor,
+						cursor_position: (this.cursorOwner ?? this.primary)?.editor?.state.selection.head
 					});
 				}
 			}
 		);
-
-		if (this.socket.connected) {
-			this.isConnected = true;
-			this.joinDocument();
-		}
 	}
 
 	private readonly onConnect = () => {
 		this.isConnected = true;
-		this.joinDocument();
+		this.join();
 	};
 
 	private readonly onDisconnect = () => {
 		this.isConnected = false;
 		this.synced = false;
+		this.joined = false;
 	};
 
-	public destroy() {
-		this.socket.off('ydoc:document:update');
-		this.socket.off('ydoc:document:state');
-		this.socket.off('ydoc:awareness:update');
+	private close() {
+		for (const [event, handler] of this.listeners) this.socket.off(event, handler);
+		this.listeners = [];
 		this.socket.off('connect', this.onConnect);
 		this.socket.off('disconnect', this.onDisconnect);
+
+		if (this.contentSnapshotTimer) {
+			clearTimeout(this.contentSnapshotTimer);
+			this.sendContentSnapshot();
+		}
 
 		if (this.isConnected) {
 			this.socket.emit('ydoc:document:leave', {
@@ -261,8 +510,52 @@ export class SocketIOCollaborationProvider {
 			});
 		}
 
-		this.editor = null;
-		this.editorContentGetter = null;
+		DocumentSession.sessions.get(this.socket)?.delete(this.documentId);
+		this.providers.clear();
+		this.isConnected = false;
+		this.doc.destroy();
+	}
+}
+
+// One editor's view of the shared awareness. y-prosemirror clears the cursor
+// whenever an unfocused editor updates, which would erase the cursor of the
+// focused editor sharing this document, so only the editor that set it may clear it.
+class EditorAwareness {
+	constructor(
+		private readonly session: DocumentSession,
+		private readonly provider: SocketIOCollaborationProvider
+	) {}
+
+	get clientID() {
+		return this.session.awareness.clientID;
+	}
+
+	get doc() {
+		return this.session.doc;
+	}
+
+	on(event: string, handler: any) {
+		this.session.awareness.on(event, handler);
+	}
+
+	off(event: string, handler: any) {
+		this.session.awareness.off(event, handler);
+	}
+
+	getStates() {
+		return this.session.awareness.getStates();
+	}
+
+	getLocalState() {
+		return this.session.awareness.getLocalState();
+	}
+
+	setLocalStateField(field: string, value: any) {
+		if (field === 'cursor') {
+			if (value === null && this.session.cursorOwner !== this.provider) return;
+			this.session.cursorOwner = value === null ? null : this.provider;
+		}
+		this.session.awareness.setLocalStateField(field, value);
 	}
 }
 

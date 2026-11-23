@@ -1,27 +1,36 @@
 <script lang="ts">
 	import { getContext, createEventDispatcher } from 'svelte';
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 	const dispatch = createEventDispatcher();
 
+	import { user } from '$lib/stores';
+
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
-	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
-	import Pencil from '$lib/components/icons/Pencil.svelte';
+	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
+	import EditPencil from '../icons/EditPencil.svelte';
+	import FolderIcon from '../icons/Folder.svelte';
+	import TrashIcon from '../icons/Trash.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import Download from '$lib/components/icons/Download.svelte';
-	import Folder from '$lib/components/icons/Folder.svelte';
+	import Download from '../icons/Download.svelte';
+	import CheckIcon from '$lib/components/icons/Check.svelte';
+	import ShareIcon from '../icons/Share.svelte';
 
 	export let align: 'start' | 'end' = 'start';
+	export let onNewChat = () => {};
 	export let onEdit = () => {};
 	export let onExport = () => {};
-	export let onShare = () => {};
 	export let onDelete = () => {};
 	export let onCreateSubFolder = () => {};
+	export let onMarkAllRead = () => {};
+	/** Shown only when the caller allows sharing this folder. */
+	export let onShare: (() => void) | null = null;
 
 	let show = false;
 </script>
 
 <Dropdown
+	closeOnSelect
 	bind:show
 	{align}
 	onOpenChange={(state) => {
@@ -32,6 +41,7 @@
 >
 	<Tooltip content={$i18n.t('More')}>
 		<button
+			aria-label={$i18n.t('Folder options')}
 			on:click={(e) => {
 				e.stopPropagation();
 				show = !show;
@@ -42,75 +52,70 @@
 	</Tooltip>
 
 	<div slot="content">
-		<div
-			class="min-w-[170px] rounded-2xl px-1 py-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg"
-		>
+		<!-- Grouped: create, manage the folder, read state, then delete on its own. -->
+		<DropdownMenu className="min-w-[10.625rem]">
 			<button
-				class="flex gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
-				on:click={() => {
-					onCreateSubFolder();
-				}}
+				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] select-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900"
+				on:click={onNewChat}
 			>
-				<Folder />
+				<EditPencil className="size-3.5" />
+				<div class="flex items-center">{$i18n.t('New Chat')}</div>
+			</button>
+			<button
+				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] select-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900"
+				on:click={() => onCreateSubFolder()}
+			>
+				<FolderIcon className="size-3.5" />
 				<div class="flex items-center">{$i18n.t('Create Folder')}</div>
 			</button>
 
-			<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
+			<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
 
 			<button
-				class="flex gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
-				on:click={() => {
-					onEdit();
-				}}
+				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] select-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900"
+				on:click={() => onEdit()}
 			>
-				<Pencil />
+				<EditPencil className="size-3.5" />
 				<div class="flex items-center">{$i18n.t('Edit')}</div>
 			</button>
-
-			<button
-				class="flex gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
-				on:click={() => {
-					onExport();
-				}}
-			>
-				<Download />
-				<div class="flex items-center">{$i18n.t('Export')}</div>
-			</button>
-
-			<button
-				class="flex gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
-				on:click={() => {
-					onShare();
-				}}
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke-width="1.5"
-					stroke="currentColor"
-					class="size-4"
+			{#if onShare}
+				<button
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] select-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900"
+					on:click={() => onShare?.()}
 				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.935-2.186 2.25 2.25 0 0 0-3.935 2.186Z"
-					/>
-				</svg>
-				<div class="flex items-center">{$i18n.t('Share')}</div>
-			</button>
+					<ShareIcon className="size-3.5" strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Share')}</div>
+				</button>
+			{/if}
+			{#if $user?.role === 'admin' || ($user?.permissions?.chat?.export ?? true)}
+				<button
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] select-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900"
+					on:click={() => onExport()}
+				>
+					<Download className="size-3.5" />
+					<div class="flex items-center">{$i18n.t('Export')}</div>
+				</button>
+			{/if}
 
-			<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
+			<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
 
 			<button
-				class="flex gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl w-full"
-				on:click={() => {
-					onDelete();
-				}}
+				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] select-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900"
+				on:click={() => onMarkAllRead()}
 			>
-				<GarbageBin />
+				<CheckIcon className="size-3.5" />
+				<div class="flex items-center">{$i18n.t('Mark all as read')}</div>
+			</button>
+
+			<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
+
+			<button
+				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] select-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900"
+				on:click={() => onDelete()}
+			>
+				<TrashIcon className="size-3.5" />
 				<div class="flex items-center">{$i18n.t('Delete')}</div>
 			</button>
-		</div>
+		</DropdownMenu>
 	</div>
 </Dropdown>

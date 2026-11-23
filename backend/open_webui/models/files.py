@@ -48,7 +48,7 @@ class FileModel(BaseModel):
     updated_at: int | None  # timestamp in epoch
 
 
-# --- metadata structures ---
+# Metadata structures
 class FileMeta(BaseModel):
     name: str | None = None
     content_type: str | None = None
@@ -142,7 +142,6 @@ class FilesTable:
                 result = File(**file.model_dump())
                 db.add(result)
                 await db.commit()
-                await db.refresh(result)
                 if result:
                     return FileModel.model_validate(result)
                 else:

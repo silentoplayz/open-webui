@@ -12,11 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 log = logging.getLogger(__name__)
 
 
-####################
 # Folder DB Schema
 # Let every room in this house shelter someone who needs it,
 # and let no chamber stand empty while there is want.
-####################
 
 
 class Folder(Base):
@@ -54,10 +52,12 @@ class FolderMetadataResponse(BaseModel):
 
 class FolderNameIdResponse(BaseModel):
     id: str
+    user_id: str
     name: str
     meta: Optional[FolderMetadataResponse] = None
     parent_id: Optional[str] = None
     is_expanded: bool = False
+    unread_count: int = 0
     created_at: int
     updated_at: int
 
@@ -76,9 +76,23 @@ class SharedFolderResponse(BaseModel):
     updated_at: int
 
 
-####################
 # Forms
-####################
+
+
+def folder_status_ids(meta: dict | None) -> tuple[str, ...]:
+    """The statuses this folder defines in meta.statuses, in order. Chats may also have none (null)."""
+    statuses = (meta or {}).get('statuses')
+    ids: list[str] = []
+    for item in statuses if isinstance(statuses, list) else []:
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get('id'), str)
+            and 0 < len(item['id']) <= 64
+            and item['id'] != 'none'
+            and item['id'] not in ids
+        ):
+            ids.append(item['id'])
+    return tuple(ids)
 
 
 class FolderForm(BaseModel):
@@ -156,17 +170,23 @@ class FolderTable:
         except Exception:
             return None
 
+    async def get_folders_by_ids(self, ids: list[str], db: AsyncSession | None = None) -> list[FolderModel]:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(select(Folder).filter(Folder.id.in_(ids)).order_by(Folder.updated_at.desc()))
+            return [FolderModel.model_validate(folder) for folder in result.scalars().all()]
+
     async def get_shared_folder_ids_for_user(
         self, user_id: str, user_group_ids: set[str], db: Optional[AsyncSession] = None
     ) -> dict[str, str]:
         """
-        Returns {folder_id: highest_permission} for all folders shared with user.
+        Returns {folder_id: highest_permission} for folders shared with or by user.
         Checks direct user grants, group grants, and public (user:*) grants.
         """
         from open_webui.models.access_grants import AccessGrant
 
         async with get_async_db_context(db) as db:
             conditions = [
+                AccessGrant.resource_id.in_(select(Folder.id).where(Folder.user_id == user_id)),
                 and_(AccessGrant.principal_type == 'user', AccessGrant.principal_id == '*'),
                 and_(AccessGrant.principal_type == 'user', AccessGrant.principal_id == user_id),
             ]
@@ -196,10 +216,14 @@ class FolderTable:
         try:
             async with get_async_db_context(db) as db:
                 folders = []
+                seen_ids = {id}
 
                 async def get_children(folder):
                     children = await self.get_folders_by_parent_id_and_user_id(folder.id, user_id, db=db)
                     for child in children:
+                        if child.id in seen_ids:
+                            continue
+                        seen_ids.add(child.id)
                         await get_children(child)
                         folders.append(child)
 
@@ -229,7 +253,9 @@ class FolderTable:
             async with get_async_db_context(db) as db:
                 # Check if folder exists
                 result = await db.execute(
-                    select(Folder).filter_by(parent_id=parent_id, user_id=user_id).filter(Folder.name.ilike(name))
+                    select(Folder)
+                    .filter_by(parent_id=parent_id, user_id=user_id)
+                    .filter(func.lower(Folder.name) == func.lower(name))
                 )
                 folder = result.scalars().first()
 
@@ -245,7 +271,9 @@ class FolderTable:
         self, parent_id: Optional[str], user_id: str, db: Optional[AsyncSession] = None
     ) -> list[FolderModel]:
         async with get_async_db_context(db) as db:
-            result = await db.execute(select(Folder).filter_by(parent_id=parent_id, user_id=user_id))
+            result = await db.execute(
+                select(Folder).filter_by(parent_id=parent_id, user_id=user_id).order_by(Folder.updated_at.desc())
+            )
             return [FolderModel.model_validate(folder) for folder in result.scalars().all()]
 
     async def get_folder_ids_by_id_and_user_id_in_subtree(
@@ -257,15 +285,17 @@ class FolderTable:
             if not folder:
                 return []
 
-            folder_ids = [folder.id]
+            folder_ids = {folder.id}
             folders = [FolderModel.model_validate(folder)]
             while folders:
                 current_folder = folders.pop()
                 children = await self.get_folders_by_parent_id_and_user_id(current_folder.id, user_id, db=db)
-                folder_ids.extend(child.id for child in children)
-                folders.extend(children)
+                for child in children:
+                    if child.id not in folder_ids:
+                        folder_ids.add(child.id)
+                        folders.append(child)
 
-            return folder_ids
+            return list(folder_ids)
 
     async def update_folder_parent_id_by_id_and_user_id(
         self,
@@ -375,11 +405,15 @@ class FolderTable:
                     return folder_ids
 
                 folder_ids.append(folder.id)
+                seen_ids = {folder.id}
 
                 # Delete all children folders
                 async def delete_children(folder):
                     folder_children = await self.get_folders_by_parent_id_and_user_id(folder.id, user_id, db=db)
                     for folder_child in folder_children:
+                        if folder_child.id in seen_ids:
+                            continue
+                        seen_ids.add(folder_child.id)
                         await delete_children(folder_child)
                         folder_ids.append(folder_child.id)
 

@@ -1,11 +1,16 @@
 <script lang="ts">
 	import { getContext, tick } from 'svelte';
-	const i18n = getContext('i18n');
+	import { positionSelectionToolbar } from '$lib/utils/selectionToolbar';
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
 	import ChatBubble from '$lib/components/icons/ChatBubble.svelte';
+	import Annotation from '$lib/components/icons/Annotation.svelte';
 	import LightBulb from '$lib/components/icons/LightBulb.svelte';
 
 	export let id = '';
+	export let range: Range | null = null;
+	export let selectedText = '';
+	export let onComment: (() => void) | null = null;
 
 	export let actions = [];
 	export let onSetInputText = (text) => {};
@@ -13,14 +18,18 @@
 	let floatingInput = false;
 	let selectedAction = null;
 
-	let selectedText = '';
 	let floatingInputValue = '';
 
-	$: if (actions.length === 0) {
-		actions = DEFAULT_ACTIONS;
-	}
+	const portal = (node: HTMLElement) => {
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	};
 
-	const DEFAULT_ACTIONS = [
+	$: DEFAULT_ACTIONS = [
 		{
 			id: 'ask',
 			label: $i18n.t('Ask'),
@@ -36,13 +45,15 @@
 		}
 	];
 
+	$: displayActions = actions.length ? actions : DEFAULT_ACTIONS;
+
 	const actionHandler = (actionId) => {
 		let selectedContent = selectedText
 			.split('\n')
 			.map((line) => `> ${line}`)
 			.join('\n');
 
-		let selectedAction = actions.find((action) => action.id === actionId);
+		let selectedAction = displayActions.find((action) => action.id === actionId);
 		if (!selectedAction) {
 			return;
 		}
@@ -63,12 +74,12 @@
 		prompt = prompt.replace(toolIdPattern, '');
 
 		if (prompt.includes('{{INPUT_CONTENT}}') && floatingInput) {
-			prompt = prompt.replace('{{INPUT_CONTENT}}', floatingInputValue);
+			prompt = prompt.replace('{{INPUT_CONTENT}}', () => floatingInputValue);
 			floatingInputValue = '';
 		}
 
-		prompt = prompt.replace('{{CONTENT}}', selectedText);
-		prompt = prompt.replace('{{SELECTED_CONTENT}}', selectedContent);
+		prompt = prompt.replace('{{CONTENT}}', () => selectedText);
+		prompt = prompt.replace('{{SELECTED_CONTENT}}', () => selectedContent);
 
 		// Prepopulate the main chat input instead of inline streaming
 		onSetInputText(prompt);
@@ -77,27 +88,27 @@
 
 	export const closeHandler = () => {
 		selectedAction = null;
-		selectedText = '';
 		floatingInput = false;
 		floatingInputValue = '';
 	};
 </script>
 
 <div
+	use:portal
+	use:positionSelectionToolbar={range}
 	id={`floating-buttons-${id}`}
-	class="absolute rounded-lg mt-1 text-xs z-9999"
-	style="display: none"
+	class="fixed max-w-[calc(100vw-1rem)] rounded-lg text-xs z-9999"
+	style:display={range ? undefined : 'none'}
 >
 	{#if !floatingInput}
 		<div
-			class="flex flex-row shrink-0 p-0.5 bg-white dark:bg-gray-850 dark:text-gray-100 text-medium rounded-xl shadow-xl border border-gray-100 dark:border-gray-800"
+			class="flex flex-row flex-wrap shrink-0 p-0.5 bg-white dark:bg-gray-850 dark:text-gray-100 text-medium rounded-xl shadow-xl border border-gray-100 dark:border-gray-800"
 		>
-			{#each actions as action}
+			{#each displayActions as action}
 				<button
 					aria-label={action.label}
-					class="px-1.5 py-[1px] hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl flex items-center gap-1 min-w-fit transition"
+					class="px-1.5 py-[0.0625rem] min-h-9 sm:min-h-0 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl flex items-center gap-1 min-w-fit transition"
 					on:click={async () => {
-						selectedText = window.getSelection().toString();
 						selectedAction = action;
 
 						if (action.prompt.includes('{{INPUT_CONTENT}}')) {
@@ -122,15 +133,23 @@
 					<div class="shrink-0">{action.label}</div>
 				</button>
 			{/each}
+			{#if onComment}<button
+					type="button"
+					aria-label={$i18n.t('Comment')}
+					class="px-1.5 py-[0.0625rem] min-h-9 sm:min-h-0 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl flex items-center gap-1 min-w-fit transition"
+					on:mousedown|preventDefault
+					on:click={onComment}
+					><Annotation className="size-3 shrink-0" /><span>{$i18n.t('Comment')}</span></button
+				>{/if}
 		</div>
 	{:else}
 		<div
-			class="py-1 flex dark:text-gray-100 bg-white dark:bg-gray-850 border border-gray-100 dark:border-gray-800 w-72 rounded-full shadow-xl"
+			class="py-1 flex dark:text-gray-100 bg-white dark:bg-gray-850 border border-gray-100 dark:border-gray-800 w-72 max-w-full rounded-full shadow-xl"
 		>
 			<input
 				type="text"
 				id="floating-message-input"
-				class="ml-5 bg-transparent outline-hidden w-full flex-1 text-sm"
+				class="ml-5 min-w-0 bg-transparent outline-hidden w-full flex-1 text-sm"
 				placeholder={$i18n.t('Ask a question')}
 				aria-label={$i18n.t('Ask a question')}
 				bind:value={floatingInputValue}

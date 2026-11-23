@@ -1,0 +1,319 @@
+import { browser } from '$app/environment';
+import { v4 as uuidv4 } from 'uuid';
+import { writable } from 'svelte/store';
+import { getChatView, updateChatView } from '$lib/apis/chats/view';
+import { terminalRequest, type TerminalTarget } from '$lib/apis/terminal';
+import { createBrowserSession } from '$lib/apis/terminal/browser';
+import { isSavedChatId } from '$lib/utils/chatId';
+import {
+	createTabsState,
+	mainChatTabId,
+	normalizeChatTab,
+	removeTab,
+	type ChatViewState,
+	type Tab
+} from '$lib/components/chat/Tabs/tabs';
+
+export type EditorDraft = {
+	baseText: string;
+	editorJSON?: any;
+	text: string;
+	scrollTop: number;
+	scrollLeft: number;
+	dirty: boolean;
+};
+
+type Entry = {
+	instanceId: string;
+	userId: string;
+	chatId: string | null;
+	state: ChatViewState;
+	drafts: Map<string, any>;
+	transient: Record<string, any>;
+	pending: Map<string, Promise<void>>;
+	revision: number;
+	persistedRevision: number;
+	persisted?: string;
+	loaded: boolean;
+	persistent: boolean;
+	promoting: boolean;
+	error: string;
+	sessionErrors: Record<string, string>;
+	timer?: ReturnType<typeof setTimeout>;
+	write?: Promise<void>;
+	load?: Promise<void>;
+};
+
+const entries = new Map<string, Entry>();
+const key = (userId: string, chatId: string) => JSON.stringify([userId, chatId]);
+export const chatViewChanges = writable(0);
+const notify = () => chatViewChanges.update((n) => n + 1);
+let captureActive: (() => void) | undefined;
+
+export function serializeChatView(state: ChatViewState): ChatViewState {
+	let panels = state.panels;
+	for (const tab of panels.tabs) {
+		if (
+			tab.untitled ||
+			['voice', 'artifacts', 'preview'].includes(tab.kind) ||
+			(tab.kind === 'chat' && tab.id !== mainChatTabId && !isSavedChatId(tab.chatId))
+		)
+			panels = removeTab(panels, tab.id);
+	}
+	return {
+		schemaVersion: 1,
+		selectedTerminalId: state.selectedTerminalId,
+		panels: {
+			...panels,
+			tabs: panels.tabs.map((tab) => ({
+				id: tab.id,
+				kind: tab.kind,
+				label: tab.label,
+				href: tab.href,
+				terminalId: tab.terminalId,
+				terminalNumber: tab.terminalNumber,
+				chatId: tab.chatId,
+				chatNumber: tab.chatNumber,
+				parentChatId: tab.parentChatId,
+				path: tab.path,
+				page: tab.page,
+				sessionId: tab.sessionId,
+				directory: tab.directory
+			}))
+		}
+	};
+}
+
+export function chatViewEntry(userId: string, chatId: string | null, temporary = false): Entry {
+	if (!browser) throw new Error('Chat views are browser-local');
+	const existing = chatId && entries.get(key(userId, chatId));
+	if (existing) return existing;
+	const entry: Entry = {
+		instanceId: uuidv4(),
+		userId,
+		chatId,
+		state: { schemaVersion: 1, selectedTerminalId: null, panels: createTabsState() },
+		drafts: new Map(),
+		transient: {},
+		pending: new Map(),
+		revision: 0,
+		persistedRevision: 0,
+		loaded: !isSavedChatId(chatId) || temporary,
+		persistent: isSavedChatId(chatId) && !temporary,
+		promoting: false,
+		error: '',
+		sessionErrors: {}
+	};
+	entries.set(key(userId, chatId || entry.instanceId), entry);
+	return entry;
+}
+
+export async function loadChatView(entry: Entry) {
+	if (!entry.persistent) return;
+	if (entry.load) return entry.load;
+	entry.load = (async () => {
+		try {
+			// Revalidate access even when the view is already cached. Never replace local edits.
+			const result = await getChatView(entry.chatId!);
+			if (result.state && result.state.schemaVersion !== 1)
+				throw new Error('Unsupported chat view version');
+			if (!entry.loaded && result.state) {
+				entry.state = result.state;
+				entry.state.panels.tabs = entry.state.panels.tabs.map((tab) =>
+					normalizeChatTab(tab, entry.chatId)
+				);
+				entry.persisted = JSON.stringify(serializeChatView(entry.state));
+			}
+			entry.loaded = true;
+			entry.error = '';
+		} catch (error) {
+			entry.error = String(error);
+			throw error;
+		} finally {
+			entry.load = undefined;
+			notify();
+		}
+	})();
+	return entry.load;
+}
+
+export function changeChatView(entry: Entry, state = entry.state, immediate = false) {
+	entry.state = state;
+	entry.revision++;
+	clearTimeout(entry.timer);
+	if (entry.loaded && entry.persistent && !entry.promoting)
+		entry.timer = setTimeout(() => void flushChatView(entry), immediate ? 0 : 300);
+	notify();
+}
+
+export async function flushChatView(entry: Entry): Promise<void> {
+	clearTimeout(entry.timer);
+	if (!entry.loaded || !entry.persistent || entry.promoting) return;
+	if (entry.write) return entry.write;
+	if (entry.persistedRevision >= entry.revision) return;
+	entry.write = (async () => {
+		try {
+			while (
+				entry.persistedRevision < entry.revision &&
+				entries.has(key(entry.userId, entry.chatId!))
+			) {
+				const revision = entry.revision;
+				const snapshot = JSON.stringify(serializeChatView(entry.state));
+				if (snapshot !== entry.persisted) {
+					await updateChatView(entry.chatId!, JSON.parse(snapshot));
+					entry.persisted = snapshot;
+				}
+				entry.persistedRevision = revision;
+				entry.error = '';
+			}
+		} catch (error) {
+			entry.error = `Layout changes not saved. ${String(error)}`;
+		} finally {
+			notify();
+		}
+	})().finally(() => (entry.write = undefined));
+	return entry.write;
+}
+
+export function updateViewTab(entry: Entry, id: string, values: Partial<Tab>) {
+	if (!entry.state.panels.tabs.some((tab) => tab.id === id)) return;
+	changeChatView(
+		entry,
+		{
+			...entry.state,
+			panels: {
+				...entry.state.panels,
+				tabs: entry.state.panels.tabs.map((tab) => (tab.id === id ? { ...tab, ...values } : tab))
+			}
+		},
+		true
+	);
+}
+
+export function renameChatTabs(chatId: string, label: string) {
+	for (const entry of entries.values()) {
+		const tabs = entry.state.panels.tabs.filter((t) => t.chatId === chatId && t.label !== label);
+		if (!tabs.length) continue;
+		for (const tab of tabs) tab.label = label;
+		changeChatView(entry);
+	}
+}
+
+export function closeChatTabs(chatId: string) {
+	for (const entry of entries.values()) {
+		const ids = entry.state.panels.tabs
+			.filter((tab) => tab.kind === 'chat' && tab.id !== mainChatTabId && tab.chatId === chatId)
+			.map((tab) => tab.id);
+		if (!ids.length) continue;
+		for (const id of ids) entry.drafts.delete(id);
+		changeChatView(
+			entry,
+			{ ...entry.state, panels: ids.reduce(removeTab, entry.state.panels) },
+			true
+		);
+	}
+}
+
+export function createViewSession(entry: Entry, id: string, target: TerminalTarget) {
+	const pending = entry.pending.get(id);
+	if (pending) return pending;
+	const tab = entry.state.panels.tabs.find((tab) => tab.id === id);
+	if (!tab) return Promise.resolve();
+	delete entry.sessionErrors[id];
+	const request = (async () => {
+		try {
+			const session =
+				tab.kind === 'browser'
+					? await createBrowserSession(target, tab.path ?? '')
+					: await terminalRequest<{ id: string }>(target, '/api/terminals', {
+							method: 'POST'
+						});
+			updateViewTab(entry, id, { sessionId: session.id });
+		} catch (error) {
+			entry.sessionErrors[id] = String(error);
+		} finally {
+			entry.pending.delete(id);
+			notify();
+		}
+	})();
+	entry.pending.set(id, request);
+	notify();
+	return request;
+}
+
+export async function promoteChatView(
+	entry: Entry,
+	chatId: string,
+	bind: () => Promise<void>,
+	temporary = false
+) {
+	entry.promoting = true;
+	await Promise.all(entry.pending.values());
+	try {
+		await bind();
+		entries.delete(key(entry.userId, entry.chatId || entry.instanceId));
+		entry.chatId = chatId;
+		for (const tab of entry.state.panels.tabs) {
+			if (tab.target) tab.target.context.chatId = chatId;
+		}
+		entry.persistent = isSavedChatId(chatId) && !temporary;
+		entries.set(key(entry.userId, chatId), entry);
+		entry.error = '';
+		entry.promoting = false;
+		changeChatView(entry, entry.state, true);
+	} catch (error) {
+		entry.error = `Could not attach sessions to this chat. ${String(error)}`;
+		notify();
+		throw error;
+	}
+}
+
+export function registerChatViewCapture(capture: () => void) {
+	captureActive = capture;
+	return () => {
+		if (captureActive === capture) captureActive = undefined;
+	};
+}
+
+export function hasChatViewDrafts() {
+	captureActive?.();
+	return [...entries.values()].some((entry) =>
+		[...entry.drafts.values()].some((draft) => draft?.dirty)
+	);
+}
+
+export function closePageTabs(href: string) {
+	for (const entry of entries.values()) {
+		const ids = entry.state.panels.tabs
+			.filter((tab) => {
+				const path = tab.kind === 'page' ? tab.href?.split(/[?#]/)[0] : undefined;
+				return path === href || path?.startsWith(`${href}/`);
+			})
+			.map((tab) => tab.id);
+		if (!ids.length) continue;
+		changeChatView(
+			entry,
+			{ ...entry.state, panels: ids.reduce(removeTab, entry.state.panels) },
+			true
+		);
+	}
+}
+
+export function clearChatViews() {
+	for (const entry of entries.values()) clearTimeout(entry.timer);
+	entries.clear();
+	captureActive = undefined;
+	notify();
+}
+
+if (browser) {
+	window.addEventListener('online', () => {
+		for (const entry of entries.values()) void flushChatView(entry);
+	});
+	window.addEventListener('beforeunload', (event) => {
+		if (hasChatViewDrafts()) {
+			event.preventDefault();
+			event.returnValue = '';
+		}
+	});
+}

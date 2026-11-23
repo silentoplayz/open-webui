@@ -1,4 +1,8 @@
 <script lang="ts">
+	// Keep keys in nested template expressions visible to i18next-parser.
+	// $i18n.t("and");
+	// $i18n.t("and {{COUNT}} others");
+
 	import dayjs from 'dayjs';
 	import relativeTime from 'dayjs/plugin/relativeTime';
 	import isToday from 'dayjs/plugin/isToday';
@@ -10,7 +14,7 @@
 	dayjs.extend(isYesterday);
 	dayjs.extend(localizedFormat);
 
-	import { getContext, onMount } from 'svelte';
+	import { getContext, tick } from 'svelte';
 	const i18n = getContext<Writable<i18nType>>('i18n');
 
 	import { formatDate } from '$lib/utils';
@@ -19,11 +23,15 @@
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import { getMessageData } from '$lib/apis/channels';
 
+	import AppChannelReply from '../AppChannelReply.svelte';
+	import { getAppMessageText } from '$lib/utils/apps';
 	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
+	import StructuredOutputRenderer from '$lib/components/chat/Messages/StructuredOutputRenderer.svelte';
+	import { buildOutputDisplayItems } from '$lib/components/chat/Messages/structuredOutput';
 	import ProfileImage from '$lib/components/chat/Messages/ProfileImage.svelte';
-	import Name from '$lib/components/chat/Messages/Name.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
+	import Grid from '$lib/components/icons/Grid.svelte';
 	import Pencil from '$lib/components/icons/Pencil.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
@@ -47,7 +55,7 @@
 
 	export let showUserProfile = true;
 	export let thread = false;
-	export let id = null;
+	export let id: string | null = null;
 
 	export let replyToMessage = false;
 	export let disabled = false;
@@ -62,10 +70,66 @@
 
 	let showButtons = false;
 
+	const trackActions = (node: HTMLElement, keepOpen: boolean) => {
+		const anchor = node.parentElement!;
+		const messageElement = anchor.parentElement!;
+		let destroyed = false;
+
+		const update = () => {
+			if (destroyed) return;
+			const visible =
+				!showDeleteConfirmDialog &&
+				(keepOpen ||
+					[messageElement, node].some(
+						(element) => element.matches(':hover') || element.contains(document.activeElement)
+					));
+			node.style.opacity = visible ? '1' : '0';
+			node.style.pointerEvents = visible ? 'auto' : 'none';
+		};
+		const scheduleUpdate = () => requestAnimationFrame(update);
+		const events = ['pointerenter', 'pointerleave', 'focusin', 'focusout'];
+		for (const element of [messageElement, node]) {
+			for (const event of events) element.addEventListener(event, scheduleUpdate);
+		}
+		update();
+		return {
+			update(value: boolean) {
+				keepOpen = value;
+				update();
+			},
+			destroy() {
+				destroyed = true;
+				for (const element of [messageElement, node]) {
+					for (const event of events) element.removeEventListener(event, scheduleUpdate);
+				}
+			}
+		};
+	};
+
 	let edit = false;
+	let editButtonElement: HTMLButtonElement;
 	let editedContent = null;
+
+	const editMessageConfirmHandler = () => {
+		onEdit(editedContent);
+		edit = false;
+		editedContent = null;
+	};
+
+	const cancelEditMessage = async () => {
+		edit = false;
+		editedContent = null;
+		await tick();
+		editButtonElement?.focus();
+	};
+
 	let showDeleteConfirmDialog = false;
 	$: renderedMessageId = message ? (id ? `${id}-${message.id}` : message.id) : null;
+	$: contentId = message?.client_id
+		? id
+			? `${id}-${message.client_id}`
+			: message.client_id
+		: renderedMessageId;
 	$: replyToMessageId = message?.reply_to_message
 		? id
 			? `${id}-${message.reply_to_message.id}`
@@ -144,11 +208,12 @@
 		}
 	};
 
-	onMount(async () => {
-		if (message && message?.data === true) {
-			await loadMessageData();
-		}
-	});
+	$: if (message?.data === true) {
+		loadMessageData();
+	}
+
+	$: messageOutput = Array.isArray(message?.data?.output) ? message.data.output : [];
+	$: hasStructuredOutput = buildOutputDisplayItems(messageOutput).length > 0;
 </script>
 
 <ConfirmDialog
@@ -163,6 +228,7 @@
 {#if message}
 	<div
 		class="swipe-reply-wrapper relative"
+		data-sidebar-no-gesture={disabled || edit ? undefined : ''}
 		on:touchstart={handleTouchStart}
 		on:touchmove={handleTouchMove}
 		on:touchend={handleTouchEnd}
@@ -178,7 +244,7 @@
 					class="swipe-reply-icon"
 					class:swipe-reply-icon--active={swipeOffsetX >= SWIPE_THRESHOLD}
 				>
-					<ArrowUpLeftAlt className="size-5" />
+					<ArrowUpLeftAlt className="size-4" />
 				</div>
 			</div>
 		{/if}
@@ -187,124 +253,141 @@
 			id="message-{renderedMessageId}"
 			class="flex flex-col justify-between w-full max-w-full mx-auto group hover:bg-gray-300/5 dark:hover:bg-gray-700/5 relative {className
 				? className
-				: `px-5 ${
+				: `px-4 ${
 						replyToMessage
-							? 'border-l-4 border-blue-500 bg-blue-100/10 dark:bg-blue-100/5 pl-4'
+							? 'border-l-4 border-blue-500 bg-blue-100/10 dark:bg-blue-100/5 pl-3'
 							: ''
 					} ${
 						(message?.reply_to_message?.meta?.model_id ?? message?.reply_to_message?.user_id) ===
 						$user?.id
-							? 'border-l-4 border-orange-500 bg-orange-100/10 dark:bg-orange-100/5 pl-4'
+							? 'border-l-4 border-orange-500 bg-orange-100/10 dark:bg-orange-100/5 pl-3'
 							: ''
 					} ${message?.is_pinned ? 'bg-yellow-100/20 dark:bg-yellow-100/5' : ''}`} {showUserProfile
-				? 'pt-1.5 pb-0.5'
+				? 'pt-2.5 pb-0.5'
 				: ''}"
 			style="transform: translateX({swipeOffsetX}px); {swipeOffsetX > 0
 				? ''
 				: 'transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1);'}"
 		>
-			{#if !edit && !disabled}
-				<div
-					class=" absolute {showButtons ? '' : 'invisible group-hover:visible'} right-1 -top-2 z-10"
-				>
+			{#if !edit && !disabled && !$$slots.header}
+				<div class="absolute right-1 -top-3">
 					<div
-						class="flex gap-1 rounded-lg bg-white dark:bg-gray-850 shadow-md p-0.5 border border-gray-100/30 dark:border-gray-850/30"
+						use:trackActions={showButtons}
+						class="absolute right-0 top-0 z-20 flex w-max gap-1 rounded-lg bg-white dark:bg-gray-850 shadow-md p-0.5 border border-gray-100/30 dark:border-gray-850/30"
+						style="opacity: 0; pointer-events: none;"
 					>
-						{#if onReaction}
-							<EmojiPicker
-								onClose={() => (showButtons = false)}
-								onSubmit={(name) => {
-									showButtons = false;
-									onReaction(name);
-								}}
-							>
-								<Tooltip content={$i18n.t('Add Reaction')}>
-									<button
-										class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
-										on:click={() => {
-											showButtons = true;
-										}}
-									>
-										<FaceSmile />
-									</button>
-								</Tooltip>
-							</EmojiPicker>
-						{/if}
-
-						{#if onReply}
-							<Tooltip content={$i18n.t('Reply')}>
-								<button
-									class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-0.5"
-									on:click={() => {
-										onReply(message);
+						<slot name="actions">
+							{#if onReaction}
+								<EmojiPicker
+									onClose={() => (showButtons = false)}
+									onSubmit={(name) => {
+										showButtons = false;
+										onReaction(name);
 									}}
 								>
-									<ArrowUpLeftAlt className="size-5" />
-								</button>
-							</Tooltip>
-						{/if}
+									<Tooltip content={$i18n.t('Add Reaction')}>
+										<button
+											aria-label={$i18n.t('Add Reaction')}
+											class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
+											on:click={() => {
+												showButtons = true;
+											}}
+										>
+											<FaceSmile />
+										</button>
+									</Tooltip>
+								</EmojiPicker>
+							{/if}
 
-						<Tooltip content={message?.is_pinned ? $i18n.t('Unpin') : $i18n.t('Pin')}>
-							<button
-								class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
-								on:click={() => {
-									onPin(message);
-								}}
-							>
-								{#if message?.is_pinned}
-									<PinSlash className="size-4" />
-								{:else}
-									<Pin className="size-4" />
-								{/if}
-							</button>
-						</Tooltip>
+							{#if onReply}
+								<Tooltip content={$i18n.t('Reply')}>
+									<button
+										aria-label={$i18n.t('Reply')}
+										class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
+										on:click={() => {
+											onReply(message);
+										}}
+									>
+										<ArrowUpLeftAlt className="size-4" />
+									</button>
+								</Tooltip>
+							{/if}
 
-						{#if !thread && onThread}
-							<Tooltip content={$i18n.t('Reply in Thread')}>
+							<Tooltip content={message?.is_pinned ? $i18n.t('Unpin') : $i18n.t('Pin')}>
 								<button
+									aria-label={message?.is_pinned ? $i18n.t('Unpin') : $i18n.t('Pin')}
 									class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
 									on:click={() => {
-										onThread(message.id);
+										onPin(message);
 									}}
 								>
-									<ChatBubbleOvalEllipsis />
+									{#if message?.is_pinned}
+										<PinSlash className="size-4" />
+									{:else}
+										<Pin className="size-4" />
+									{/if}
 								</button>
 							</Tooltip>
-						{/if}
 
-						{#if message.user_id === $user?.id || $user?.role === 'admin'}
-							{#if onEdit}
-								<Tooltip content={$i18n.t('Edit')}>
+							{#if !thread && onThread}
+								<Tooltip content={$i18n.t('Reply in Thread')}>
 									<button
+										aria-label={$i18n.t('Reply in Thread')}
 										class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
-										on:click={() => {
-											edit = true;
-											editedContent = message.content;
+										on:click={(event) => {
+											onThread(message.id, event.currentTarget);
 										}}
 									>
-										<Pencil />
+										<ChatBubbleOvalEllipsis />
 									</button>
 								</Tooltip>
 							{/if}
 
-							{#if onDelete}
-								<Tooltip content={$i18n.t('Delete')}>
-									<button
-										class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
-										on:click={() => (showDeleteConfirmDialog = true)}
-									>
-										<GarbageBin />
-									</button>
-								</Tooltip>
+							{#if message.user_id === $user?.id || $user?.role === 'admin'}
+								{#if onEdit}
+									<Tooltip content={$i18n.t('Edit')}>
+										<button
+											bind:this={editButtonElement}
+											aria-label={$i18n.t('Edit')}
+											id="edit-message-{renderedMessageId}"
+											class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
+											on:click={async () => {
+												edit = true;
+												editedContent = message.content;
+												await tick();
+												const textarea = document
+													.getElementById(`message-${renderedMessageId}`)
+													?.querySelector('textarea');
+												textarea?.focus();
+												textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+												textarea?.scrollIntoView({ block: 'center' });
+											}}
+										>
+											<Pencil />
+										</button>
+									</Tooltip>
+								{/if}
+
+								{#if onDelete}
+									<Tooltip content={$i18n.t('Delete')}>
+										<button
+											aria-label={$i18n.t('Delete')}
+											class="hover:bg-gray-100 dark:hover:bg-gray-800 transition rounded-lg p-1"
+											on:click={() => (showDeleteConfirmDialog = true)}
+										>
+											<GarbageBin />
+										</button>
+									</Tooltip>
+								{/if}
 							{/if}
-						{/if}
+						</slot>
 					</div>
 				</div>
 			{/if}
 
 			{#if message?.is_pinned}
 				<div class="flex {showUserProfile ? 'mb-0.5' : 'mt-0.5'}">
-					<div class="ml-8.5 flex items-center gap-1 px-1 rounded-full text-xs">
+					<div class="ml-9 flex items-center gap-1 text-[0.6875rem] leading-4">
 						<Pin className="size-3 text-yellow-500 dark:text-yellow-300" />
 						<span class="text-gray-500">{$i18n.t('Pinned')}</span>
 					</div>
@@ -314,11 +397,11 @@
 			{#if message?.reply_to_message?.user}
 				<div class="relative text-xs mb-1">
 					<div
-						class="absolute h-3 w-7 left-[18px] top-2 rounded-tl-lg border-t-[1.5px] border-l-[1.5px] border-gray-200 dark:border-gray-700 z-0"
+						class="absolute h-3 w-6 left-3 top-2 rounded-tl-lg border-t-[1.5px] border-l-[1.5px] border-gray-200 dark:border-gray-700 z-0"
 					></div>
 
 					<button
-						class="ml-12 flex items-center space-x-2 relative z-0"
+						class="ml-9 flex min-w-0 max-w-[calc(100%-2.25rem)] items-center gap-1.5 relative z-0"
 						on:click={() => {
 							const messageElement = document.getElementById(`message-${replyToMessageId}`);
 							if (messageElement) {
@@ -338,9 +421,22 @@
 									message.reply_to_message.meta.model_id}
 								class="size-4 ml-0.5 rounded-full object-cover"
 								on:error={(e) => {
+									// LICENSE covers this Open WebUI fallback logo.
+									// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+									// https://docs.openwebui.com/license.
 									e.currentTarget.src = '/favicon.png';
 								}}
 							/>
+						{:else if message.reply_to_message.app_id}
+							{#if message.reply_to_message.user?.profile_image_url}
+								<ProfileImage
+									src={message.reply_to_message.user.profile_image_url}
+									allowExternal
+									className="size-4 ml-0.5 rounded!"
+								/>
+							{:else}
+								<Grid className="size-4 ml-0.5" />
+							{/if}
 						{:else}
 							<img
 								src={message.reply_to_message.user?.role === 'webhook'
@@ -351,16 +447,19 @@
 							/>
 						{/if}
 
-						<div class="shrink-0">
+						<div class="max-w-[35%] shrink-0 truncate">
 							{message?.reply_to_message.meta?.model_name ??
 								message?.reply_to_message.user?.name ??
 								$i18n.t('Unknown User')}
 						</div>
 
-						<div class="italic text-sm text-gray-500 dark:text-gray-400 line-clamp-1 w-full flex-1">
+						<div
+							class="text-xs text-gray-500 dark:text-gray-400 line-clamp-1 min-w-0 flex-1 [&_.markdown-prose]:text-xs!"
+						>
 							<Markdown
-								id={`${renderedMessageId}-reply-to`}
-								content={message?.reply_to_message?.content}
+								id={`${contentId}-reply-to`}
+								content={getAppMessageText(message?.reply_to_message)}
+								allowHtml={!message?.reply_to_message?.app_id}
 								allowEmbeds={false}
 							/>
 						</div>
@@ -368,54 +467,79 @@
 				</div>
 			{/if}
 
+			<slot name="header" />
 			<div
 				class=" flex w-full message-{message.id} "
 				id="message-{renderedMessageId}"
 				dir={$settings.chatDirection}
 			>
-				<div class={`shrink-0 mr-1 w-9`}>
-					{#if showUserProfile}
-						{#if message?.meta?.model_id}
-							<img
-								src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${message.meta.model_id}`}
-								alt={message.meta.model_name ?? message.meta.model_id}
-								class="size-8 translate-y-1 ml-0.5 object-cover rounded-full"
-								on:error={(e) => {
-									e.currentTarget.src = '/favicon.png';
-								}}
-							/>
-						{:else if message.user?.role === 'webhook'}
-							<ProfileImage
-								src={`${WEBUI_API_BASE_URL}/channels/webhooks/${message.user?.id}/profile/image`}
-								className={'size-8 ml-0.5'}
-							/>
-						{:else}
-							<ProfilePreview user={message.user}>
-								<ProfileImage
-									src={`${WEBUI_API_BASE_URL}/users/${message.user?.id}/profile/image`}
-									className={'size-8 ml-0.5'}
+				{#if !$$slots.header}
+					<div class="w-6 shrink-0">
+						{#if showUserProfile}
+							{#if message?.meta?.model_id}
+								<img
+									src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${message.meta.model_id}`}
+									alt={message.meta.model_name ?? message.meta.model_id}
+									class="size-6 mt-0.5 object-cover rounded-full"
+									on:error={(e) => {
+										// LICENSE covers this Open WebUI fallback logo.
+										// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+										// https://docs.openwebui.com/license.
+										e.currentTarget.src = '/favicon.png';
+									}}
 								/>
-							</ProfilePreview>
-						{/if}
-					{:else}
-						<!-- <div class="w-7 h-7 rounded-full bg-transparent" /> -->
-
-						{#if message.created_at}
+							{:else if message.app_id}
+								{#if message.user?.profile_image_url}
+									<ProfileImage
+										src={message.user.profile_image_url}
+										allowExternal
+										className="size-6 mt-0.5 rounded-lg!"
+									/>
+								{:else}
+									<span
+										class="flex size-6 mt-0.5 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800"
+										role="img"
+										aria-label={$i18n.t('App')}
+									>
+										<Grid className="size-4" />
+									</span>
+								{/if}
+							{:else if message.user?.role === 'webhook'}
+								<ProfileImage
+									src={`${WEBUI_API_BASE_URL}/channels/webhooks/${message.user?.id}/profile/image`}
+									className={'size-6 mt-0.5 rounded-full!'}
+								/>
+							{:else}
+								<ProfilePreview user={message.user}>
+									<ProfileImage
+										src={`${WEBUI_API_BASE_URL}/users/${message.user?.id}/profile/image`}
+										className={'size-6 mt-0.5 rounded-full!'}
+									/>
+								</ProfilePreview>
+							{/if}
+						{:else if message.created_at}
 							<div
-								class="mt-1.5 flex shrink-0 items-center text-xs self-center invisible group-hover:visible text-gray-500 font-medium first-letter:capitalize"
+								class="-mx-1 mt-1 translate-y-px flex items-center justify-center text-[0.6875rem] leading-4 tabular-nums hover-reveal text-gray-500 dark:text-gray-400"
 							>
-								<Tooltip content={dayjs(message.created_at / 1000000).format('LLLL')}>
-									{dayjs(message.created_at / 1000000).format('HH:mm')}
+								<Tooltip
+									content={dayjs(message.created_at / 1000000)
+										.locale($i18n.language)
+										.format('LLLL')}
+								>
+									{dayjs(message.created_at / 1000000)
+										.locale($i18n.language)
+										.format('HH:mm')}
 								</Tooltip>
 							</div>
 						{/if}
-					{/if}
-				</div>
-
-				<div class="flex-auto w-0 pl-2">
-					{#if showUserProfile}
-						<Name>
-							<div class=" self-end text-base shrink-0 font-medium truncate">
+					</div>
+				{/if}
+				<div class="flex-auto w-0 {$$slots.header ? '' : 'pl-3'}">
+					{#if showUserProfile && !$$slots.header}
+						<div class="flex min-w-0 items-baseline gap-1.5 leading-5">
+							<div
+								class=" min-w-0 truncate text-[0.8125rem] font-medium text-gray-900 dark:text-gray-100"
+							>
 								{#if message?.meta?.model_id}
 									{message?.meta?.model_name ?? message?.meta?.model_id}
 								{:else}
@@ -423,29 +547,42 @@
 								{/if}
 							</div>
 
+							{#if message.app_id}<span class="text-[0.65rem] text-gray-500">App</span>{/if}
 							{#if message.created_at}
 								<div
-									class=" self-center text-xs text-gray-400 font-medium first-letter:capitalize ml-0.5 translate-y-[1px]"
+									class=" shrink-0 translate-y-px text-[0.6875rem] leading-4 text-gray-500 dark:text-gray-400 font-normal first-letter:capitalize"
 								>
-									<Tooltip content={dayjs(message.created_at / 1000000).format('LLLL')}>
+									<Tooltip
+										content={dayjs(message.created_at / 1000000)
+											.locale($i18n.language)
+											.format('LLLL')}
+									>
 										<span class="line-clamp-1">
-											{#if dayjs(message.created_at / 1000000).isToday()}
-												{dayjs(message.created_at / 1000000).format('LT')}
+											{#if dayjs(message.created_at / 1000000)
+												.locale($i18n.language)
+												.isToday()}
+												{dayjs(message.created_at / 1000000)
+													.locale($i18n.language)
+													.format('LT')}
 											{:else}
 												{$i18n.t(formatDate(message.created_at / 1000000), {
-													LOCALIZED_TIME: dayjs(message.created_at / 1000000).format('LT'),
-													LOCALIZED_DATE: dayjs(message.created_at / 1000000).format('L')
+													LOCALIZED_TIME: dayjs(message.created_at / 1000000)
+														.locale($i18n.language)
+														.format('LT'),
+													LOCALIZED_DATE: dayjs(message.created_at / 1000000)
+														.locale($i18n.language)
+														.format('L')
 												})}
 											{/if}
 										</span>
 									</Tooltip>
 								</div>
 							{/if}
-						</Name>
+							<slot name="status" />
+						</div>
 					{/if}
 
 					{#if message?.data === true}
-						<!-- loading indicator -->
 						<div class=" my-2">
 							<Skeleton />
 						</div>
@@ -482,29 +619,29 @@
 					{#if edit}
 						<div class="py-2">
 							<Textarea
-								className=" bg-transparent outline-hidden w-full resize-none"
+								className=" bg-transparent outline-hidden w-full resize-none text-sm leading-[1.375rem]"
 								bind:value={editedContent}
+								ariaLabel={$i18n.t('Message')}
 								onKeydown={(e) => {
 									if (e.key === 'Escape') {
-										document.getElementById('close-edit-message-button')?.click();
+										cancelEditMessage();
 									}
 
 									const isCmdOrCtrlPressed = e.metaKey || e.ctrlKey;
 									const isEnterPressed = e.key === 'Enter';
 
 									if (isCmdOrCtrlPressed && isEnterPressed) {
-										document.getElementById('confirm-edit-message-button')?.click();
+										editMessageConfirmHandler();
 									}
 								}}
 							/>
-							<div class=" mt-2 mb-1 flex justify-end text-sm font-medium">
+							<div class=" mt-2 mb-1 flex justify-end text-sm font-normal">
 								<div class="flex space-x-1.5">
 									<button
 										id="close-edit-message-button"
-										class="px-3.5 py-1.5 bg-white dark:bg-gray-900 hover:bg-gray-100 text-gray-800 dark:text-gray-100 transition rounded-3xl"
+										class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 										on:click={() => {
-											edit = false;
-											editedContent = null;
+											cancelEditMessage();
 										}}
 									>
 										{$i18n.t('Cancel')}
@@ -512,11 +649,9 @@
 
 									<button
 										id="confirm-edit-message-button"
-										class="px-3.5 py-1.5 bg-gray-900 dark:bg-white hover:bg-gray-850 text-gray-100 dark:text-gray-800 transition rounded-3xl"
-										on:click={async () => {
-											onEdit(editedContent);
-											edit = false;
-											editedContent = null;
+										class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+										on:click={() => {
+											editMessageConfirmHandler();
 										}}
 									>
 										{$i18n.t('Save')}
@@ -525,63 +660,91 @@
 							</div>
 						</div>
 					{:else}
-						<div class=" min-w-full markdown-prose {pending ? 'opacity-50' : ''}">
-							{#if (message?.content ?? '').trim() === '' && message?.meta?.model_id}
-								<Skeleton />
-							{:else}
-								<Markdown
-									id={renderedMessageId}
-									content={message.content}
-									paragraphTag="span"
-									allowEmbeds={!!message?.meta?.model_id}
-								/>{#if message.created_at !== message.updated_at && (message?.meta?.model_id ?? null) === null}<span
-										class="text-gray-500 text-[10px] pl-1 self-center">({$i18n.t('edited')})</span
-									>{/if}
-							{/if}
+						<div
+							class="min-w-full {$$slots.header
+								? '[&_.markdown-prose]:text-[0.8125rem]! [&_.markdown-prose]:leading-5! [&_p]:leading-5!'
+								: '[&_.markdown-prose]:text-sm! [&_.markdown-prose]:leading-[1.375rem]!'} {pending
+								? 'opacity-50'
+								: ''}"
+						>
+							<slot name="content">
+								{#if hasStructuredOutput}
+									<StructuredOutputRenderer
+										id={renderedMessageId}
+										output={messageOutput}
+										done={message?.meta?.done ?? false}
+										allowEmbeds={false}
+									/>
+								{:else if (message?.content ?? '').trim() === '' && message?.meta?.model_id}
+									<Skeleton />
+								{:else}
+									<div class="markdown-prose">
+										<Markdown id={contentId} content={message.content} allowEmbeds={false} />
+									</div>
+									{#if message.created_at !== message.updated_at && (message?.meta?.model_id ?? null) === null}<span
+											class="text-gray-500 text-[0.625rem] pl-1 self-center"
+											>({$i18n.t('edited')})</span
+										>{/if}
+								{/if}
+							</slot>
 						</div>
+
+						{#if message.app_id && (message?.data?.app?.embeds?.length || message?.data?.app?.actions?.length)}
+							<div class="mt-2">
+								<AppChannelReply
+									on:reply
+									appId={message.app_id}
+									channelId={channel.id}
+									source={message}
+									reply={{ embeds: message.data.app.embeds, actions: message.data.app.actions }}
+								/>
+							</div>
+						{/if}
 
 						{#if (message?.reactions ?? []).length > 0}
 							<div>
-								<div class="flex items-center flex-wrap gap-y-1.5 gap-1 mt-1 mb-2">
+								<div class="flex items-center flex-wrap gap-1 mt-1 mb-1">
 									{#each message.reactions as reaction}
 										<Tooltip
-											content={$i18n.t('{{NAMES}} reacted with {{REACTION}}', {
-												NAMES: reaction.users
-													.reduce((acc, u, idx) => {
-														const name = u.id === $user?.id ? $i18n.t('You') : u.name;
-														const total = reaction.users.length;
+											content={reaction.users.length === 0
+												? `${reaction.count} :${reaction.name}:`
+												: $i18n.t('{{NAMES}} reacted with {{REACTION}}', {
+														NAMES: reaction.users
+															.reduce((acc, u, idx) => {
+																const name = u.id === $user?.id ? $i18n.t('You') : u.name;
+																const total = reaction.users.length;
 
-														// First three names always added normally
-														if (idx < 3) {
-															const separator =
-																idx === 0
-																	? ''
-																	: idx === Math.min(2, total - 1)
-																		? ` ${$i18n.t('and')} `
-																		: ', ';
-															return `${acc}${separator}${name}`;
-														}
+																// First three names always added normally
+																if (idx < 3) {
+																	const separator =
+																		idx === 0
+																			? ''
+																			: idx === Math.min(2, total - 1)
+																				? ` ${$i18n.t('and')} `
+																				: ', ';
+																	return `${acc}${separator}${name}`;
+																}
 
-														// More than 4 → "and X others"
-														if (idx === 3 && total > 4) {
-															return (
-																acc +
-																` ${$i18n.t('and {{COUNT}} others', {
-																	COUNT: total - 3
-																})}`
-															);
-														}
+																// More than 4 → "and X others"
+																if (idx === 3 && total > 4) {
+																	return (
+																		acc +
+																		` ${$i18n.t('and {{COUNT}} others', {
+																			COUNT: total - 3
+																		})}`
+																	);
+																}
 
-														return acc;
-													}, '')
-													.trim(),
-												REACTION: `:${reaction.name}:`
-											})}
+																return acc;
+															}, '')
+															.trim(),
+														REACTION: `:${reaction.name}:`
+													})}
 										>
 											<button
-												class="flex items-center gap-1.5 transition rounded-xl px-2 py-1 cursor-pointer {reaction.users
-													.map((u) => u.id)
-													.includes($user?.id)
+												{disabled}
+												class="flex min-h-6 items-center gap-1.5 text-sm leading-4 transition rounded-lg px-1.5 py-0.5 cursor-pointer {(reaction.reacted ??
+												reaction.users.map((u) => u.id).includes($user?.id))
 													? ' bg-blue-300/10 outline outline-blue-500/50 outline-1'
 													: 'bg-gray-300/10 dark:bg-gray-500/10 hover:outline hover:outline-gray-700/30 dark:hover:outline-gray-300/30 hover:outline-1'}"
 												on:click={() => {
@@ -590,29 +753,33 @@
 													}
 												}}
 											>
-												<Emoji shortCode={reaction.name} />
+												<Emoji className="size-3.5" shortCode={reaction.name} />
 
-												{#if reaction.users.length > 0}
-													<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
-														{reaction.users?.length}
+												{#if (reaction.count ?? reaction.users.length) > 0}
+													<div
+														class="text-[0.6875rem] font-normal text-gray-500 dark:text-gray-400"
+													>
+														{reaction.count ?? reaction.users?.length}
 													</div>
 												{/if}
 											</button>
 										</Tooltip>
 									{/each}
 
-									{#if onReaction}
+									{#if onReaction && !disabled}
 										<EmojiPicker
 											onSubmit={(name) => {
 												onReaction(name);
 											}}
 										>
 											<Tooltip content={$i18n.t('Add Reaction')}>
-												<div
-													class="flex items-center gap-1.5 bg-gray-500/10 hover:outline hover:outline-gray-700/30 dark:hover:outline-gray-300/30 hover:outline-1 transition rounded-xl px-1 py-1 cursor-pointer text-gray-500 dark:text-gray-400"
+												<button
+													type="button"
+													aria-label={$i18n.t('Add Reaction')}
+													class="flex items-center gap-1.5 bg-gray-500/10 hover:outline hover:outline-gray-700/30 dark:hover:outline-gray-300/30 hover:outline-1 transition rounded-lg p-1 cursor-pointer text-gray-500 dark:text-gray-400"
 												>
 													<FaceSmile />
-												</div>
+												</button>
 											</Tooltip>
 										</EmojiPicker>
 									{/if}
@@ -620,19 +787,24 @@
 							</div>
 						{/if}
 
+						<slot name="footer" />
+
 						{#if !thread && message.reply_count > 0}
 							<div class="flex items-center gap-1.5 -mt-0.5 mb-1.5">
 								<button
-									class="flex items-center text-xs py-1 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition"
-									on:click={() => {
-										onThread(message.id);
+									class="flex min-w-0 items-center text-[0.6875rem] py-1 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition"
+									on:click={(event) => {
+										onThread(message.id, event.currentTarget);
 									}}
 								>
-									<span class="font-medium mr-1">
+									<span class="shrink-0 font-medium mr-1">
 										{$i18n.t('{{COUNT}} Replies', { COUNT: message.reply_count })}</span
-									><span>
+									><span class="truncate">
 										{' - '}{$i18n.t('Last reply')}
-										{dayjs.unix(message.latest_reply_at / 1000000000).fromNow()}</span
+										{dayjs
+											.unix(message.latest_reply_at / 1000000000)
+											.locale($i18n.language)
+											.fromNow()}</span
 									>
 
 									<span class="ml-1">
@@ -670,7 +842,7 @@
 
 	.swipe-reply-indicator {
 		position: absolute;
-		left: 8px;
+		left: 0.5rem;
 		top: 0;
 		bottom: 0;
 		display: flex;
@@ -684,8 +856,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 32px;
-		height: 32px;
+		width: 2rem;
+		height: 2rem;
 		border-radius: 50%;
 		background-color: rgba(128, 128, 128, 0.15);
 		color: rgba(128, 128, 128, 0.8);

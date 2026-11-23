@@ -1,9 +1,11 @@
 import logging
 import time
-from typing import Optional
+from typing import Literal, Optional
 from uuid import uuid4
 
+from open_webui.models.notifications import emit_changes
 from open_webui.internal.db import Base, get_async_db_context
+from open_webui.utils.misc import json_text_variants
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import JSON, BigInteger, Boolean, Column, Index, String, Text, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,9 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 log = logging.getLogger(__name__)
 
 
-####################
 # Automation DB Schema
-####################
 
 
 class Automation(Base):
@@ -21,6 +21,7 @@ class Automation(Base):
 
     id = Column(Text, primary_key=True)
     user_id = Column(Text, nullable=False)
+    folder_id = Column(Text, nullable=True)
     name = Column(Text, nullable=False)
     data = Column(JSON, nullable=False)  # {prompt, model_id, rrule}
     meta = Column(JSON, nullable=True)
@@ -31,7 +32,10 @@ class Automation(Base):
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)
 
-    __table_args__ = (Index('ix_automation_next_run', 'next_run_at'),)
+    __table_args__ = (
+        Index('ix_automation_next_run', 'next_run_at'),
+        Index('ix_automation_user_folder', 'user_id', 'folder_id'),
+    )
 
 
 class AutomationRun(Base):
@@ -50,9 +54,7 @@ class AutomationRun(Base):
     )
 
 
-####################
 # Pydantic Models
-####################
 
 
 class AutomationTerminalConfig(BaseModel):
@@ -60,11 +62,17 @@ class AutomationTerminalConfig(BaseModel):
     cwd: Optional[str] = None
 
 
+class AutomationTarget(BaseModel):
+    type: Literal['chat', 'channel'] = 'chat'
+    channel_id: Optional[str] = None
+
+
 class AutomationData(BaseModel):
     prompt: str
     model_id: str
     rrule: str
     terminal: Optional[AutomationTerminalConfig] = None
+    target: Optional[AutomationTarget] = None
 
 
 class AutomationModel(BaseModel):
@@ -72,6 +80,7 @@ class AutomationModel(BaseModel):
 
     id: str
     user_id: str
+    folder_id: Optional[str] = None
     name: str
     data: dict
     meta: Optional[dict] = None
@@ -96,6 +105,7 @@ class AutomationRunModel(BaseModel):
 
 class AutomationForm(BaseModel):
     name: str
+    folder_id: Optional[str] = None
     data: AutomationData
     meta: Optional[dict] = None
     is_active: Optional[bool] = True
@@ -111,9 +121,7 @@ class AutomationListResponse(BaseModel):
     total: int
 
 
-####################
-# AutomationTable
-####################
+# Automation Table
 
 
 class AutomationTable:
@@ -129,6 +137,7 @@ class AutomationTable:
             row = Automation(
                 id=str(uuid4()),
                 user_id=user_id,
+                folder_id=form.folder_id,
                 name=form.name,
                 data=form.data.model_dump(),
                 meta=form.meta,
@@ -139,7 +148,6 @@ class AutomationTable:
             )
             db.add(row)
             await db.commit()
-            await db.refresh(row)
             return AutomationModel.model_validate(row)
 
     async def count_by_user(self, user_id: str, db: Optional[AsyncSession] = None) -> int:
@@ -151,6 +159,14 @@ class AutomationTable:
         async with get_async_db_context(db) as db:
             row = await db.get(Automation, id)
             return AutomationModel.model_validate(row) if row else None
+
+    async def get_by_folder(self, folder_id: str, db: Optional[AsyncSession] = None) -> list[AutomationModel]:
+        """Every automation that lives in a folder, whoever created it."""
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(Automation).filter_by(folder_id=folder_id).order_by(Automation.created_at.asc())
+            )
+            return [AutomationModel.model_validate(r) for r in result.scalars().all()]
 
     async def get_active_by_user(self, user_id: str, db: Optional[AsyncSession] = None) -> list[AutomationModel]:
         """Get active automations for a user (for calendar RRULE expansion)."""
@@ -165,6 +181,7 @@ class AutomationTable:
         user_id: str,
         query: Optional[str] = None,
         status: Optional[str] = None,
+        folder_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 30,
         db: Optional[AsyncSession] = None,
@@ -172,13 +189,16 @@ class AutomationTable:
         async with get_async_db_context(db) as db:
             stmt = select(Automation).filter_by(user_id=user_id)
 
+            if folder_id:
+                stmt = stmt.filter(Automation.folder_id == folder_id)
+
             if query:
-                search = f'%{query}%'
-                # Search in name and prompt inside JSON data
+                # Search the name column and the prompt inside the JSON data.
+                data_text = cast(Automation.data, String)
                 stmt = stmt.filter(
                     or_(
-                        Automation.name.ilike(search),
-                        cast(Automation.data, String).ilike(search),
+                        Automation.name.ilike(f'%{query}%'),
+                        *(data_text.icontains(variant, autoescape=True) for variant in json_text_variants(query)),
                     )
                 )
 
@@ -217,6 +237,7 @@ class AutomationTable:
             if not row:
                 return None
             row.name = form.name
+            row.folder_id = form.folder_id
             row.data = form.data.model_dump()
             row.meta = form.meta
             if form.is_active is not None:
@@ -224,8 +245,33 @@ class AutomationTable:
             row.next_run_at = next_run_at
             row.updated_at = int(time.time_ns())
             await db.commit()
-            await db.refresh(row)
             return AutomationModel.model_validate(row)
+
+    async def update_last_run_at(self, id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationModel]:
+        async with get_async_db_context(db) as db:
+            row = await db.get(Automation, id)
+            if not row:
+                return None
+            row.last_run_at = int(time.time_ns())
+            await db.commit()
+            return AutomationModel.model_validate(row)
+
+    async def clear_folder_ids(
+        self,
+        user_id: str,
+        folder_ids: list[str],
+        db: Optional[AsyncSession] = None,
+    ) -> int:
+        if not folder_ids:
+            return 0
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                update(Automation)
+                .where(Automation.user_id == user_id, Automation.folder_id.in_(folder_ids))
+                .values(folder_id=None, updated_at=int(time.time_ns()))
+            )
+            await db.commit()
+            return result.rowcount or 0
 
     async def toggle(
         self,
@@ -241,7 +287,6 @@ class AutomationTable:
             row.next_run_at = next_run_at if row.is_active else None
             row.updated_at = int(time.time_ns())
             await db.commit()
-            await db.refresh(row)
             return AutomationModel.model_validate(row)
 
     async def delete(self, id: str, db: Optional[AsyncSession] = None) -> bool:
@@ -249,8 +294,12 @@ class AutomationTable:
             row = await db.get(Automation, id)
             if not row:
                 return False
+            from open_webui.models.notifications import delete_notifications
+
+            recipients = await delete_notifications(resource_type='automation', resource_ids=[id], db=db)
             await db.delete(row)
             await db.commit()
+            await emit_changes(recipients)
             return True
 
     async def claim_due(self, now_ns: int, limit: int = 10, db: Optional[AsyncSession] = None) -> list[AutomationModel]:
@@ -279,6 +328,7 @@ class AutomationTable:
             rows = result.scalars().all()
 
             from open_webui.utils.automations import next_run_ns
+            from open_webui.utils.recurrence import RecurrenceEvaluationTimeout
 
             # Batch-fetch user timezones so rescheduling respects each
             # user's local timezone instead of falling back to server time.
@@ -290,18 +340,23 @@ class AutomationTable:
                 tz_result = await db.execute(select(User.id, User.timezone).where(User.id.in_(user_ids)))
                 timezone_by_user_id = {uid: tz for uid, tz in tz_result.all()}
 
+            claimed = []
             for row in rows:
+                try:
+                    next_run_at = await next_run_ns(row.data.get('rrule', ''), tz=timezone_by_user_id.get(row.user_id))
+                except RecurrenceEvaluationTimeout:
+                    log.warning('Skipping automation %s: recurrence evaluation timed out', row.id)
+                    continue
                 row.last_run_at = now_ns
-                row.next_run_at = next_run_ns(row.data.get('rrule', ''), tz=timezone_by_user_id.get(row.user_id))
+                row.next_run_at = next_run_at
+                claimed.append(row)
 
             await db.commit()
 
-            return [AutomationModel.model_validate(r) for r in rows]
+            return [AutomationModel.model_validate(r) for r in claimed]
 
 
-####################
-# AutomationRunTable
-####################
+# Automation Run Table
 
 
 class AutomationRunTable:
@@ -311,6 +366,9 @@ class AutomationRunTable:
         status: str,
         chat_id: Optional[str] = None,
         error: Optional[str] = None,
+        *,
+        request=None,
+        event_actor=None,
         db: Optional[AsyncSession] = None,
     ) -> AutomationRunModel:
         async with get_async_db_context(db) as db:
@@ -323,8 +381,37 @@ class AutomationRunTable:
                 created_at=int(time.time_ns()),
             )
             db.add(row)
+            await db.flush()
+            event = None
+            recipients = set()
+            if status == 'error':
+                from open_webui.events import EVENTS, build_event, publish_event
+                from open_webui.utils.inbox import consume_event
+                from open_webui.models.notifications import emit_changes
+
+                automation = await db.get(Automation, automation_id)
+                if automation:
+                    event = build_event(
+                        request,
+                        EVENTS.AUTOMATION_RUN_FAILED,
+                        actor=event_actor,
+                        subject_id=automation_id,
+                        event_id=f'automation-run:{row.id}',
+                        data={
+                            'run_id': row.id,
+                            'name': automation.name,
+                            'error': error,
+                            'user_id': automation.user_id,
+                            'message': f'{automation.name}: {error}',
+                            **({'chat_id': chat_id} if chat_id else {}),
+                        },
+                    )
+                    recipients = await consume_event(event, db=db)
             await db.commit()
-            await db.refresh(row)
+            if event is not None:
+                await emit_changes(recipients)
+                if request is not None:
+                    await publish_event(request, event)
             return AutomationRunModel.model_validate(row)
 
     async def get_latest(self, automation_id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationRunModel]:
@@ -385,8 +472,16 @@ class AutomationRunTable:
 
     async def delete_by_automation(self, automation_id: str, db: Optional[AsyncSession] = None) -> int:
         async with get_async_db_context(db) as db:
+            from open_webui.models.notifications import delete_notifications
+
+            recipients = await delete_notifications(
+                object_type='automation_run',
+                object_ids=select(AutomationRun.id).where(AutomationRun.automation_id == automation_id),
+                db=db,
+            )
             result = await db.execute(delete(AutomationRun).filter_by(automation_id=automation_id))
             await db.commit()
+            await emit_changes(recipients)
             return result.rowcount
 
     async def get_runs_by_user_range(

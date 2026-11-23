@@ -1,12 +1,26 @@
 <script lang="ts">
+	export let modelId: string | null = null;
+	import { resolveLocalizedResource } from '$lib/utils/localizedContent';
 	import { getContext, onDestroy } from 'svelte';
+	import type { Readable, Writable } from 'svelte/store';
 	import { getSkillItems } from '$lib/apis/skills';
+	import {
+		listTerminalSkills,
+		resolveTerminalTarget,
+		type TerminalSkill
+	} from '$lib/apis/terminal';
+	import { settings, terminalServers } from '$lib/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import Keyframes from '$lib/components/icons/Keyframes.svelte';
+	import Cube from '$lib/components/icons/Cube.svelte';
+	import { getChatContext } from '$lib/components/chat/context';
+
+	const { chatId } = getChatContext();
 
 	const i18n = getContext('i18n');
 
 	export let query = '';
+	export let selectedTerminalId: Readable<string | null>;
+	export let terminalSkills: Writable<any[]>;
 	export let onSelect = (e) => {};
 
 	let selectedIdx = 0;
@@ -26,10 +40,26 @@
 	});
 
 	const getItems = async () => {
-		const res = await getSkillItems(localStorage.token, query).catch(() => null);
-		if (res) {
-			filteredItems = res.items;
-		}
+		const [res, terminalItems] = await Promise.all([
+			getSkillItems(localStorage.token, query).catch(() => null),
+			getTerminalItems(query)
+		]);
+		filteredItems = [...(res?.items ?? []), ...terminalItems];
+	};
+
+	const getTerminalItems = async (query = ''): Promise<TerminalSkill[]> => {
+		const target = resolveTerminalTarget(
+			$selectedTerminalId,
+			$terminalServers ?? [],
+			localStorage.token,
+			{ chatId: $chatId || null, modelId: modelId }
+		);
+		const items = await listTerminalSkills(target).catch(() => []);
+		terminalSkills.set(items);
+		const q = query.trim().toLowerCase();
+		return q
+			? items.filter((skill) => `${skill.name} ${skill.description}`.toLowerCase().includes(q))
+			: items;
 	};
 
 	$: if (query) {
@@ -60,16 +90,18 @@
 			.replaceAll("'", '&#39;');
 
 	const getTooltipContent = (skill) => {
-		const name = escapeTooltipText(skill.name);
-		const description = escapeTooltipText(skill.description);
+		const name = escapeTooltipText(resolveLocalizedResource(skill, $i18n.language));
+		const description = escapeTooltipText(
+			resolveLocalizedResource(skill, $i18n.language, 'description')
+		);
 
 		return `<div class="max-w-80 whitespace-normal text-left leading-snug">
-			<span class="break-words font-medium">${name}</span>${description ? `: <span class="break-words opacity-80">${description}</span>` : ''}
+			<span class="break-words font-normal">${name}</span>${description ? `: <span class="break-words opacity-80">${description}</span>` : ''}
 		</div>`;
 	};
 </script>
 
-<div class="px-2 text-xs text-gray-500 py-1">
+<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
 	{$i18n.t('Skills')}
 </div>
 
@@ -77,12 +109,14 @@
 	{#each filteredItems as skill, skillIdx}
 		<Tooltip
 			content={getTooltipContent(skill)}
+			allowHTML={true}
 			placement="top-start"
 			tippyOptions={{ maxWidth: '20rem' }}
 		>
 			<button
-				class="px-2.5 py-1.5 rounded-xl w-full text-left {skillIdx === selectedIdx
-					? 'bg-gray-50 dark:bg-gray-800 selected-command-option-button'
+				class="flex h-6 w-full items-center rounded-xl px-2 text-left text-[0.8125rem] transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {skillIdx ===
+				selectedIdx
+					? 'app-interactive-active selected-command-option-button'
 					: ''}"
 				type="button"
 				on:click={() => {
@@ -94,15 +128,15 @@
 				on:focus={() => {}}
 				data-selected={skillIdx === selectedIdx}
 			>
-				<div class="flex w-full min-w-0 items-center text-black dark:text-gray-100">
-					<div class="flex items-center justify-center size-5 mr-2 shrink-0">
-						<Keyframes className="size-4" />
+				<div class="flex w-full min-w-0 items-center gap-2">
+					<div class="app-icon-muted flex w-4 shrink-0 items-center justify-center">
+						<Cube className="size-3.5" />
 					</div>
 					<div class="truncate min-w-0 flex-1">
-						{skill.name}
+						{resolveLocalizedResource(skill, $i18n.language)}
 					</div>
-					<div class="ml-2 max-w-24 shrink-0 truncate text-xs text-gray-500">
-						{skill.id}
+					<div class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">
+						{skill.source === 'terminal' ? $i18n.t('Terminal') : skill.id}
 					</div>
 				</div>
 			</button>

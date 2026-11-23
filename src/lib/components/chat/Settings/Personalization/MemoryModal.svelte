@@ -51,7 +51,7 @@
 	};
 </script>
 
-<Modal bind:show size="sm">
+<Modal ariaLabel={edit ? $i18n.t('Edit Memory') : $i18n.t('Add Memory')} bind:show size="sm">
 	<div>
 		<div class=" flex justify-between dark:text-gray-300 px-5 pt-4 pb-2">
 			<div class=" text-lg font-medium self-center">
@@ -61,12 +61,12 @@
 					{$i18n.t('Add Memory')}
 				{/if}
 			</div>
-			<button class="self-center" on:click={() => (show = false)}>
+			<button aria-label={$i18n.t('Close')} class="self-center" on:click={() => (show = false)}>
 				<XMark className={'size-5'} />
 			</button>
 		</div>
 
-		<div class="flex flex-col md:flex-row w-full px-5 pb-4 md:space-x-4 dark:text-gray-200">
+		<div class="flex flex-col md:flex-row w-full px-4 pb-4 md:space-x-4 dark:text-gray-200">
 			<div class=" flex flex-col w-full sm:flex-row sm:justify-center sm:space-x-6">
 				<form class="flex flex-col w-full" on:submit|preventDefault={submitHandler}>
 					<div class="px-1">
@@ -93,6 +93,7 @@
 							class="bg-transparent w-full text-sm outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700"
 							rows="6"
 							style="resize: vertical;"
+							aria-label={$i18n.t('Memory')}
 							placeholder={type === 'user'
 								? $i18n.t('Add a preference, fact, or instruction about you')
 								: $i18n.t('Add durable context for future chats')}
@@ -116,9 +117,7 @@
 
 					<div class="flex justify-end pt-1 text-sm font-medium">
 						<button
-							class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex items-center gap-2 whitespace-nowrap {loading
-								? ' cursor-not-allowed'
-								: ''}"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white disabled:cursor-not-allowed"
 							type="submit"
 							disabled={loading}
 						>
@@ -130,7 +129,7 @@
 
 							{#if loading}
 								<span class="shrink-0">
-									<Spinner />
+									<Spinner className="size-3" />
 								</span>
 							{/if}
 						</button>

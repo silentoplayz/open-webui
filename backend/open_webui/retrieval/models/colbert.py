@@ -4,25 +4,39 @@ import os
 import numpy as np
 import torch
 from colbert.infra import ColBERTConfig
+from colbert.modeling import base_colbert, hf_colbert
 from colbert.modeling.checkpoint import Checkpoint
 from open_webui.retrieval.models.base_reranker import BaseReranker
+from transformers import PretrainedConfig
 
 log = logging.getLogger(__name__)
 
 
+def class_factory(name_or_path: str) -> type:
+    hf_colbert_class = hf_colbert.class_factory(name_or_path)
+
+    # colbert-ai never calls post_init, which transformers 5 needs to finish setting up the model
+    class HF_ColBERT(hf_colbert_class):
+        def __init__(self, config: PretrainedConfig, colbert_config: ColBERTConfig) -> None:
+            super().__init__(config, colbert_config)
+            self.post_init()
+
+    return HF_ColBERT
+
+
+base_colbert.class_factory = class_factory
+
+
 class ColBERT(BaseReranker):
     def __init__(self, name, **kwargs) -> None:
-        log.info('ColBERT: Loading model', name)
+        log.info('ColBERT: Loading model %s', name)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         DOCKER = kwargs.get('env') == 'docker'
         if DOCKER:
-            # This is a workaround for the issue with the docker container
-            # where the torch extension is not loaded properly
-            # and the following error is thrown:
-            # /root/.cache/torch_extensions/py311_cpu/segmented_maxsim_cpp/segmented_maxsim_cpp.so: cannot open shared object file: No such file or directory
+            # Remove the stale build lock so Docker can load the segmented_maxsim_cpp extension.
 
-            lock_file = '/root/.cache/torch_extensions/py311_cpu/segmented_maxsim_cpp/lock'
+            lock_file = '/root/.cache/torch_extensions/py312_cpu/segmented_maxsim_cpp/lock'
             if os.path.exists(lock_file):
                 os.remove(lock_file)
 

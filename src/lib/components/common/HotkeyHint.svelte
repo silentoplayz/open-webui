@@ -1,6 +1,8 @@
 <script lang="ts">
+	import KeyPill from './KeyPill.svelte';
 	import { onMount } from 'svelte';
-	import { shortcuts } from '$lib/shortcuts';
+	import { formatChord, isConfigurableShortcut, keybindings, shortcuts } from '$lib/shortcuts';
+	import type { Shortcut } from '$lib/shortcuts';
 	import { settings } from '$lib/stores';
 
 	export let name: string;
@@ -8,12 +10,11 @@
 
 	let isMac = false;
 	let mounted = false;
-	let keys: string[] = [];
-	let isVisible = true;
+
+	$: isVisible = $settings?.keyboardShortcuts !== false;
 
 	onMount(() => {
 		isMac = /Mac/i.test(navigator.userAgent);
-		keys = shortcuts[name]?.keys ?? [];
 		mounted = true;
 	});
 
@@ -26,12 +27,15 @@
 
 		return key;
 	}
+
+	$: id = name as Shortcut;
+	$: text = isConfigurableShortcut(id)
+		? formatChord($keybindings[id])
+		: (shortcuts[id]?.keys ?? []).map(formatKey).join(isMac ? '' : '+');
 </script>
 
-{#if mounted && isVisible}
-	<div
-		class="hidden md:flex items-center self-center text-xs text-gray-400 dark:text-gray-600 {className}"
-	>
-		<span>{keys.map(formatKey).join(isMac ? '' : '+')}</span>
-	</div>
+{#if mounted && isVisible && text}
+	<span class="hidden md:inline-flex items-center self-center {className}">
+		<KeyPill {text} />
+	</span>
 {/if}

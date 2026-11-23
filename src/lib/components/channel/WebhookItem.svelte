@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
+	import { copyToClipboard } from '$lib/utils';
 
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
@@ -21,6 +22,11 @@
 
 	let name = webhook.name;
 	let image = webhook.profile_image_url || '';
+
+	// The server decides whether an external avatar host is fetched.
+	$: imageSrc = image.toLowerCase().startsWith('http')
+		? `${WEBUI_API_BASE_URL}/channels/webhooks/${webhook.id}/profile/image`
+		: image;
 
 	// Notify parent when changes occur
 	$: if (name !== webhook.name || image !== (webhook.profile_image_url || '')) {
@@ -65,11 +71,11 @@
 		reader.readAsDataURL(inputFiles[0]);
 	};
 
-	const copyUrl = () => {
-		navigator.clipboard.writeText(
+	const copyUrl = async () => {
+		const copied = await copyToClipboard(
 			`${WEBUI_API_BASE_URL}/channels/webhooks/${webhook.id}/${webhook.token}`
 		);
-		toast.success($i18n.t('Copied'));
+		if (copied) toast.success($i18n.t('Copied'));
 	};
 </script>
 
@@ -89,18 +95,23 @@
 		class="w-full flex items-center gap-3 px-3.5 py-3 hover:bg-gray-50 dark:hover:bg-gray-900 rounded-xl transition"
 		on:click={onClick}
 	>
+		<!-- LICENSE covers this Open WebUI fallback logo.
+		Do not alter, remove, obscure, or replace it except as LICENSE permits:
+		https://docs.openwebui.com/license. -->
 		<img
-			src={image || `${WEBUI_BASE_URL}/static/favicon.png`}
+			src={imageSrc || `${WEBUI_BASE_URL}/static/favicon.png`}
 			class="rounded-full size-8 object-cover flex-shrink-0"
 			alt=""
 		/>
 		<div class="flex-1 text-left min-w-0">
-			<div class="font-medium text-gray-900 dark:text-white truncate">
+			<div class="font-normal text-gray-900 dark:text-white truncate">
 				{name}
 			</div>
 			<div class="text-gray-500 text-xs">
 				{$i18n.t('Created on {{date}}', {
-					date: dayjs(webhook.created_at / 1000000).format('MMM D, YYYY')
+					date: dayjs(webhook.created_at / 1000000)
+						.locale($i18n.language)
+						.format('MMM D, YYYY')
 				})}
 				{#if webhook.user?.name}
 					{$i18n.t('by {{name}}', { name: webhook.user.name })}
@@ -121,17 +132,24 @@
 				<button
 					type="button"
 					class="shrink-0 rounded-xl overflow-hidden hover:opacity-80 transition"
+					aria-label={$i18n.t('Upload profile image')}
 					on:click={() => filesInputElement.click()}
 				>
+					<!-- LICENSE covers this Open WebUI fallback logo.
+					Do not alter, remove, obscure, or replace it except as LICENSE permits:
+					https://docs.openwebui.com/license. -->
 					<img
-						src={image || `${WEBUI_BASE_URL}/static/favicon.png`}
+						src={imageSrc || `${WEBUI_BASE_URL}/static/favicon.png`}
 						class="size-8 object-cover"
 						alt=""
 					/>
 				</button>
 				<div class="flex-1">
-					<div class=" text-gray-500 text-xs">{$i18n.t('Name')}</div>
+					<label for="webhook-name-{webhook.id}" class="block text-gray-500 text-xs"
+						>{$i18n.t('Name')}</label
+					>
 					<input
+						id="webhook-name-{webhook.id}"
 						type="text"
 						class="w-full text-sm bg-transparent outline-none placeholder:text-gray-300 dark:placeholder:text-gray-700"
 						bind:value={name}
@@ -143,6 +161,7 @@
 						<button
 							type="button"
 							class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+							aria-label={$i18n.t('Copy URL')}
 							on:click={copyUrl}
 						>
 							<Clipboard className="size-4 text-gray-500" />
@@ -152,6 +171,7 @@
 						<button
 							type="button"
 							class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+							aria-label={$i18n.t('Delete')}
 							on:click={onDelete}
 						>
 							<GarbageBin className="size-4 text-gray-500" />

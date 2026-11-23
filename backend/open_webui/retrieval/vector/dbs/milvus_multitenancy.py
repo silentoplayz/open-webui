@@ -14,8 +14,20 @@ from open_webui.config import (
     MILVUS_INDEX_TYPE,
     MILVUS_IVF_FLAT_NLIST,
     MILVUS_METRIC_TYPE,
+    MILVUS_SERVER_PEM_PATH,
     MILVUS_TOKEN,
     MILVUS_URI,
+)
+from open_webui.env import ENABLE_DB_MIGRATIONS
+from open_webui.retrieval.vector.dbs.milvus import (
+    BM25_STAGING_SUFFIX,
+    _add_bm25_fields,
+    _backfill_bm25_collections,
+    _has_bm25_field,
+    _metadata_exprs,
+    _supports_bm25,
+    _truncate_text,
+    _write_in_batches,
 )
 from open_webui.retrieval.vector.main import (
     GetResult,
@@ -23,14 +35,9 @@ from open_webui.retrieval.vector.main import (
     VectorDBBase,
     VectorItem,
 )
-from pymilvus import (
-    Collection,
-    CollectionSchema,
-    DataType,
-    FieldSchema,
-    connections,
-    utility,
-)
+from open_webui.retrieval.vector.utils import merge_hybrid_search_results, process_metadata
+from pymilvus import DataType
+from pymilvus import MilvusClient as Client
 from pymilvus.exceptions import MilvusException
 
 log = logging.getLogger(__name__)
@@ -70,11 +77,8 @@ class MilvusClient(VectorDBBase):
     def __init__(self):
         # Milvus collection names can only contain numbers, letters, and underscores.
         self.collection_prefix = MILVUS_COLLECTION_PREFIX.replace('-', '_')
-        connections.connect(
-            alias='default',
-            uri=MILVUS_URI,
-            token=MILVUS_TOKEN,
-            db_name=MILVUS_DB,
+        self.client = Client(
+            uri=MILVUS_URI, token=MILVUS_TOKEN, db_name=MILVUS_DB, server_pem_path=MILVUS_SERVER_PEM_PATH
         )
 
         # Main collection types for multi-tenancy
@@ -90,6 +94,14 @@ class MilvusClient(VectorDBBase):
             self.WEB_SEARCH_COLLECTION,
             self.HASH_BASED_COLLECTION,
         ]
+        if ENABLE_DB_MIGRATIONS:
+            _backfill_bm25_collections(
+                self.client,
+                self.shared_collections,
+                self._create_shared_collection,
+                ['id', 'vector', 'text', 'metadata', RESOURCE_ID_FIELD],
+                lambda rows: rows,
+            )
 
     def _get_collection_and_resource_id(self, collection_name: str) -> Tuple[str, str]:
         """
@@ -116,53 +128,84 @@ class MilvusClient(VectorDBBase):
             return self.KNOWLEDGE_COLLECTION, resource_id
 
     def _create_shared_collection(self, mt_collection_name: str, dimension: int):
-        fields = [
-            FieldSchema(
-                name='id',
-                dtype=DataType.VARCHAR,
-                is_primary=True,
-                auto_id=False,
-                max_length=36,
-            ),
-            FieldSchema(name='vector', dtype=DataType.FLOAT_VECTOR, dim=dimension),
-            FieldSchema(name='text', dtype=DataType.VARCHAR, max_length=65535),
-            FieldSchema(name='metadata', dtype=DataType.JSON),
-            FieldSchema(name=RESOURCE_ID_FIELD, dtype=DataType.VARCHAR, max_length=255),
-        ]
-        schema = CollectionSchema(fields, 'Shared collection for multi-tenancy')
-        collection = Collection(mt_collection_name, schema)
+        supports_bm25 = _supports_bm25(self.client)
+        schema = self.client.create_schema(auto_id=False, description='Shared collection for multi-tenancy')
+        schema.add_field(field_name='id', datatype=DataType.VARCHAR, is_primary=True, max_length=36)
+        schema.add_field(field_name='vector', datatype=DataType.FLOAT_VECTOR, dim=dimension)
+        schema.add_field(
+            field_name='text',
+            datatype=DataType.VARCHAR,
+            max_length=MILVUS_TEXT_MAX_LENGTH,
+            enable_analyzer=supports_bm25,
+        )
+        if supports_bm25:
+            _add_bm25_fields(schema)
+        schema.add_field(field_name='metadata', datatype=DataType.JSON)
+        schema.add_field(field_name=RESOURCE_ID_FIELD, datatype=DataType.VARCHAR, max_length=255)
 
-        index_params = {
-            'metric_type': MILVUS_METRIC_TYPE,
-            'index_type': MILVUS_INDEX_TYPE,
-            'params': {},
-        }
+        index_build_params = {}
         if MILVUS_INDEX_TYPE == 'HNSW':
-            index_params['params'] = {
+            index_build_params = {
                 'M': MILVUS_HNSW_M,
                 'efConstruction': MILVUS_HNSW_EFCONSTRUCTION,
             }
         elif MILVUS_INDEX_TYPE == 'IVF_FLAT':
-            index_params['params'] = {'nlist': MILVUS_IVF_FLAT_NLIST}
+            index_build_params = {'nlist': MILVUS_IVF_FLAT_NLIST}
 
-        collection.create_index('vector', index_params)
-        collection.create_index(RESOURCE_ID_FIELD)
-        log.info(f'Created shared collection: {mt_collection_name}')
-        return collection
+        vector_index = self.client.prepare_index_params(
+            field_name='vector',
+            index_type=MILVUS_INDEX_TYPE,
+            metric_type=MILVUS_METRIC_TYPE,
+            params=index_build_params,
+        )
+
+        self.client.create_collection(collection_name=mt_collection_name, schema=schema)
+        self.client.create_index(collection_name=mt_collection_name, index_params=vector_index)
+        if supports_bm25:
+            self.client.create_index(
+                collection_name=mt_collection_name,
+                index_params=self.client.prepare_index_params(
+                    field_name='sparse', index_type='SPARSE_INVERTED_INDEX', metric_type='BM25'
+                ),
+            )
+        self._create_resource_id_index(mt_collection_name)
+        log.info('Created shared collection: %s', mt_collection_name)
+
+    def _create_resource_id_index(self, mt_collection_name: str):
+        try:
+            # A Milvus server auto-selects the scalar index type from a parameterless call.
+            self.client.create_index(
+                collection_name=mt_collection_name,
+                index_params=self.client.prepare_index_params(field_name=RESOURCE_ID_FIELD),
+            )
+        except MilvusException:
+            try:
+                self.client.create_index(
+                    collection_name=mt_collection_name,
+                    index_params=self.client.prepare_index_params(field_name=RESOURCE_ID_FIELD, index_type='INVERTED'),
+                )
+            except MilvusException as e:
+                # The index only accelerates resource_id filters; never fail
+                # collection creation over it.
+                log.warning(f'Could not create {RESOURCE_ID_FIELD} index on {mt_collection_name}: {e}')
 
     def _ensure_collection(self, mt_collection_name: str, dimension: int):
-        if not utility.has_collection(mt_collection_name):
+        if not self.client.has_collection(mt_collection_name):
             self._create_shared_collection(mt_collection_name, dimension)
 
     def has_collection(self, collection_name: str) -> bool:
         mt_collection, resource_id = self._get_collection_and_resource_id(collection_name)
         _validate_resource_id(resource_id)
-        if not utility.has_collection(mt_collection):
+        if not self.client.has_collection(mt_collection):
             return False
 
-        collection = Collection(mt_collection)
-        collection.load()
-        res = collection.query(expr=f"{RESOURCE_ID_FIELD} == '{resource_id}'", limit=1)
+        self.client.load_collection(mt_collection)
+        res = self.client.query(
+            collection_name=mt_collection,
+            filter=f"{RESOURCE_ID_FIELD} == '{resource_id}'",
+            output_fields=['id'],
+            limit=1,
+        )
         return len(res) > 0
 
     def upsert(self, collection_name: str, items: List[VectorItem]):
@@ -172,30 +215,33 @@ class MilvusClient(VectorDBBase):
         _validate_resource_id(resource_id)
         dimension = len(items[0]['vector'])
         self._ensure_collection(mt_collection, dimension)
-        collection = Collection(mt_collection)
 
         entities = []
         for item in items:
             text = item['text'] or ''
-            if len(text) > MILVUS_TEXT_MAX_LENGTH:
+            text_bytes = len(text.encode())
+            if text_bytes > MILVUS_TEXT_MAX_LENGTH:
                 log.warning(
-                    f'Milvus: truncating text id={item["id"]} '
-                    f'{len(text)}->{MILVUS_TEXT_MAX_LENGTH} chars '
-                    f'(collection={mt_collection}, resource_id={resource_id})'
+                    'Milvus: truncating text id=%s %s->%s bytes (collection=%s, resource_id=%s)',
+                    item['id'],
+                    text_bytes,
+                    MILVUS_TEXT_MAX_LENGTH,
+                    mt_collection,
+                    resource_id,
                 )
-                text = text[:MILVUS_TEXT_MAX_LENGTH]
+                text = _truncate_text(text)
             entities.append(
                 {
                     'id': item['id'],
                     'vector': item['vector'],
                     'text': text,
-                    'metadata': item['metadata'],
+                    'metadata': process_metadata(item['metadata']),
                     RESOURCE_ID_FIELD: resource_id,
                 }
             )
 
         try:
-            collection.insert(entities)
+            _write_in_batches(self.client.insert, mt_collection, entities)
         except MilvusException as e:
             log.error(
                 f'Milvus insert failed (collection={mt_collection}, '
@@ -215,19 +261,19 @@ class MilvusClient(VectorDBBase):
 
         mt_collection, resource_id = self._get_collection_and_resource_id(collection_name)
         _validate_resource_id(resource_id)
-        if not utility.has_collection(mt_collection):
+        if not self.client.has_collection(mt_collection):
             return None
 
-        collection = Collection(mt_collection)
-        collection.load()
+        self.client.load_collection(mt_collection)
 
-        search_params = {'metric_type': MILVUS_METRIC_TYPE, 'params': {}}
-        results = collection.search(
+        expr = [f"{RESOURCE_ID_FIELD} == '{resource_id}'", *_metadata_exprs(filter)]
+        results = self.client.search(
+            collection_name=mt_collection,
             data=vectors,
             anns_field='vector',
-            param=search_params,
+            search_params={'metric_type': MILVUS_METRIC_TYPE, 'params': {}},
             limit=limit,
-            expr=f"{RESOURCE_ID_FIELD} == '{resource_id}'",
+            filter=' and '.join(expr),
             output_fields=['id', 'text', 'metadata'],
         )
 
@@ -235,16 +281,60 @@ class MilvusClient(VectorDBBase):
         for hits in results:
             batch_ids, batch_docs, batch_metadatas, batch_dists = [], [], [], []
             for hit in hits:
-                batch_ids.append(hit.entity.get('id'))
-                batch_docs.append(hit.entity.get('text'))
-                batch_metadatas.append(hit.entity.get('metadata'))
-                batch_dists.append(hit.distance)
+                entity = hit.get('entity', {})
+                batch_ids.append(entity.get('id'))
+                batch_docs.append(entity.get('text'))
+                batch_metadatas.append(entity.get('metadata'))
+                batch_dists.append(hit.get('distance'))
             ids.append(batch_ids)
             documents.append(batch_docs)
             metadatas.append(batch_metadatas)
             distances.append(batch_dists)
 
         return SearchResult(ids=ids, documents=documents, metadatas=metadatas, distances=distances)
+
+    def hybrid_search(
+        self,
+        collection_name: str,
+        query: str,
+        vectors: List[List[float]],
+        filter: Optional[Dict] = None,
+        limit: int = 10,
+        hybrid_bm25_weight: float = 0.5,
+    ) -> Optional[SearchResult]:
+        mt_collection, resource_id = self._get_collection_and_resource_id(collection_name)
+        _validate_resource_id(resource_id)
+        if not self.client.has_collection(mt_collection) or not _has_bm25_field(self.client, mt_collection):
+            return None
+
+        vector_result = None
+        if hybrid_bm25_weight < 1 and vectors:
+            vector_result = self.search(collection_name=collection_name, vectors=vectors, filter=filter, limit=limit)
+
+        fts_results = []
+        if hybrid_bm25_weight > 0 and query.strip():
+            self.client.load_collection(mt_collection)
+            expr = [f"{RESOURCE_ID_FIELD} == '{resource_id}'", *_metadata_exprs(filter)]
+            results = self.client.search(
+                collection_name=mt_collection,
+                data=[query],
+                anns_field='sparse',
+                limit=limit,
+                filter=' and '.join(expr),
+                output_fields=['text', 'metadata'],
+            )
+            fts_results = [
+                {'id': hit['id'], 'text': hit['entity']['text'], 'vmetadata': hit['entity']['metadata']}
+                for hit in results[0]
+            ]
+
+        return merge_hybrid_search_results(
+            vector_result=vector_result,
+            fts_results=fts_results,
+            num_queries=len(vectors) or 1,
+            limit=limit,
+            hybrid_bm25_weight=hybrid_bm25_weight,
+        )
 
     def delete(
         self,
@@ -254,10 +344,8 @@ class MilvusClient(VectorDBBase):
     ):
         mt_collection, resource_id = self._get_collection_and_resource_id(collection_name)
         _validate_resource_id(resource_id)
-        if not utility.has_collection(mt_collection):
+        if not self.client.has_collection(mt_collection):
             return
-
-        collection = Collection(mt_collection)
 
         expr = [f"{RESOURCE_ID_FIELD} == '{resource_id}'"]
         if ids:
@@ -270,30 +358,29 @@ class MilvusClient(VectorDBBase):
                 _validate_metadata_key(key)
                 expr.append(f"metadata['{key}'] == '{_escape_milvus_string(str(value))}'")
 
-        collection.delete(' and '.join(expr))
+        self.client.delete(collection_name=mt_collection, filter=' and '.join(expr))
 
     def reset(self):
         for collection_name in self.shared_collections:
-            if utility.has_collection(collection_name):
-                utility.drop_collection(collection_name)
+            if self.client.has_collection(collection_name):
+                self.client.drop_collection(collection_name)
+            self.client.drop_collection(f'{collection_name}{BM25_STAGING_SUFFIX}')
 
     def delete_collection(self, collection_name: str):
         mt_collection, resource_id = self._get_collection_and_resource_id(collection_name)
         _validate_resource_id(resource_id)
-        if not utility.has_collection(mt_collection):
+        if not self.client.has_collection(mt_collection):
             return
 
-        collection = Collection(mt_collection)
-        collection.delete(f"{RESOURCE_ID_FIELD} == '{resource_id}'")
+        self.client.delete(collection_name=mt_collection, filter=f"{RESOURCE_ID_FIELD} == '{resource_id}'")
 
     def query(self, collection_name: str, filter: Dict[str, Any], limit: Optional[int] = None) -> Optional[GetResult]:
         mt_collection, resource_id = self._get_collection_and_resource_id(collection_name)
         _validate_resource_id(resource_id)
-        if not utility.has_collection(mt_collection):
+        if not self.client.has_collection(mt_collection):
             return None
 
-        collection = Collection(mt_collection)
-        collection.load()
+        self.client.load_collection(mt_collection)
 
         expr = [f"{RESOURCE_ID_FIELD} == '{resource_id}'"]
         if filter:
@@ -308,8 +395,9 @@ class MilvusClient(VectorDBBase):
                 else:
                     raise TypeError(f'Unsupported Milvus filter value type for key {key!r}: {type(value).__name__}')
 
-        iterator = collection.query_iterator(
-            expr=' and '.join(expr),
+        iterator = self.client.query_iterator(
+            collection_name=mt_collection,
+            filter=' and '.join(expr),
             output_fields=['id', 'text', 'metadata'],
             limit=limit if limit else -1,
         )

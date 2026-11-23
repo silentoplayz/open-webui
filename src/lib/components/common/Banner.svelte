@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Banner } from '$lib/types';
+	import { resolveLocalizedString } from '$lib/utils/localizedContent';
 	import { onMount, createEventDispatcher, getContext } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import DOMPurify from 'dompurify';
@@ -46,13 +47,13 @@
 {#if !dismissed}
 	{#if mounted}
 		<div
-			class="{className} top-0 left-0 right-0 py-1 flex justify-center items-center relative border border-transparent text-gray-800 dark:text-gary-100 bg-transparent backdrop-blur-xl z-30"
+			class="{className} no-drag-region top-0 left-0 right-0 py-1 flex justify-center items-center relative border border-transparent text-gray-800 dark:text-gary-100 bg-transparent backdrop-blur-xl z-30"
 			transition:fade={{ delay: 100, duration: 300 }}
 		>
 			<div class=" flex flex-col md:flex-row md:items-center flex-1 text-sm w-fit gap-1.5">
 				<div class="flex justify-between self-start">
 					<div
-						class=" text-xs font-semibold {classNames[banner.type] ??
+						class=" text-xs font-normal {classNames[banner.type] ??
 							classNames['info']}  w-fit px-2 rounded-sm uppercase line-clamp-1 mr-0.5"
 					>
 						{#if banner.type.toLowerCase() === 'info'}
@@ -71,7 +72,7 @@
 					{#if banner.url}
 						<div class="flex md:hidden group w-fit md:items-center">
 							<a
-								class="text-gray-700 dark:text-white text-xs font-semibold underline"
+								class="text-gray-700 dark:text-white text-xs font-normal underline"
 								href="{WEBUI_BASE_URL}/assets/files/whitepaper.pdf"
 								target="_blank"
 							>
@@ -81,7 +82,6 @@
 							<div
 								class=" ml-1 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-white"
 							>
-								<!--  -->
 								<svg
 									aria-hidden="true"
 									xmlns="http://www.w3.org/2000/svg"
@@ -100,14 +100,23 @@
 					{/if}
 				</div>
 				<div class="flex-1 text-xs text-gray-700 dark:text-white max-h-60 overflow-y-auto">
-					{@html DOMPurify.sanitize(marked.parse((banner?.content ?? '').replace(/\n/g, '<br>')))}
+					{@html DOMPurify.sanitize(
+						marked.parse(
+							resolveLocalizedString(
+								banner?.content,
+								banner?.i18n,
+								$i18n.language,
+								'content'
+							).replace(/\n/g, '<br>')
+						)
+					)}
 				</div>
 			</div>
 
 			{#if banner.url}
 				<div class="hidden md:flex group w-fit md:items-center">
 					<a
-						class="text-gray-700 dark:text-white text-xs font-semibold underline"
+						class="text-gray-700 dark:text-white text-xs font-normal underline"
 						href="/"
 						target="_blank"
 					>
@@ -115,7 +124,6 @@
 					</a>
 
 					<div class=" ml-1 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-white">
-						<!--  -->
 						<svg
 							aria-hidden="true"
 							xmlns="http://www.w3.org/2000/svg"

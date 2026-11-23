@@ -380,12 +380,20 @@ export const userSignUp = async (
 };
 
 export const userSignOut = async () => {
+	const { clearChatViews } = await import('$lib/stores/chatViewStates');
+	clearChatViews();
+	const { clearFolderStates } = await import('$lib/stores/folderStates');
+	clearFolderStates();
+	const token = localStorage.getItem('token');
+	// Stop local access even if the hosted server cannot be reached.
+	await window.tether?.signedOut();
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/auths/signout`, {
 		method: 'POST',
 		headers: {
-			'Content-Type': 'application/json'
+			'Content-Type': 'application/json',
+			...(token ? { Authorization: `Bearer ${token}` } : {})
 		},
 		credentials: 'include'
 	})
@@ -405,6 +413,36 @@ export const userSignOut = async () => {
 
 	sessionStorage.clear();
 	return res;
+};
+
+export const getLogoutRedirectUrl = (redirectUrl?: string | null) => {
+	const logoutUrl = new URL('/auth?state=logout', window.location.origin);
+	const postLogoutUrl = new URL('/auth', window.location.origin);
+	if (!redirectUrl) {
+		return logoutUrl.href;
+	}
+
+	const url = new URL(redirectUrl, window.location.origin);
+	if (url.origin === window.location.origin && url.pathname === '/auth') {
+		url.searchParams.set('state', 'logout');
+		return url.href;
+	}
+
+	const postLogoutRedirectUri = url.searchParams.get('post_logout_redirect_uri');
+	if (postLogoutRedirectUri) {
+		const configuredPostLogoutUrl = new URL(postLogoutRedirectUri, window.location.origin);
+		if (
+			configuredPostLogoutUrl.origin === window.location.origin &&
+			configuredPostLogoutUrl.pathname === '/auth'
+		) {
+			url.searchParams.set('state', 'logout');
+		}
+		return url.href;
+	}
+
+	url.searchParams.set('post_logout_redirect_uri', postLogoutUrl.href);
+	url.searchParams.set('state', 'logout');
+	return url.href;
 };
 
 export const addUser = async (

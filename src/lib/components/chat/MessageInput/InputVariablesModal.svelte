@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext, onMount, tick } from 'svelte';
-	import { models, config } from '$lib/stores';
+	import { config } from '$lib/stores';
 
 	import { toast } from 'svelte-sonner';
 	import { copyToClipboard } from '$lib/utils';
@@ -9,16 +9,53 @@
 	import Modal from '$lib/components/common/Modal.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import MapSelector from '$lib/components/common/Valves/MapSelector.svelte';
+	import { getChatContext } from '$lib/components/chat/context';
 
-	const i18n = getContext('i18n');
+	const { models } = getChatContext();
+
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
+
+	// Only these prompt-defined attributes may reach DOM inputs.
+	const ALLOWED_INPUT_ATTRIBUTES = new Set([
+		'aria-describedby',
+		'aria-description',
+		'aria-label',
+		'aria-labelledby',
+		'autocapitalize',
+		'autocomplete',
+		'autocorrect',
+		'dir',
+		'disabled',
+		'enterkeyhint',
+		'inputmode',
+		'lang',
+		'max',
+		'maxlength',
+		'min',
+		'minlength',
+		'multiple',
+		'pattern',
+		'placeholder',
+		'readonly',
+		'required',
+		'size',
+		'spellcheck',
+		'step',
+		'title'
+	]);
 
 	export let show = false;
 	export let variables = {};
+	export let title: string | undefined = undefined;
 
 	export let onSave = (e) => {};
 
 	let loading = true;
 	let variableValues = {};
+	let variablesKey = '';
+
+	const getVariableLabel = (variable) => variables[variable]?.label ?? variable;
+	const getVariablesKey = (value) => JSON.stringify(value ?? {});
 
 	const submitHandler = async () => {
 		// Normalize Windows CRLF (\r\n) to LF (\n) for all string values
@@ -59,26 +96,37 @@
 		}
 	};
 
+	$: if (!show) {
+		variablesKey = '';
+	}
+
 	$: if (show) {
-		init();
+		const key = getVariablesKey(variables);
+		if (key !== variablesKey) {
+			variablesKey = key;
+			init();
+		}
 	}
 </script>
 
-<Modal bind:show size="md">
+<Modal ariaLabel={title ?? $i18n.t('Input Variables')} bind:show size="md">
 	<div>
-		<div class=" flex justify-between dark:text-gray-300 px-5 pt-4 pb-2">
-			<div class=" text-lg font-medium self-center">{$i18n.t('Input Variables')}</div>
+		<div class=" flex justify-between dark:text-gray-300 px-4 pt-3 pb-1">
+			<div class=" text-sm font-medium self-center">
+				{title ?? $i18n.t('Input Variables')}
+			</div>
 			<button
-				class="self-center"
+				aria-label={$i18n.t('Close')}
+				class="self-center rounded-lg py-1 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-0"
 				on:click={() => {
 					show = false;
 				}}
 			>
-				<XMark className={'size-5'} />
+				<XMark className={'size-4'} />
 			</button>
 		</div>
 
-		<div class="flex flex-col md:flex-row w-full px-5 pb-4 md:space-x-4 dark:text-gray-200">
+		<div class="flex flex-col md:flex-row w-full px-4 pb-4 md:space-x-4 dark:text-gray-200">
 			<div class=" flex flex-col w-full sm:flex-row sm:justify-center sm:space-x-6">
 				<form
 					class="flex flex-col w-full"
@@ -90,15 +138,19 @@
 						{#if !loading}
 							<div class="flex flex-col gap-1">
 								{#each Object.keys(variables) as variable, idx}
-									{@const { type, ...variableAttributes } = variables[variable] ?? {}}
+									{@const variableAttributes = Object.fromEntries(
+										Object.entries(variables[variable] ?? {}).filter(([name]) =>
+											ALLOWED_INPUT_ATTRIBUTES.has(name)
+										)
+									)}
 
 									<div class=" py-0.5 w-full justify-between">
 										<div class="flex w-full justify-between mb-1.5">
-											<div class=" self-center text-xs font-medium">
-												{variable}
+											<div class=" self-center text-xs font-normal">
+												{getVariableLabel(variable)}
 
 												{#if variables[variable]?.required ?? false}
-													<span class=" text-gray-500">*{$i18n.t('required')}</span>
+													<span class="ml-1 text-gray-500">* {$i18n.t('required')}</span>
 												{/if}
 											</div>
 										</div>
@@ -110,14 +162,13 @@
 														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
 														bind:value={variableValues[variable]}
 														id="input-variable-{idx}"
+														required={variables[variable]?.required ?? false}
 													>
-														{#if variables[variable]?.placeholder}
-															<option value="" disabled selected>
-																{variables[variable].placeholder}
-															</option>
-														{/if}
+														<option value="" disabled>
+															{variables[variable]?.placeholder ?? $i18n.t('Select an option')}
+														</option>
 														{#each variables[variable]?.options ?? [] as option}
-															<option value={option} selected={option === variableValues[variable]}>
+															<option value={option}>
 																{option}
 															</option>
 														{/each}
@@ -127,7 +178,9 @@
 														<div class="relative flex justify-center items-center gap-2">
 															<input
 																type="checkbox"
-																bind:checked={variableValues[variable]}
+																checked={variableValues[variable] === true ||
+																	variableValues[variable] === 'true'}
+																on:change={(e) => (variableValues[variable] = e.target.checked)}
 																class="size-3.5 rounded cursor-pointer border border-gray-200 dark:border-gray-700"
 																id="input-variable-{idx}"
 																{...variableAttributes}
@@ -175,7 +228,7 @@
 												{:else if variables[variable]?.type === 'date'}
 													<input
 														type="date"
-														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
+														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30 dark:scheme-dark"
 														placeholder={variables[variable]?.placeholder ?? ''}
 														bind:value={variableValues[variable]}
 														autocomplete="off"
@@ -186,7 +239,7 @@
 												{:else if variables[variable]?.type === 'datetime-local'}
 													<input
 														type="datetime-local"
-														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
+														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30 dark:scheme-dark"
 														placeholder={variables[variable]?.placeholder ?? ''}
 														bind:value={variableValues[variable]}
 														autocomplete="off"
@@ -208,7 +261,7 @@
 												{:else if variables[variable]?.type === 'month'}
 													<input
 														type="month"
-														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
+														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30 dark:scheme-dark"
 														placeholder={variables[variable]?.placeholder ?? ''}
 														bind:value={variableValues[variable]}
 														autocomplete="off"
@@ -283,7 +336,7 @@
 												{:else if variables[variable]?.type === 'time'}
 													<input
 														type="time"
-														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
+														class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30 dark:scheme-dark"
 														placeholder={variables[variable]?.placeholder ?? ''}
 														bind:value={variableValues[variable]}
 														autocomplete="off"
@@ -350,9 +403,9 @@
 						{/if}
 					</div>
 
-					<div class="flex justify-end pt-3 text-sm font-medium">
+					<div class="flex justify-end pt-3 text-sm font-normal">
 						<button
-							class="px-3.5 py-1.5 text-sm font-medium bg-white hover:bg-gray-100 text-black dark:bg-black dark:text-white dark:hover:bg-gray-900 transition rounded-full"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal transition disabled:opacity-60 bg-white hover:bg-gray-100 text-black dark:bg-black dark:text-white dark:hover:bg-gray-900"
 							type="button"
 							on:click={() => {
 								show = false;
@@ -362,7 +415,7 @@
 						</button>
 
 						<button
-							class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
 							type="submit"
 						>
 							{$i18n.t('Save')}

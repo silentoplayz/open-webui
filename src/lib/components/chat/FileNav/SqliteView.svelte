@@ -2,7 +2,7 @@
 	import { getContext, onDestroy } from 'svelte';
 	import Spinner from '../../common/Spinner.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	export let data: ArrayBuffer;
 
@@ -46,7 +46,7 @@
 			loading = false;
 		} catch (e) {
 			loading = false;
-			error = e instanceof Error ? e.message : 'Failed to open database';
+			error = e instanceof Error ? e.message : $i18n.t('Failed to open database');
 		}
 	};
 
@@ -82,7 +82,7 @@
 				rows = [];
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Query failed';
+			error = e instanceof Error ? e.message : $i18n.t('Query failed');
 		}
 	};
 
@@ -99,7 +99,7 @@
 				queryRows = [];
 			}
 		} catch (e) {
-			queryError = e instanceof Error ? e.message : 'Query failed';
+			queryError = e instanceof Error ? e.message : $i18n.t('Query failed');
 			queryColumns = [];
 			queryRows = [];
 		}
@@ -129,7 +129,11 @@
 	{#if loading}
 		<div class="flex items-center justify-center h-full"><Spinner className="size-4" /></div>
 	{:else if error}
-		<div class="p-3 text-xs text-red-500">{error}</div>
+		<div
+			class="flex flex-1 items-center justify-center p-3 text-center text-xs text-gray-500 dark:text-gray-400"
+		>
+			{error}
+		</div>
 	{:else}
 		<!-- Table tabs + query toggle -->
 		<div
@@ -139,7 +143,7 @@
 				<button
 					class="shrink-0 px-2 py-1 text-xs rounded-lg transition
 						{table === selectedTable && !queryMode
-						? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 font-medium'
+						? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 font-normal'
 						: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}"
 					on:click={() => selectTable(table)}
 				>
@@ -150,7 +154,7 @@
 			<button
 				class="shrink-0 px-2 py-1 text-xs rounded-lg transition font-mono
 					{queryMode
-					? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 font-medium'
+					? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 font-normal'
 					: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}"
 				on:click={() => {
 					queryMode = !queryMode;
@@ -164,6 +168,7 @@
 			<!-- Query editor -->
 			<div class="shrink-0">
 				<textarea
+					aria-label={$i18n.t('SQL query')}
 					bind:value={queryText}
 					placeholder="SELECT * FROM ..."
 					class="query-editor w-full text-xs font-mono bg-transparent text-gray-800 dark:text-gray-200 px-3 py-2 outline-none resize-none"
@@ -180,14 +185,14 @@
 					class="flex items-center justify-between px-2 py-1 bg-gray-50 dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800"
 				>
 					{#if queryError}
-						<span class="text-[0.65rem] text-red-500 dark:text-red-400 truncate mr-2"
+						<span class="text-[0.65rem] text-gray-500 dark:text-gray-400 truncate mr-2"
 							>{queryError}</span
 						>
 					{:else}
 						<span class="text-[0.6rem] text-gray-400 dark:text-gray-600 select-none">⌘+Enter</span>
 					{/if}
 					<button
-						class="shrink-0 px-2.5 py-0.5 text-[0.65rem] font-medium rounded hover:bg-gray-200 dark:hover:bg-gray-800 transition text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+						class="shrink-0 px-2.5 py-0.5 text-[0.65rem] font-normal rounded hover:bg-gray-200 dark:hover:bg-gray-800 transition text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
 						on:click={runQuery}
 					>
 						{$i18n.t('Run')}
@@ -244,7 +249,11 @@
 						</tbody>
 					</table>
 				{:else}
-					<div class="text-xs text-gray-400 text-center pt-6">{$i18n.t('No data')}</div>
+					<div
+						class="flex h-full items-center justify-center p-4 text-center text-xs text-gray-400"
+					>
+						{$i18n.t('No data')}
+					</div>
 				{/if}
 			</div>
 
@@ -254,6 +263,7 @@
 					class="flex items-center justify-center gap-3 py-1.5 px-3 border-t border-gray-100 dark:border-gray-800 text-xs text-gray-500 shrink-0"
 				>
 					<button
+						aria-label={$i18n.t('Previous page')}
 						class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30"
 						disabled={page === 0}
 						on:click={() => {
@@ -274,8 +284,15 @@
 							/>
 						</svg>
 					</button>
-					<span>{page + 1} / {totalPages} ({totalRows.toLocaleString()} rows)</span>
+					<span>
+						{$i18n.t('{{page}} / {{totalPages}} ({{rows}} rows)', {
+							page: page + 1,
+							totalPages,
+							rows: totalRows.toLocaleString()
+						})}
+					</span>
 					<button
+						aria-label={$i18n.t('Next page')}
 						class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30"
 						disabled={page >= totalPages - 1}
 						on:click={() => {
@@ -309,7 +326,7 @@
 	}
 	.sqlite-table th,
 	.sqlite-table td {
-		padding: 4px 8px;
+		padding: 0.25rem 0.5rem;
 		text-align: left;
 		white-space: nowrap;
 		border: 1px solid rgba(128, 128, 128, 0.15);
@@ -339,7 +356,7 @@
 	}
 	.sqlite-table td {
 		color: #374151;
-		max-width: 300px;
+		max-width: 18.75rem;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
@@ -352,7 +369,7 @@
 		text-align: right !important;
 		user-select: none;
 		width: 1px;
-		padding-right: 6px !important;
+		padding-right: 0.375rem !important;
 	}
 	:global(.dark) .sqlite-row-num {
 		color: #6b7280;

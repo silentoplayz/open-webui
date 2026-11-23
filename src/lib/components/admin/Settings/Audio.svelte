@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { createEventDispatcher, onMount, getContext } from 'svelte';
+	import { createEventDispatcher, onMount, getContext, tick } from 'svelte';
 	const dispatch = createEventDispatcher();
 
 	import { getBackendConfig } from '$lib/apis';
@@ -8,12 +8,14 @@
 		getAudioConfig,
 		updateAudioConfig,
 		getModels as _getModels,
-		getVoices as _getVoices
+		getVoices as _getVoices,
+		type RealtimeConfig
 	} from '$lib/apis/audio';
-	import { config, settings } from '$lib/stores';
+	import { config } from '$lib/stores';
 
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
+	import Switch from '$lib/components/common/Switch.svelte';
 	import TTSVoiceInput from '$lib/components/workspace/Models/TTSVoiceInput.svelte';
 
 	import { TTS_RESPONSE_SPLIT } from '$lib/types';
@@ -21,10 +23,34 @@
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
 	import Textarea from '$lib/components/common/Textarea.svelte';
+	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
+	import AdminSettingField from './AdminSettingField.svelte';
+	import AdminSettingRow from './AdminSettingRow.svelte';
+	import AdminSettingSection from './AdminSettingSection.svelte';
+	import AdminSettingSaveButton from './AdminSettingSaveButton.svelte';
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
 
 	export let saveHandler: () => void;
+
+	// Keep dynamic realtime labels and the previous URL label in the translation catalogs.
+	// $i18n.t('settings.audio.realtime.azureUrl');
+	// $i18n.t('settings.audio.realtime.deployment');
+	// $i18n.t('Voice Model');
+	// $i18n.t('OpenAI API Base URL');
+	let realtime: RealtimeConfig & { REALTIME_CALL_PROMPT_TEMPLATE: string } = {
+		ENABLED: false,
+		PROVIDER: 'openai',
+		AUTH_TYPE: 'api_key',
+		OPENAI_API_BASE_URL: 'https://api.openai.com/v1',
+		OPENAI_API_KEY: '',
+		MODEL: 'gpt-realtime-2.1-mini',
+		VOICE: 'marin',
+		TRANSCRIPTION_MODEL: 'gpt-transcribe',
+		INPUT_PARAMS: null,
+		REALTIME_CALL_PROMPT_TEMPLATE: ''
+	};
+	let REALTIME_INPUT_PARAMS = '';
 
 	// Audio
 	let TTS_OPENAI_API_BASE_URL = '';
@@ -33,6 +59,7 @@
 	let TTS_ENGINE = '';
 	let TTS_MODEL = '';
 	let TTS_VOICE = '';
+	let REALTIME_TTS_PROMPT_TEMPLATE = '';
 	let TTS_OPENAI_PARAMS = '';
 	let TTS_SPLIT_ON: TTS_RESPONSE_SPLIT = TTS_RESPONSE_SPLIT.PUNCTUATION;
 	let TTS_AZURE_SPEECH_REGION = '';
@@ -60,6 +87,112 @@
 
 	let STT_WHISPER_MODEL_LOADING = false;
 
+	let savedConfig: Record<string, any> | null = null;
+	$: settings = {
+		AUDIO_REALTIME_ENABLED: realtime.ENABLED,
+		AUDIO_REALTIME_PROVIDER: realtime.PROVIDER,
+		AUDIO_REALTIME_AUTH_TYPE: realtime.AUTH_TYPE,
+		AUDIO_REALTIME_OPENAI_API_BASE_URL: realtime.OPENAI_API_BASE_URL,
+		AUDIO_REALTIME_OPENAI_API_KEY: realtime.OPENAI_API_KEY,
+		AUDIO_REALTIME_MODEL: realtime.MODEL,
+		AUDIO_REALTIME_VOICE: realtime.VOICE,
+		AUDIO_REALTIME_TRANSCRIPTION_MODEL: realtime.TRANSCRIPTION_MODEL,
+		AUDIO_REALTIME_INPUT_PARAMS: REALTIME_INPUT_PARAMS,
+		REALTIME_CALL_PROMPT_TEMPLATE: realtime.REALTIME_CALL_PROMPT_TEMPLATE,
+		AUDIO_TTS_OPENAI_API_BASE_URL: TTS_OPENAI_API_BASE_URL,
+		AUDIO_TTS_OPENAI_API_KEY: TTS_OPENAI_API_KEY,
+		AUDIO_TTS_API_KEY: TTS_API_KEY,
+		AUDIO_TTS_ENGINE: TTS_ENGINE,
+		AUDIO_TTS_MODEL: TTS_MODEL,
+		AUDIO_TTS_VOICE: TTS_VOICE,
+		REALTIME_TTS_PROMPT_TEMPLATE,
+		AUDIO_TTS_OPENAI_PARAMS: TTS_OPENAI_PARAMS,
+		AUDIO_TTS_SPLIT_ON: TTS_SPLIT_ON,
+		AUDIO_TTS_AZURE_SPEECH_REGION: TTS_AZURE_SPEECH_REGION,
+		AUDIO_TTS_AZURE_SPEECH_BASE_URL: TTS_AZURE_SPEECH_BASE_URL,
+		AUDIO_TTS_AZURE_SPEECH_OUTPUT_FORMAT: TTS_AZURE_SPEECH_OUTPUT_FORMAT,
+		AUDIO_TTS_MISTRAL_API_KEY: TTS_MISTRAL_API_KEY,
+		AUDIO_TTS_MISTRAL_API_BASE_URL: TTS_MISTRAL_API_BASE_URL,
+		AUDIO_STT_OPENAI_API_BASE_URL: STT_OPENAI_API_BASE_URL,
+		AUDIO_STT_OPENAI_API_KEY: STT_OPENAI_API_KEY,
+		AUDIO_STT_OPENAI_API_REQUEST_FORMAT: STT_OPENAI_API_REQUEST_FORMAT,
+		AUDIO_STT_ENGINE: STT_ENGINE,
+		AUDIO_STT_MODEL: STT_MODEL,
+		AUDIO_STT_SUPPORTED_CONTENT_TYPES: STT_SUPPORTED_CONTENT_TYPES,
+		WHISPER_MODEL: STT_WHISPER_MODEL,
+		AUDIO_STT_AZURE_API_KEY: STT_AZURE_API_KEY,
+		AUDIO_STT_AZURE_REGION: STT_AZURE_REGION,
+		AUDIO_STT_AZURE_LOCALES: STT_AZURE_LOCALES,
+		AUDIO_STT_AZURE_BASE_URL: STT_AZURE_BASE_URL,
+		AUDIO_STT_AZURE_MAX_SPEAKERS: STT_AZURE_MAX_SPEAKERS,
+		DEEPGRAM_API_KEY: STT_DEEPGRAM_API_KEY,
+		AUDIO_STT_MISTRAL_API_KEY: STT_MISTRAL_API_KEY,
+		AUDIO_STT_MISTRAL_API_BASE_URL: STT_MISTRAL_API_BASE_URL,
+		AUDIO_STT_MISTRAL_USE_CHAT_COMPLETIONS: STT_MISTRAL_USE_CHAT_COMPLETIONS
+	};
+	$: settingLabels = {
+		AUDIO_REALTIME_ENABLED: $i18n.t('Call mode'),
+		AUDIO_REALTIME_PROVIDER: $i18n.t('Provider'),
+		AUDIO_REALTIME_AUTH_TYPE: $i18n.t('Authentication'),
+		AUDIO_REALTIME_OPENAI_API_BASE_URL: $i18n.t(
+			realtime.PROVIDER === 'azure' ? 'settings.audio.realtime.azureUrl' : 'API Base URL'
+		),
+		AUDIO_REALTIME_OPENAI_API_KEY: $i18n.t('API Key'),
+		AUDIO_REALTIME_MODEL: $i18n.t(
+			realtime.PROVIDER === 'azure' ? 'settings.audio.realtime.deployment' : 'Voice Model'
+		),
+		AUDIO_REALTIME_VOICE: $i18n.t('Voice'),
+		AUDIO_REALTIME_TRANSCRIPTION_MODEL: $i18n.t('Input Transcription Model'),
+		AUDIO_REALTIME_INPUT_PARAMS: $i18n.t('settings.audio.realtime.inputParams'),
+		REALTIME_CALL_PROMPT_TEMPLATE: $i18n.t('Prompt Template'),
+		AUDIO_STT_ENGINE: $i18n.t('settings.admin.audio.speechToTextEngine.label'),
+		AUDIO_STT_SUPPORTED_CONTENT_TYPES: $i18n.t('settings.admin.audio.supportedMimeTypes.label'),
+		AUDIO_STT_OPENAI_API_BASE_URL: $i18n.t('settings.admin.audio.sttOpenaiApiBaseUrl.label'),
+		AUDIO_STT_OPENAI_API_KEY: $i18n.t('settings.admin.audio.sttOpenaiApiKey.label'),
+		AUDIO_STT_OPENAI_API_REQUEST_FORMAT: $i18n.t('settings.admin.audio.requestFormat.label'),
+		AUDIO_STT_MODEL: $i18n.t(
+			STT_ENGINE === 'mistral'
+				? 'settings.admin.audio.mistralSttModel.label'
+				: 'settings.admin.audio.sttModel.label'
+		),
+		DEEPGRAM_API_KEY: $i18n.t('settings.admin.audio.sttDeepgramApiKey.label'),
+		AUDIO_STT_AZURE_API_KEY: $i18n.t('settings.admin.audio.sttAzureApiKey.label'),
+		AUDIO_STT_AZURE_REGION: $i18n.t('settings.admin.audio.sttAzureRegion.label'),
+		AUDIO_STT_AZURE_LOCALES: $i18n.t('settings.admin.audio.languageLocales.label'),
+		AUDIO_STT_AZURE_BASE_URL: $i18n.t('settings.admin.audio.sttAzureBaseUrl.label'),
+		AUDIO_STT_AZURE_MAX_SPEAKERS: $i18n.t('settings.admin.audio.maxSpeakers.label'),
+		AUDIO_STT_MISTRAL_API_BASE_URL: $i18n.t('settings.admin.audio.sttMistralApiBaseUrl.label'),
+		AUDIO_STT_MISTRAL_API_KEY: $i18n.t('settings.admin.audio.sttMistralApiKey.label'),
+		AUDIO_STT_MISTRAL_USE_CHAT_COMPLETIONS: $i18n.t(
+			'settings.admin.audio.useChatCompletionsApi.label'
+		),
+		WHISPER_MODEL: $i18n.t('settings.admin.audio.sttWhisperModel.label'),
+		AUDIO_TTS_ENGINE: $i18n.t('settings.admin.audio.textToSpeechEngine.label'),
+		AUDIO_TTS_OPENAI_API_BASE_URL: $i18n.t('settings.admin.audio.ttsOpenaiApiBaseUrl.label'),
+		AUDIO_TTS_OPENAI_API_KEY: $i18n.t('settings.admin.audio.ttsOpenaiApiKey.label'),
+		AUDIO_TTS_API_KEY: $i18n.t('settings.admin.audio.ttsApiKey.label'),
+		AUDIO_TTS_AZURE_SPEECH_REGION: $i18n.t('settings.admin.audio.ttsAzureSpeechRegion.label'),
+		AUDIO_TTS_AZURE_SPEECH_BASE_URL: $i18n.t('settings.admin.audio.ttsAzureSpeechBaseUrl.label'),
+		AUDIO_TTS_MISTRAL_API_BASE_URL: $i18n.t('settings.admin.audio.ttsMistralApiBaseUrl.label'),
+		AUDIO_TTS_MISTRAL_API_KEY: $i18n.t('settings.admin.audio.ttsMistralApiKey.label'),
+		AUDIO_TTS_VOICE: $i18n.t('settings.admin.audio.ttsVoice.label'),
+		AUDIO_TTS_MODEL: $i18n.t('settings.admin.audio.ttsModel.label'),
+		AUDIO_TTS_OPENAI_PARAMS: $i18n.t('settings.admin.audio.additionalParameters.label'),
+		REALTIME_TTS_PROMPT_TEMPLATE: $i18n.t('Prompt Template'),
+		AUDIO_TTS_AZURE_SPEECH_OUTPUT_FORMAT: $i18n.t('settings.admin.audio.outputFormat.label'),
+		AUDIO_TTS_SPLIT_ON: $i18n.t('settings.admin.audio.responseSplitting.label')
+	};
+	const sensitiveKeys = [
+		'AUDIO_REALTIME_OPENAI_API_KEY',
+		'AUDIO_STT_OPENAI_API_KEY',
+		'DEEPGRAM_API_KEY',
+		'AUDIO_STT_AZURE_API_KEY',
+		'AUDIO_STT_MISTRAL_API_KEY',
+		'AUDIO_TTS_OPENAI_API_KEY',
+		'AUDIO_TTS_API_KEY',
+		'AUDIO_TTS_MISTRAL_API_KEY'
+	];
+
 	type Voice = {
 		id: string;
 		name?: string;
@@ -73,15 +206,18 @@
 	let voices: SpeechSynthesisVoice[] = [];
 	let providerVoices: Voice[] = [];
 	let models: Awaited<ReturnType<typeof _getModels>>['models'] = [];
+	const inputClass =
+		'w-full h-7 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
+	const textareaClass =
+		'w-full rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 py-1.5 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
+	const linkedHelpClass =
+		'text-[0.6875rem] text-gray-400 dark:text-gray-600 [&_a]:text-gray-900 [&_a]:hover:underline dark:[&_a]:text-gray-300';
 
 	const getModels = async () => {
 		if (TTS_ENGINE === '') {
 			models = [];
 		} else {
-			const res = await _getModels(
-				localStorage.token,
-				$config?.features?.enable_direct_connections && ($settings?.directConnections ?? null)
-			).catch((e) => {
+			const res = await _getModels(localStorage.token).catch((e) => {
 				toast.error(`${e}`);
 			});
 
@@ -124,15 +260,34 @@
 
 	const updateConfigHandler = async () => {
 		let openaiParams = {};
+		let realtimeInputParams: Record<string, unknown> | null = null;
 		try {
 			openaiParams = TTS_OPENAI_PARAMS ? JSON.parse(TTS_OPENAI_PARAMS) : {};
 			TTS_OPENAI_PARAMS = JSON.stringify(openaiParams, null, 2);
-		} catch (e) {
+			if (REALTIME_INPUT_PARAMS.trim()) {
+				realtimeInputParams = JSON.parse(REALTIME_INPUT_PARAMS);
+				if (
+					!realtimeInputParams ||
+					typeof realtimeInputParams !== 'object' ||
+					Array.isArray(realtimeInputParams)
+				) {
+					throw new Error('Input parameters must be a JSON object');
+				}
+			}
+			REALTIME_INPUT_PARAMS = realtimeInputParams
+				? JSON.stringify(realtimeInputParams, null, 2)
+				: '';
+		} catch {
 			toast.error($i18n.t('Invalid JSON format for Parameters'));
 			return;
 		}
 
 		const res = await updateAudioConfig(localStorage.token, {
+			realtime: {
+				...realtime,
+				INPUT_PARAMS: realtimeInputParams,
+				REALTIME_CALL_PROMPT_TEMPLATE: (realtime.REALTIME_CALL_PROMPT_TEMPLATE ?? '').trim() || null
+			},
 			tts: {
 				OPENAI_API_BASE_URL: TTS_OPENAI_API_BASE_URL,
 				OPENAI_API_KEY: TTS_OPENAI_API_KEY,
@@ -141,6 +296,7 @@
 				ENGINE: TTS_ENGINE,
 				MODEL: TTS_MODEL,
 				VOICE: TTS_VOICE,
+				REALTIME_TTS_PROMPT_TEMPLATE: REALTIME_TTS_PROMPT_TEMPLATE || null,
 				AZURE_SPEECH_REGION: TTS_AZURE_SPEECH_REGION,
 				AZURE_SPEECH_BASE_URL: TTS_AZURE_SPEECH_BASE_URL,
 				AZURE_SPEECH_OUTPUT_FORMAT: TTS_AZURE_SPEECH_OUTPUT_FORMAT,
@@ -169,12 +325,14 @@
 		});
 
 		if (res) {
+			savedConfig = structuredClone(settings);
 			saveHandler();
 			config.set(await getBackendConfig());
 		}
 	};
 
 	const sttModelUpdateHandler = async () => {
+		if (STT_WHISPER_MODEL_LOADING) return;
 		STT_WHISPER_MODEL_LOADING = true;
 		await updateConfigHandler();
 		STT_WHISPER_MODEL_LOADING = false;
@@ -193,6 +351,7 @@
 			TTS_ENGINE = res.tts.ENGINE;
 			TTS_MODEL = res.tts.MODEL;
 			TTS_VOICE = res.tts.VOICE;
+			REALTIME_TTS_PROMPT_TEMPLATE = res.tts.REALTIME_TTS_PROMPT_TEMPLATE ?? '';
 
 			TTS_SPLIT_ON = res.tts.SPLIT_ON || TTS_RESPONSE_SPLIT.PUNCTUATION;
 
@@ -202,6 +361,14 @@
 			TTS_MISTRAL_API_KEY = res.tts.MISTRAL_API_KEY;
 			TTS_MISTRAL_API_BASE_URL = res.tts.MISTRAL_API_BASE_URL;
 
+			realtime = {
+				...realtime,
+				...res.realtime,
+				REALTIME_CALL_PROMPT_TEMPLATE: res.realtime?.REALTIME_CALL_PROMPT_TEMPLATE ?? ''
+			};
+			REALTIME_INPUT_PARAMS = res.realtime?.INPUT_PARAMS
+				? JSON.stringify(res.realtime.INPUT_PARAMS, null, 2)
+				: '';
 			STT_OPENAI_API_BASE_URL = res.stt.OPENAI_API_BASE_URL;
 			STT_OPENAI_API_KEY = res.stt.OPENAI_API_KEY;
 			STT_OPENAI_API_REQUEST_FORMAT = res.stt.OPENAI_API_REQUEST_FORMAT || 'multipart';
@@ -221,684 +388,737 @@
 			STT_MISTRAL_USE_CHAT_COMPLETIONS = res.stt.MISTRAL_USE_CHAT_COMPLETIONS;
 		}
 
+		await tick();
+		savedConfig = structuredClone(settings);
+
 		await getVoices();
 		await getModels();
 	});
 </script>
 
 <form
-	class="flex flex-col h-full justify-between space-y-3 text-sm"
+	class="flex h-full flex-col justify-between text-sm"
 	on:submit|preventDefault={async () => {
 		await updateConfigHandler();
 		dispatch('save');
 	}}
 >
-	<div class=" space-y-3 overflow-y-scroll scrollbar-hidden h-full">
-		<div class="flex flex-col gap-3">
-			<div>
-				<div class=" mt-0.5 mb-2.5 text-base font-medium">{$i18n.t('Speech-to-Text')}</div>
+	<h2 class="text-sm font-medium text-gray-900 dark:text-white mb-4">
+		{$i18n.t('settings.admin.audio.title')}
+	</h2>
+	{#if $config?.features?.slim === true}
+		<p class="mb-4 text-xs text-gray-500">
+			{$i18n.t(
+				'Slim requires external speech providers. Local speech models and audio conversion are unavailable.'
+			)}
+		</p>
+	{/if}
 
-				<hr class=" border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-				{#if STT_ENGINE !== 'web'}
-					<div class="mb-2">
-						<div class=" mb-1.5 text-xs font-medium">{$i18n.t('Supported MIME Types')}</div>
-						<div class="flex w-full">
-							<div class="flex-1">
-								<input
-									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-									bind:value={STT_SUPPORTED_CONTENT_TYPES}
-									placeholder={$i18n.t(
-										'e.g., audio/wav,audio/mpeg,video/* (leave blank for defaults)'
-									)}
-								/>
-							</div>
-						</div>
-					</div>
+	<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
+		<AdminSettingSection title={$i18n.t('Voice calls')} first>
+			<AdminSettingRow label={$i18n.t('Call mode')}>
+				<SettingsSelect bind:value={realtime.ENABLED} ariaLabel={$i18n.t('Call mode')}>
+					<option value={false}>{$i18n.t('Standard')}</option>
+					<option value={true}>{$i18n.t('Realtime')}</option>
+				</SettingsSelect>
+			</AdminSettingRow>
+			{#if realtime.ENABLED}
+				<AdminSettingRow label={$i18n.t('Provider')}>
+					<SettingsSelect
+						bind:value={realtime.PROVIDER}
+						ariaLabel={$i18n.t('Provider')}
+						on:change={() => (realtime.AUTH_TYPE = 'api_key')}
+					>
+						<option value="openai">{$i18n.t('settings.audio.realtime.openai')}</option>
+						<option value="azure">{$i18n.t('Azure OpenAI')}</option>
+					</SettingsSelect>
+				</AdminSettingRow>
+				{#if realtime.PROVIDER === 'azure'}
+					<AdminSettingRow
+						label={$i18n.t('Authentication')}
+						description={realtime.AUTH_TYPE === 'microsoft_entra_id'
+							? $i18n.t('settings.audio.realtime.entraHelp')
+							: ''}
+					>
+						<SettingsSelect bind:value={realtime.AUTH_TYPE} ariaLabel={$i18n.t('Authentication')}>
+							<option value="api_key">{$i18n.t('API Key')}</option>
+							<option value="microsoft_entra_id">{$i18n.t('settings.audio.realtime.entra')}</option>
+						</SettingsSelect>
+					</AdminSettingRow>
 				{/if}
-
-				<div class="mb-2 py-0.5 flex w-full justify-between">
-					<div class=" self-center text-xs font-medium">{$i18n.t('Speech-to-Text Engine')}</div>
-					<div class="flex items-center relative">
-						<select
-							class="cursor-pointer w-fit pr-8 rounded-sm px-2 p-1 text-xs bg-transparent outline-hidden text-right"
-							bind:value={STT_ENGINE}
-							placeholder={$i18n.t('Select an engine')}
-						>
-							<option value="">{$i18n.t('Whisper (Local)')}</option>
-							<option value="openai">{$i18n.t('OpenAI')}</option>
-							<option value="web">{$i18n.t('Web API')}</option>
-							<option value="deepgram">{$i18n.t('Deepgram')}</option>
-							<option value="azure">{$i18n.t('Azure AI Speech')}</option>
-							<option value="mistral">{$i18n.t('MistralAI')}</option>
-						</select>
-					</div>
-				</div>
-
-				{#if STT_ENGINE === 'openai'}
-					<div>
-						<div class="mt-1 flex gap-2 mb-1">
-							<input
-								class="flex-1 w-full bg-transparent outline-hidden"
-								placeholder={$i18n.t('API Base URL')}
-								bind:value={STT_OPENAI_API_BASE_URL}
-								required
-							/>
-
-							<SensitiveInput placeholder={$i18n.t('API Key')} bind:value={STT_OPENAI_API_KEY} />
-						</div>
-					</div>
-
-					<hr class="border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-					<div class="mb-2 py-0.5 flex w-full justify-between">
-						<div class=" self-center text-xs font-medium">{$i18n.t('Request Format')}</div>
-						<div class="flex items-center relative">
-							<select
-								class="cursor-pointer w-fit pr-8 rounded-sm px-2 p-1 text-xs bg-transparent outline-hidden text-right"
-								bind:value={STT_OPENAI_API_REQUEST_FORMAT}
-							>
-								<option value="multipart">{$i18n.t('Multipart Upload')}</option>
-								<option value="json">{$i18n.t('JSON Base64')}</option>
-							</select>
-						</div>
-					</div>
-
-					<hr class="border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-					<div>
-						<div class=" mb-1.5 text-xs font-medium">{$i18n.t('STT Model')}</div>
-						<div class="flex w-full">
-							<div class="flex-1">
-								<input
-									list="model-list"
-									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-									bind:value={STT_MODEL}
-									placeholder={$i18n.t('Select a model')}
-								/>
-
-								<datalist id="model-list">
-									<option value="whisper-1" />
-								</datalist>
-							</div>
-						</div>
-					</div>
-				{:else if STT_ENGINE === 'deepgram'}
-					<div>
-						<div class="mt-1 flex gap-2 mb-1">
-							<SensitiveInput placeholder={$i18n.t('API Key')} bind:value={STT_DEEPGRAM_API_KEY} />
-						</div>
-					</div>
-
-					<hr class="border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-					<div>
-						<div class=" mb-1.5 text-xs font-medium">{$i18n.t('STT Model')}</div>
-						<div class="flex w-full">
-							<div class="flex-1">
-								<input
-									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-									bind:value={STT_MODEL}
-									placeholder={$i18n.t('Select a model (optional)')}
-								/>
-							</div>
-						</div>
-						<div class="mt-2 mb-1 text-xs text-gray-400 dark:text-gray-500">
-							{$i18n.t('Leave model field empty to use the default model.')}
-							<a
-								class=" hover:underline dark:text-gray-200 text-gray-800"
-								href="https://developers.deepgram.com/docs/models"
-								target="_blank"
-							>
-								{$i18n.t('Click here to see available models.')}
-							</a>
-						</div>
-					</div>
-				{:else if STT_ENGINE === 'azure'}
-					<div>
-						<div class="mt-1 flex gap-2 mb-1">
+				<div class="grid grid-cols-1 gap-2" class:sm:grid-cols-2={realtime.AUTH_TYPE === 'api_key'}>
+					<AdminSettingField
+						label={$i18n.t(
+							realtime.PROVIDER === 'azure' ? 'settings.audio.realtime.azureUrl' : 'API Base URL'
+						)}
+						description={realtime.PROVIDER === 'azure'
+							? $i18n.t('settings.audio.realtime.azureUrlHelp')
+							: ''}
+						forId="realtime-api-base-url"
+					>
+						<input
+							id="realtime-api-base-url"
+							class={inputClass}
+							bind:value={realtime.OPENAI_API_BASE_URL}
+						/>
+					</AdminSettingField>
+					{#if realtime.AUTH_TYPE === 'api_key'}
+						<AdminSettingField label={$i18n.t('API Key')}>
 							<SensitiveInput
+								variant="settings"
 								placeholder={$i18n.t('API Key')}
-								bind:value={STT_AZURE_API_KEY}
-								required
+								bind:value={realtime.OPENAI_API_KEY}
 							/>
-						</div>
-
-						<hr class="border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-						<div>
-							<div class=" mb-1.5 text-xs font-medium">{$i18n.t('Azure Region')}</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<input
-										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-										bind:value={STT_AZURE_REGION}
-										placeholder={$i18n.t('e.g., westus (leave blank for eastus)')}
-									/>
-								</div>
-							</div>
-						</div>
-
-						<div>
-							<div class=" mb-1.5 text-xs font-medium">{$i18n.t('Language Locales')}</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<input
-										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-										bind:value={STT_AZURE_LOCALES}
-										placeholder={$i18n.t('e.g., en-US,ja-JP (leave blank for auto-detect)')}
-									/>
-								</div>
-							</div>
-						</div>
-
-						<div>
-							<div class=" mb-1.5 text-xs font-medium">{$i18n.t('Endpoint URL')}</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<input
-										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-										bind:value={STT_AZURE_BASE_URL}
-										placeholder={$i18n.t('(leave blank for to use commercial endpoint)')}
-									/>
-								</div>
-							</div>
-						</div>
-
-						<div>
-							<div class=" mb-1.5 text-xs font-medium">{$i18n.t('Max Speakers')}</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<input
-										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-										bind:value={STT_AZURE_MAX_SPEAKERS}
-										placeholder={$i18n.t('e.g., 3, 4, 5 (leave blank for default)')}
-									/>
-								</div>
-							</div>
-						</div>
-					</div>
-				{:else if STT_ENGINE === 'mistral'}
-					<div>
-						<div class="mt-1 flex gap-2 mb-1">
-							<input
-								class="flex-1 w-full bg-transparent outline-hidden"
-								placeholder={$i18n.t('API Base URL')}
-								bind:value={STT_MISTRAL_API_BASE_URL}
-								required
-							/>
-
-							<SensitiveInput placeholder={$i18n.t('API Key')} bind:value={STT_MISTRAL_API_KEY} />
-						</div>
-					</div>
-
-					<hr class="border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-					<div>
-						<div class=" mb-1.5 text-xs font-medium">{$i18n.t('STT Model')}</div>
-						<div class="flex w-full">
-							<div class="flex-1">
-								<input
-									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-									bind:value={STT_MODEL}
-									placeholder="voxtral-mini-latest"
-								/>
-							</div>
-						</div>
-						<div class="mt-2 mb-1 text-xs text-gray-400 dark:text-gray-500">
-							{$i18n.t('Leave empty to use the default model (voxtral-mini-latest).')}
-							<a
-								class=" hover:underline dark:text-gray-200 text-gray-800"
-								href="https://docs.mistral.ai/capabilities/audio_transcription"
-								target="_blank"
-							>
-								{$i18n.t('Learn more about Voxtral transcription.')}
-							</a>
-						</div>
-					</div>
-
-					<hr class="border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-					<div>
-						<div class="flex items-center justify-between mb-2">
-							<div class="text-xs font-medium">{$i18n.t('Use Chat Completions API')}</div>
-							<label class="relative inline-flex items-center cursor-pointer">
-								<input
-									type="checkbox"
-									bind:checked={STT_MISTRAL_USE_CHAT_COMPLETIONS}
-									class="sr-only peer"
-								/>
-								<div
-									class="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"
-								></div>
-							</label>
-						</div>
-						<div class="text-xs text-gray-400 dark:text-gray-500">
-							{$i18n.t(
-								'Use /v1/chat/completions endpoint instead of /v1/audio/transcriptions for potentially better accuracy.'
-							)}
-						</div>
-					</div>
-				{:else if STT_ENGINE === ''}
-					<div>
-						<div class=" mb-1.5 text-xs font-medium">{$i18n.t('STT Model')}</div>
-
-						<div class="flex w-full">
-							<div class="flex-1 mr-2">
-								<input
-									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-									placeholder={$i18n.t('Set whisper model')}
-									bind:value={STT_WHISPER_MODEL}
-								/>
-							</div>
-
-							<button
-								class="px-2.5 bg-gray-50 hover:bg-gray-200 text-gray-800 dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-gray-100 rounded-lg transition"
-								on:click={() => {
-									sttModelUpdateHandler();
-								}}
-								disabled={STT_WHISPER_MODEL_LOADING}
-							>
-								{#if STT_WHISPER_MODEL_LOADING}
-									<div class="self-center">
-										<Spinner />
-									</div>
-								{:else}
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 16 16"
-										fill="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											d="M8.75 2.75a.75.75 0 0 0-1.5 0v5.69L5.03 6.22a.75.75 0 0 0-1.06 1.06l3.5 3.5a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0-1.06-1.06L8.75 8.44V2.75Z"
-										/>
-										<path
-											d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
-										/>
-									</svg>
-								{/if}
-							</button>
-						</div>
-
-						<div class="mt-2 mb-1 text-xs text-gray-400 dark:text-gray-500">
-							{$i18n.t(`Open WebUI uses faster-whisper internally.`)}
-
-							<a
-								class=" hover:underline dark:text-gray-200 text-gray-800"
-								href="https://github.com/SYSTRAN/faster-whisper"
-								target="_blank"
-							>
-								{$i18n.t(
-									`Click here to learn more about faster-whisper and see the available models.`
-								)}
-							</a>
-						</div>
-					</div>
-				{/if}
-			</div>
-
-			<div>
-				<div class=" mt-0.5 mb-2.5 text-base font-medium">{$i18n.t('Text-to-Speech')}</div>
-
-				<hr class=" border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-				<div class="mb-2 py-0.5 flex w-full justify-between">
-					<div class=" self-center text-xs font-medium">{$i18n.t('Text-to-Speech Engine')}</div>
-					<div class="flex items-center relative">
-						<select
-							class="w-fit pr-8 cursor-pointer rounded-sm px-2 p-1 text-xs bg-transparent outline-hidden text-right"
-							bind:value={TTS_ENGINE}
-							placeholder={$i18n.t('Select a mode')}
-							on:change={async (e) => {
-								await updateConfigHandler();
-								await getVoices();
-								await getModels();
-
-								if (e.target?.value === 'openai') {
-									TTS_VOICE = 'alloy';
-									TTS_MODEL = 'tts-1';
-								} else if (e.target?.value === 'mistral') {
-									TTS_VOICE = '';
-									TTS_MODEL = 'voxtral-mini-tts-2603';
-								} else {
-									TTS_VOICE = '';
-									TTS_MODEL = '';
-								}
-							}}
-						>
-							<option value="">{$i18n.t('Web API')}</option>
-							<option value="transformers">{$i18n.t('Transformers')} ({$i18n.t('Local')})</option>
-							<option value="openai">{$i18n.t('OpenAI')}</option>
-							<option value="elevenlabs">{$i18n.t('ElevenLabs')}</option>
-							<option value="azure">{$i18n.t('Azure AI Speech')}</option>
-							<option value="mistral">{$i18n.t('MistralAI')}</option>
-						</select>
-					</div>
-				</div>
-
-				{#if TTS_ENGINE === 'openai'}
-					<div>
-						<div class="mt-1 flex gap-2 mb-1">
-							<input
-								class="flex-1 w-full bg-transparent outline-hidden"
-								placeholder={$i18n.t('API Base URL')}
-								bind:value={TTS_OPENAI_API_BASE_URL}
-								required
-							/>
-
-							<SensitiveInput placeholder={$i18n.t('API Key')} bind:value={TTS_OPENAI_API_KEY} />
-						</div>
-					</div>
-				{:else if TTS_ENGINE === 'elevenlabs'}
-					<div>
-						<div class="mt-1 flex gap-2 mb-1">
-							<SensitiveInput placeholder={$i18n.t('API Key')} bind:value={TTS_API_KEY} required />
-						</div>
-					</div>
-				{:else if TTS_ENGINE === 'azure'}
-					<div>
-						<div class="mt-1 flex gap-2 mb-1">
-							<SensitiveInput placeholder={$i18n.t('API Key')} bind:value={TTS_API_KEY} required />
-						</div>
-
-						<hr class="border-gray-100/30 dark:border-gray-850/30 my-2" />
-
-						<div>
-							<div class=" mb-1.5 text-xs font-medium">{$i18n.t('Azure Region')}</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<input
-										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-										bind:value={TTS_AZURE_SPEECH_REGION}
-										placeholder={$i18n.t('e.g., westus (leave blank for eastus)')}
-									/>
-								</div>
-							</div>
-						</div>
-
-						<div>
-							<div class=" mb-1.5 text-xs font-medium">{$i18n.t('Endpoint URL')}</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<input
-										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-										bind:value={TTS_AZURE_SPEECH_BASE_URL}
-										placeholder={$i18n.t('(leave blank for to use commercial endpoint)')}
-									/>
-								</div>
-							</div>
-						</div>
-					</div>
-				{:else if TTS_ENGINE === 'mistral'}
-					<div>
-						<div class="mt-1 flex gap-2 mb-1">
-							<input
-								class="flex-1 w-full bg-transparent outline-hidden"
-								placeholder={$i18n.t('API Base URL')}
-								bind:value={TTS_MISTRAL_API_BASE_URL}
-								required
-							/>
-
-							<SensitiveInput placeholder={$i18n.t('API Key')} bind:value={TTS_MISTRAL_API_KEY} />
-						</div>
-					</div>
-				{/if}
-
-				<div class="mb-2">
-					{#if TTS_ENGINE === ''}
-						<div>
-							<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Voice')}</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<select
-										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-										bind:value={TTS_VOICE}
-									>
-										<option value="" selected={TTS_VOICE !== ''}>{$i18n.t('Default')}</option>
-										{#each voices as voice}
-											<option
-												value={voice.voiceURI}
-												class="bg-gray-100 dark:bg-gray-700"
-												selected={TTS_VOICE === voice.voiceURI}>{voice.name}</option
-											>
-										{/each}
-									</select>
-								</div>
-							</div>
-						</div>
-					{:else if TTS_ENGINE === 'transformers'}
-						<div>
-							<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Model')}</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<input
-										list="model-list"
-										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-										bind:value={TTS_MODEL}
-										placeholder={$i18n.t('CMU ARCTIC speaker embedding name')}
-									/>
-
-									<datalist id="model-list">
-										<option value="tts-1" />
-									</datalist>
-								</div>
-							</div>
-							<div class="mt-2 mb-1 text-xs text-gray-400 dark:text-gray-500">
-								{$i18n.t(`Open WebUI uses SpeechT5 and CMU Arctic speaker embeddings.`)}
-
-								To learn more about SpeechT5,
-
-								<a
-									class=" hover:underline dark:text-gray-200 text-gray-800"
-									href="https://github.com/microsoft/SpeechT5"
-									target="_blank"
-								>
-									{$i18n.t(`click here`, {
-										name: 'SpeechT5'
-									})}.
-								</a>
-								To see the available CMU Arctic speaker embeddings,
-								<a
-									class=" hover:underline dark:text-gray-200 text-gray-800"
-									href="https://huggingface.co/datasets/Matthijs/cmu-arctic-xvectors"
-									target="_blank"
-								>
-									{$i18n.t(`click here`)}.
-								</a>
-							</div>
-						</div>
-					{:else if TTS_ENGINE === 'openai'}
-						<div class=" flex gap-2">
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Voice')}</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<TTSVoiceInput
-											bind:value={TTS_VOICE}
-											voices={providerVoices}
-											placeholder={$i18n.t('Select a voice')}
-											className="w-full rounded-lg py-2 px-4 bg-gray-50 dark:text-gray-300 dark:bg-gray-850"
-										/>
-									</div>
-								</div>
-							</div>
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Model')}</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<input
-											list="tts-model-list"
-											class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-											bind:value={TTS_MODEL}
-											placeholder={$i18n.t('Select a model')}
-										/>
-
-										<datalist id="tts-model-list">
-											{#each models as model}
-												<option value={model.id} class="bg-gray-50 dark:bg-gray-700" />
-											{/each}
-										</datalist>
-									</div>
-								</div>
-							</div>
-						</div>
-
-						<div class="mt-2 mb-1 text-xs text-gray-400 dark:text-gray-500">
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">{$i18n.t('Additional Parameters')}</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<Textarea
-											className="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-											bind:value={TTS_OPENAI_PARAMS}
-											placeholder={$i18n.t('Enter additional parameters in JSON format')}
-											minSize={100}
-										/>
-									</div>
-								</div>
-							</div>
-						</div>
-					{:else if TTS_ENGINE === 'elevenlabs'}
-						<div class=" flex gap-2">
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Voice')}</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<TTSVoiceInput
-											bind:value={TTS_VOICE}
-											voices={providerVoices}
-											placeholder={$i18n.t('Select a voice')}
-											className="w-full rounded-lg py-2 px-4 bg-gray-50 dark:text-gray-300 dark:bg-gray-850"
-										/>
-									</div>
-								</div>
-							</div>
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Model')}</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<input
-											list="tts-model-list"
-											class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-											bind:value={TTS_MODEL}
-											placeholder={$i18n.t('Select a model')}
-										/>
-
-										<datalist id="tts-model-list">
-											{#each models as model}
-												<option value={model.id} class="bg-gray-50 dark:bg-gray-700" />
-											{/each}
-										</datalist>
-									</div>
-								</div>
-							</div>
-						</div>
-					{:else if TTS_ENGINE === 'azure'}
-						<div class=" flex gap-2">
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Voice')}</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<TTSVoiceInput
-											bind:value={TTS_VOICE}
-											voices={providerVoices}
-											placeholder={$i18n.t('Select a voice')}
-											className="w-full rounded-lg py-2 px-4 bg-gray-50 dark:text-gray-300 dark:bg-gray-850"
-										/>
-									</div>
-								</div>
-							</div>
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">
-									{$i18n.t('Output format')}
-									<a
-										href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-text-to-speech?tabs=streaming#audio-outputs"
-										target="_blank"
-									>
-										<small>{$i18n.t('Available list')}</small>
-									</a>
-								</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<input
-											list="tts-model-list"
-											class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-											bind:value={TTS_AZURE_SPEECH_OUTPUT_FORMAT}
-											placeholder={$i18n.t('Select an output format')}
-										/>
-									</div>
-								</div>
-							</div>
-						</div>
-					{:else if TTS_ENGINE === 'mistral'}
-						<div class=" flex gap-2">
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Voice')}</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<TTSVoiceInput
-											bind:value={TTS_VOICE}
-											voices={providerVoices}
-											placeholder={$i18n.t('Select a voice')}
-											className="w-full rounded-lg py-2 px-4 bg-gray-50 dark:text-gray-300 dark:bg-gray-850"
-										/>
-									</div>
-								</div>
-							</div>
-							<div class="w-full">
-								<div class=" mb-1.5 text-xs font-medium">{$i18n.t('TTS Model')}</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<input
-											list="tts-model-list"
-											class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-											bind:value={TTS_MODEL}
-											placeholder={$i18n.t('Select a model')}
-										/>
-
-										<datalist id="tts-model-list">
-											{#each models as model}
-												<option value={model.id} class="bg-gray-50 dark:bg-gray-700" />
-											{/each}
-										</datalist>
-									</div>
-								</div>
-							</div>
-						</div>
+						</AdminSettingField>
 					{/if}
 				</div>
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t(
+							realtime.PROVIDER === 'azure' ? 'settings.audio.realtime.deployment' : 'Voice Model'
+						)}
+						description={realtime.PROVIDER === 'azure'
+							? $i18n.t('settings.audio.realtime.deploymentHelp')
+							: ''}
+						forId="realtime-model"
+					>
+						<input
+							id="realtime-model"
+							class={inputClass}
+							bind:value={realtime.MODEL}
+							placeholder="gpt-realtime-2.1-mini"
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('Voice')} forId="realtime-call-voice">
+						<input
+							id="realtime-call-voice"
+							class={inputClass}
+							bind:value={realtime.VOICE}
+							placeholder="marin"
+						/>
+					</AdminSettingField>
+				</div>
+				<AdminSettingField
+					label={$i18n.t('Input Transcription Model')}
+					forId="realtime-transcription-model"
+				>
+					<input
+						id="realtime-transcription-model"
+						class={inputClass}
+						bind:value={realtime.TRANSCRIPTION_MODEL}
+					/>
+				</AdminSettingField>
+				<AdminSettingField
+					label={$i18n.t('settings.audio.realtime.inputParams')}
+					description={$i18n.t('settings.audio.realtime.inputParamsHelp')}
+					forId="realtime-input-params"
+				>
+					<Textarea
+						id="realtime-input-params"
+						className={textareaClass}
+						bind:value={REALTIME_INPUT_PARAMS}
+						maxSize={200}
+						placeholder={$i18n.t('Enter additional parameters in JSON format')}
+					/>
+				</AdminSettingField>
+				<AdminSettingField label={$i18n.t('Prompt Template')} forId="realtime-prompt-template">
+					<Textarea
+						id="realtime-prompt-template"
+						className={textareaClass}
+						bind:value={realtime.REALTIME_CALL_PROMPT_TEMPLATE}
+						maxSize={300}
+						placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}
+					/>
+				</AdminSettingField>
+			{/if}
+		</AdminSettingSection>
 
-				<div class="pt-0.5 flex w-full justify-between">
-					<div class="self-center text-xs font-medium">{$i18n.t('Response splitting')}</div>
-					<div class="flex items-center relative">
-						<select
-							class="w-fit pr-8 cursor-pointer rounded-sm px-2 p-1 text-xs bg-transparent outline-hidden text-right"
-							aria-label={$i18n.t('Select how to split message text for TTS requests')}
-							bind:value={TTS_SPLIT_ON}
-						>
-							{#each Object.values(TTS_RESPONSE_SPLIT) as split}
-								<option value={split}
-									>{$i18n.t(split.charAt(0).toUpperCase() + split.slice(1))}</option
-								>
-							{/each}
-						</select>
+		<AdminSettingSection title={$i18n.t('settings.admin.audio.sections.speechToText.title')}>
+			<AdminSettingRow
+				label={$i18n.t('settings.admin.audio.speechToTextEngine.label')}
+				description={$i18n.t('settings.admin.audio.speechToTextEngine.description')}
+				let:labelId
+			>
+				<SettingsSelect
+					id={`${labelId}-control`}
+					bind:value={STT_ENGINE}
+					placeholder={$i18n.t('Select an engine')}
+				>
+					<option value="" disabled={$config?.features?.slim === true}
+						>{$i18n.t('Whisper (Local)')}</option
+					>
+					<option value="openai">{$i18n.t('OpenAI')}</option>
+					<option value="web">{$i18n.t('Web API')}</option>
+					<option value="deepgram">{$i18n.t('Deepgram')}</option>
+					<option value="azure">{$i18n.t('Azure AI Speech')}</option>
+					<option value="mistral">{$i18n.t('MistralAI')}</option>
+				</SettingsSelect>
+			</AdminSettingRow>
+
+			{#if STT_ENGINE !== 'web'}
+				<AdminSettingField
+					label={$i18n.t('settings.admin.audio.supportedMimeTypes.label')}
+					description={$i18n.t('settings.admin.audio.supportedMimeTypes.description')}
+					forId="stt-supported-mime-types"
+				>
+					<input
+						id="stt-supported-mime-types"
+						class={inputClass}
+						bind:value={STT_SUPPORTED_CONTENT_TYPES}
+						placeholder={$i18n.t('e.g., audio/wav,audio/mpeg,video/* (leave blank for defaults)')}
+					/>
+				</AdminSettingField>
+			{/if}
+
+			{#if STT_ENGINE === 'openai'}
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.sttOpenaiApiBaseUrl.label')}
+						forId="stt-openai-api-base-url"
+					>
+						<input
+							id="stt-openai-api-base-url"
+							class={inputClass}
+							placeholder={$i18n.t('settings.admin.audio.sttOpenaiApiBaseUrl.label')}
+							bind:value={STT_OPENAI_API_BASE_URL}
+							required
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('settings.admin.audio.sttOpenaiApiKey.label')}>
+						<SensitiveInput
+							variant="settings"
+							placeholder={$i18n.t('settings.admin.audio.sttOpenaiApiKey.label')}
+							bind:value={STT_OPENAI_API_KEY}
+						/>
+					</AdminSettingField>
+				</div>
+
+				<AdminSettingRow
+					label={$i18n.t('settings.admin.audio.requestFormat.label')}
+					description={$i18n.t('settings.admin.audio.requestFormat.description')}
+					let:labelId
+				>
+					<SettingsSelect id={`${labelId}-control`} bind:value={STT_OPENAI_API_REQUEST_FORMAT}>
+						<option value="multipart">{$i18n.t('Multipart Upload')}</option>
+						<option value="json">{$i18n.t('JSON Base64')}</option>
+					</SettingsSelect>
+				</AdminSettingRow>
+
+				<AdminSettingField
+					label={$i18n.t('settings.admin.audio.sttModel.label')}
+					forId="stt-openai-model"
+				>
+					<input
+						id="stt-openai-model"
+						list="stt-openai-model-list"
+						class={inputClass}
+						bind:value={STT_MODEL}
+						placeholder={$i18n.t('Select a model')}
+					/>
+					<datalist id="stt-openai-model-list">
+						<option value="whisper-1"></option>
+					</datalist>
+				</AdminSettingField>
+			{:else if STT_ENGINE === 'deepgram'}
+				<AdminSettingField label={$i18n.t('settings.admin.audio.sttDeepgramApiKey.label')}>
+					<SensitiveInput
+						variant="settings"
+						placeholder={$i18n.t('settings.admin.audio.sttDeepgramApiKey.label')}
+						bind:value={STT_DEEPGRAM_API_KEY}
+					/>
+				</AdminSettingField>
+
+				<AdminSettingField
+					label={$i18n.t('settings.admin.audio.sttModel.label')}
+					description={$i18n.t('settings.admin.audio.sttModel.description')}
+					forId="stt-deepgram-model"
+				>
+					<input
+						id="stt-deepgram-model"
+						class={inputClass}
+						bind:value={STT_MODEL}
+						placeholder={$i18n.t('Select a model (optional)')}
+					/>
+					<div class="mt-1 {linkedHelpClass}">
+						<a href="https://developers.deepgram.com/docs/models" target="_blank">
+							{$i18n.t('Click here to see available models.')}
+						</a>
 					</div>
+				</AdminSettingField>
+			{:else if STT_ENGINE === 'azure'}
+				<AdminSettingField label={$i18n.t('settings.admin.audio.sttAzureApiKey.label')}>
+					<SensitiveInput
+						variant="settings"
+						placeholder={$i18n.t('settings.admin.audio.sttAzureApiKey.label')}
+						bind:value={STT_AZURE_API_KEY}
+						required
+					/>
+				</AdminSettingField>
+
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.sttAzureRegion.label')}
+						forId="stt-azure-region"
+					>
+						<input
+							id="stt-azure-region"
+							class={inputClass}
+							bind:value={STT_AZURE_REGION}
+							placeholder={$i18n.t('e.g., westus (leave blank for eastus)')}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.languageLocales.label')}
+						forId="stt-azure-locales"
+					>
+						<input
+							id="stt-azure-locales"
+							class={inputClass}
+							bind:value={STT_AZURE_LOCALES}
+							placeholder={$i18n.t('e.g., en-US,ja-JP (leave blank for auto-detect)')}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.sttAzureBaseUrl.label')}
+						forId="stt-azure-base-url"
+					>
+						<input
+							id="stt-azure-base-url"
+							class={inputClass}
+							bind:value={STT_AZURE_BASE_URL}
+							placeholder={$i18n.t('(leave blank for to use commercial endpoint)')}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.maxSpeakers.label')}
+						forId="stt-azure-max-speakers"
+					>
+						<input
+							id="stt-azure-max-speakers"
+							class={inputClass}
+							bind:value={STT_AZURE_MAX_SPEAKERS}
+							placeholder={$i18n.t('e.g., 3, 4, 5 (leave blank for default)')}
+						/>
+					</AdminSettingField>
 				</div>
-				<div class="mt-2 mb-1 text-xs text-gray-400 dark:text-gray-500">
-					{$i18n.t(
-						"Control how message text is split for TTS requests. 'Punctuation' splits into sentences, 'paragraphs' splits into paragraphs, and 'none' keeps the message as a single string."
-					)}
+			{:else if STT_ENGINE === 'mistral'}
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.sttMistralApiBaseUrl.label')}
+						forId="stt-mistral-api-base-url"
+					>
+						<input
+							id="stt-mistral-api-base-url"
+							class={inputClass}
+							placeholder={$i18n.t('settings.admin.audio.sttMistralApiBaseUrl.label')}
+							bind:value={STT_MISTRAL_API_BASE_URL}
+							required
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('settings.admin.audio.sttMistralApiKey.label')}>
+						<SensitiveInput
+							variant="settings"
+							placeholder={$i18n.t('settings.admin.audio.sttMistralApiKey.label')}
+							bind:value={STT_MISTRAL_API_KEY}
+						/>
+					</AdminSettingField>
 				</div>
-			</div>
-		</div>
+
+				<AdminSettingField
+					label={$i18n.t('settings.admin.audio.mistralSttModel.label')}
+					description={$i18n.t('settings.admin.audio.mistralSttModel.description')}
+					forId="stt-mistral-model"
+				>
+					<input
+						id="stt-mistral-model"
+						class={inputClass}
+						bind:value={STT_MODEL}
+						placeholder="voxtral-mini-latest"
+					/>
+					<div class="mt-1 {linkedHelpClass}">
+						<a href="https://docs.mistral.ai/capabilities/audio_transcription" target="_blank">
+							{$i18n.t('Learn more about Voxtral transcription.')}
+						</a>
+					</div>
+				</AdminSettingField>
+
+				<AdminSettingRow
+					label={$i18n.t('settings.admin.audio.useChatCompletionsApi.label')}
+					description={$i18n.t('settings.admin.audio.useChatCompletionsApi.description')}
+					let:labelId
+				>
+					<Switch bind:state={STT_MISTRAL_USE_CHAT_COMPLETIONS} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+			{:else if STT_ENGINE === ''}
+				<!-- LICENSE covers this Open WebUI wordmark.
+					Do not alter, remove, obscure, or replace it except as LICENSE permits:
+					https://docs.openwebui.com/license. -->
+				<AdminSettingField
+					label={$i18n.t('settings.admin.audio.sttWhisperModel.label')}
+					description={$i18n.t('settings.admin.audio.sttWhisperModel.description')}
+					forId="stt-whisper-model"
+				>
+					<div class="flex w-full gap-2">
+						<input
+							id="stt-whisper-model"
+							class={inputClass}
+							placeholder={$i18n.t('Set whisper model')}
+							bind:value={STT_WHISPER_MODEL}
+						/>
+						<button
+							class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-black/5 hover:text-gray-900 aria-disabled:opacity-50 dark:text-gray-500 dark:hover:bg-white/5 dark:hover:text-white"
+							type="button"
+							on:click={() => {
+								sttModelUpdateHandler();
+							}}
+							aria-disabled={STT_WHISPER_MODEL_LOADING}
+							aria-label={$i18n.t('settings.admin.audio.updateModel.label')}
+						>
+							{#if STT_WHISPER_MODEL_LOADING}
+								<Spinner />
+							{:else}
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									viewBox="0 0 16 16"
+									fill="currentColor"
+									class="size-4"
+								>
+									<path
+										d="M8.75 2.75a.75.75 0 0 0-1.5 0v5.69L5.03 6.22a.75.75 0 0 0-1.06 1.06l3.5 3.5a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0-1.06-1.06L8.75 8.44V2.75Z"
+									/>
+									<path
+										d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
+									/>
+								</svg>
+							{/if}
+						</button>
+					</div>
+					<div class="mt-1 {linkedHelpClass}">
+						<a href="https://github.com/SYSTRAN/faster-whisper" target="_blank">
+							{$i18n.t(
+								'Click here to learn more about faster-whisper and see the available models.'
+							)}
+						</a>
+					</div>
+				</AdminSettingField>
+			{/if}
+		</AdminSettingSection>
+
+		<AdminSettingSection title={$i18n.t('settings.admin.audio.sections.textToSpeech.title')}>
+			<AdminSettingRow
+				label={$i18n.t('settings.admin.audio.textToSpeechEngine.label')}
+				description={$i18n.t('settings.admin.audio.textToSpeechEngine.description')}
+				let:labelId
+			>
+				<SettingsSelect
+					id={`${labelId}-control`}
+					bind:value={TTS_ENGINE}
+					placeholder={$i18n.t('Select a mode')}
+					on:change={async (e) => {
+						const value = (e.currentTarget as HTMLSelectElement).value;
+
+						if (value === 'openai') {
+							TTS_VOICE = 'alloy';
+							TTS_MODEL = 'tts-1';
+						} else if (value === 'openai-realtime') {
+							TTS_VOICE = 'marin';
+							TTS_MODEL = 'gpt-realtime-2.1-mini';
+						} else if (value === 'mistral') {
+							TTS_VOICE = '';
+							TTS_MODEL = 'voxtral-mini-tts-2603';
+						} else {
+							TTS_VOICE = '';
+							TTS_MODEL = '';
+						}
+
+						await updateConfigHandler();
+						await getVoices();
+						await getModels();
+					}}
+				>
+					<option value="">{$i18n.t('Web API')}</option>
+					<option value="transformers" disabled={$config?.features?.slim === true}
+						>{$i18n.t('Transformers')} ({$i18n.t('Local')})</option
+					>
+					<option value="openai">{$i18n.t('OpenAI')}</option>
+					<option value="openai-realtime">{$i18n.t('OpenAI Realtime')}</option>
+					<option value="elevenlabs">{$i18n.t('ElevenLabs')}</option>
+					<option value="azure">{$i18n.t('Azure AI Speech')}</option>
+					<option value="mistral">{$i18n.t('MistralAI')}</option>
+				</SettingsSelect>
+			</AdminSettingRow>
+
+			{#if TTS_ENGINE === 'openai' || TTS_ENGINE === 'openai-realtime'}
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsOpenaiApiBaseUrl.label')}
+						forId="tts-openai-api-base-url"
+					>
+						<input
+							id="tts-openai-api-base-url"
+							class={inputClass}
+							placeholder={$i18n.t('settings.admin.audio.ttsOpenaiApiBaseUrl.label')}
+							bind:value={TTS_OPENAI_API_BASE_URL}
+							required
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('settings.admin.audio.ttsOpenaiApiKey.label')}>
+						<SensitiveInput
+							variant="settings"
+							placeholder={$i18n.t('settings.admin.audio.ttsOpenaiApiKey.label')}
+							bind:value={TTS_OPENAI_API_KEY}
+						/>
+					</AdminSettingField>
+				</div>
+			{:else if TTS_ENGINE === 'elevenlabs'}
+				<AdminSettingField label={$i18n.t('settings.admin.audio.ttsApiKey.label')}>
+					<SensitiveInput
+						variant="settings"
+						placeholder={$i18n.t('settings.admin.audio.ttsApiKey.label')}
+						bind:value={TTS_API_KEY}
+						required
+					/>
+				</AdminSettingField>
+			{:else if TTS_ENGINE === 'azure'}
+				<AdminSettingField label={$i18n.t('settings.admin.audio.ttsApiKey.label')}>
+					<SensitiveInput
+						variant="settings"
+						placeholder={$i18n.t('settings.admin.audio.ttsApiKey.label')}
+						bind:value={TTS_API_KEY}
+						required
+					/>
+				</AdminSettingField>
+
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsAzureSpeechRegion.label')}
+						forId="tts-azure-speech-region"
+					>
+						<input
+							id="tts-azure-speech-region"
+							class={inputClass}
+							bind:value={TTS_AZURE_SPEECH_REGION}
+							placeholder={$i18n.t('e.g., westus (leave blank for eastus)')}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsAzureSpeechBaseUrl.label')}
+						forId="tts-azure-speech-base-url"
+					>
+						<input
+							id="tts-azure-speech-base-url"
+							class={inputClass}
+							bind:value={TTS_AZURE_SPEECH_BASE_URL}
+							placeholder={$i18n.t('(leave blank for to use commercial endpoint)')}
+						/>
+					</AdminSettingField>
+				</div>
+			{:else if TTS_ENGINE === 'mistral'}
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsMistralApiBaseUrl.label')}
+						forId="tts-mistral-api-base-url"
+					>
+						<input
+							id="tts-mistral-api-base-url"
+							class={inputClass}
+							placeholder={$i18n.t('settings.admin.audio.ttsMistralApiBaseUrl.label')}
+							bind:value={TTS_MISTRAL_API_BASE_URL}
+							required
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('settings.admin.audio.ttsMistralApiKey.label')}>
+						<SensitiveInput
+							variant="settings"
+							placeholder={$i18n.t('settings.admin.audio.ttsMistralApiKey.label')}
+							bind:value={TTS_MISTRAL_API_KEY}
+						/>
+					</AdminSettingField>
+				</div>
+			{/if}
+
+			{#if TTS_ENGINE === ''}
+				<AdminSettingField label={$i18n.t('settings.admin.audio.ttsVoice.label')} forId="tts-voice">
+					<SettingsSelect id="tts-voice" bind:value={TTS_VOICE} className="w-full">
+						<option value="" selected={TTS_VOICE !== ''}>{$i18n.t('Default')}</option>
+						{#each voices as voice}
+							<option
+								value={voice.voiceURI}
+								class="bg-gray-100 dark:bg-gray-700"
+								selected={TTS_VOICE === voice.voiceURI}>{voice.name}</option
+							>
+						{/each}
+					</SettingsSelect>
+				</AdminSettingField>
+			{:else if TTS_ENGINE === 'transformers'}
+				<!-- LICENSE covers this Open WebUI wordmark.
+					Do not alter, remove, obscure, or replace it except as LICENSE permits:
+					https://docs.openwebui.com/license. -->
+				<AdminSettingField
+					label={$i18n.t('settings.admin.audio.ttsModel.label')}
+					description={$i18n.t('settings.admin.audio.ttsModel.description')}
+					forId="tts-transformers-model"
+				>
+					<input
+						id="tts-transformers-model"
+						list="tts-transformers-model-list"
+						class={inputClass}
+						bind:value={TTS_MODEL}
+						placeholder={$i18n.t('CMU ARCTIC speaker embedding name')}
+					/>
+					<datalist id="tts-transformers-model-list">
+						<option value="tts-1"></option>
+					</datalist>
+					<div class="mt-1 {linkedHelpClass}">
+						{$i18n.t('To learn more about SpeechT5,')}
+						<a href="https://github.com/microsoft/SpeechT5" target="_blank">
+							{$i18n.t('click here')}.
+						</a>
+						{$i18n.t('To see the available CMU Arctic speaker embeddings,')}
+						<a href="https://huggingface.co/datasets/Matthijs/cmu-arctic-xvectors" target="_blank">
+							{$i18n.t('click here')}.
+						</a>
+					</div>
+				</AdminSettingField>
+			{:else if TTS_ENGINE === 'openai' || TTS_ENGINE === 'openai-realtime'}
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsVoice.label')}
+						forId="tts-voice-input"
+					>
+						<TTSVoiceInput
+							bind:value={TTS_VOICE}
+							voices={providerVoices}
+							placeholder={$i18n.t('Select a voice')}
+							className={inputClass}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsModel.label')}
+						forId="tts-openai-model"
+					>
+						<input
+							id="tts-openai-model"
+							list="tts-model-list"
+							class={inputClass}
+							bind:value={TTS_MODEL}
+							placeholder={$i18n.t('Select a model')}
+						/>
+					</AdminSettingField>
+				</div>
+				{#if TTS_ENGINE === 'openai'}
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.additionalParameters.label')}
+						description={$i18n.t('settings.admin.audio.additionalParameters.description')}
+						forId="tts-openai-params"
+					>
+						<Textarea
+							id="tts-openai-params"
+							className={textareaClass}
+							bind:value={TTS_OPENAI_PARAMS}
+							maxSize={200}
+							placeholder={$i18n.t('Enter additional parameters in JSON format')}
+						/>
+					</AdminSettingField>
+				{:else}
+					<AdminSettingField
+						label={$i18n.t('Prompt Template')}
+						forId="realtime-tts-prompt-template"
+					>
+						<Textarea
+							id="realtime-tts-prompt-template"
+							className={textareaClass}
+							bind:value={REALTIME_TTS_PROMPT_TEMPLATE}
+							maxSize={300}
+							placeholder={$i18n.t(
+								'Leave empty to use the default prompt, or enter a custom prompt'
+							)}
+						/>
+					</AdminSettingField>
+				{/if}
+			{:else if TTS_ENGINE === 'elevenlabs' || TTS_ENGINE === 'mistral'}
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsVoice.label')}
+						forId="tts-voice-input"
+					>
+						<TTSVoiceInput
+							bind:value={TTS_VOICE}
+							voices={providerVoices}
+							placeholder={$i18n.t('Select a voice')}
+							className={inputClass}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsModel.label')}
+						forId="tts-elevenlabs-mistral-model"
+					>
+						<input
+							id="tts-elevenlabs-mistral-model"
+							list="tts-model-list"
+							class={inputClass}
+							bind:value={TTS_MODEL}
+							placeholder={$i18n.t('Select a model')}
+						/>
+					</AdminSettingField>
+				</div>
+			{:else if TTS_ENGINE === 'azure'}
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.ttsVoice.label')}
+						forId="tts-voice-input"
+					>
+						<TTSVoiceInput
+							bind:value={TTS_VOICE}
+							voices={providerVoices}
+							placeholder={$i18n.t('Select a voice')}
+							className={inputClass}
+						/>
+					</AdminSettingField>
+					<AdminSettingField
+						label={$i18n.t('settings.admin.audio.outputFormat.label')}
+						forId="tts-azure-speech-output-format"
+					>
+						<input
+							id="tts-azure-speech-output-format"
+							class={inputClass}
+							bind:value={TTS_AZURE_SPEECH_OUTPUT_FORMAT}
+							placeholder={$i18n.t('Select an output format')}
+						/>
+						<div class="mt-1 {linkedHelpClass}">
+							<a
+								href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-text-to-speech?tabs=streaming#audio-outputs"
+								target="_blank"
+							>
+								{$i18n.t('Available list')}
+							</a>
+						</div>
+					</AdminSettingField>
+				</div>
+			{/if}
+
+			<datalist id="tts-model-list">
+				{#each models as model}
+					<option value={model.id} class="bg-gray-50 dark:bg-gray-700"></option>
+				{/each}
+			</datalist>
+
+			<AdminSettingRow
+				label={$i18n.t('settings.admin.audio.responseSplitting.label')}
+				description={$i18n.t('settings.admin.audio.responseSplitting.description')}
+			>
+				<SettingsSelect
+					ariaLabel={$i18n.t('Select how to split message text for TTS requests')}
+					bind:value={TTS_SPLIT_ON}
+				>
+					{#each [{ value: TTS_RESPONSE_SPLIT.PUNCTUATION, label: $i18n.t('Punctuation') }, { value: TTS_RESPONSE_SPLIT.PARAGRAPHS, label: $i18n.t('Paragraphs') }, { value: TTS_RESPONSE_SPLIT.NONE, label: $i18n.t('None') }] as split}
+						<option value={split.value}>{split.label}</option>
+					{/each}
+				</SettingsSelect>
+			</AdminSettingRow>
+		</AdminSettingSection>
 	</div>
-	<div class="flex justify-end text-sm font-medium">
-		<button
-			class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
-			type="submit"
-		>
-			{$i18n.t('Save')}
-		</button>
+	<div class="flex justify-end pt-6 text-sm font-normal">
+		<AdminSettingSaveButton {settings} {savedConfig} labels={settingLabels} {sensitiveKeys} />
 	</div>
 </form>

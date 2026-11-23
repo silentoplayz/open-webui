@@ -1,0 +1,382 @@
+<script lang="ts">
+	import { resolveTerminalTarget, type TerminalTarget } from '$lib/apis/terminal';
+	import Fuse from 'fuse.js';
+	import { getContext, onDestroy, onMount, tick } from 'svelte';
+	import type { Readable } from 'svelte/store';
+
+	import { folders, settings, terminalServers, user } from '$lib/stores';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
+	import { getFolders } from '$lib/apis/folders';
+	import { searchKnowledgeBases, searchKnowledgeFiles } from '$lib/apis/knowledge';
+	import { searchFiles, filesystemFile } from '$lib/apis/terminal';
+	import { decodeString, isValidHttpUrl, isYoutubeUrl } from '$lib/utils';
+	import {
+		resolveLocalizedModelDescription,
+		resolveLocalizedModelName
+	} from '$lib/utils/localizedContent';
+	import { isTemporaryChatId } from '$lib/utils/chatId';
+
+	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import Database from '$lib/components/icons/Database.svelte';
+	import DocumentPage from '$lib/components/icons/DocumentPage.svelte';
+	import Folder from '$lib/components/icons/Folder.svelte';
+	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
+	import Youtube from '$lib/components/icons/Youtube.svelte';
+	import { toast } from 'svelte-sonner';
+	import { getChatContext } from '$lib/components/chat/context';
+
+	const { chatId: activeChatId, models, temporary } = getChatContext();
+
+	const i18n = getContext<any>('i18n');
+
+	export let query = '';
+	export let selectedTerminalId: Readable<string | null>;
+	export let modelId: string | null = null;
+	export let onSelect: (e: any) => void = () => {};
+	export let fileUploadEnabled: boolean = true;
+
+	let selectedIdx = 0;
+	export let filteredItems: any[] = [];
+	let searchDebounceTimer: ReturnType<typeof setTimeout>;
+	let searchController: AbortController;
+
+	let filesystemItems: any[] = [];
+	let knowledgeItems: any[] = [];
+	let fileItems: any[] = [];
+	let modelItems: any[] = [];
+	let filteredModels: any[] = [];
+	let knowledgeResults: any[] = [];
+
+	$: modelItems = (($models ?? []) as any[])
+		.filter((model) => !model?.info?.meta?.hidden)
+		.map((model) => ({
+			...model,
+			modelName: resolveLocalizedModelName(model, $i18n.language),
+			tags: model?.info?.meta?.tags?.map((tag: any) => tag.name).join(' '),
+			desc: resolveLocalizedModelDescription(model, $i18n.language)
+		}));
+
+	$: fuse = new Fuse(modelItems, {
+		keys: ['value', 'tags', 'modelName'],
+		threshold: 0.5
+	});
+
+	$: filteredModels = query ? fuse.search(query).map((e) => e.item) : modelItems;
+	let webUploadEnabled: boolean = true;
+	$: webUploadEnabled = $user?.role === 'admin' || ($user?.permissions?.chat?.web_upload ?? true);
+	$: knowledgeResults = [
+		...filesystemItems,
+		...(query.startsWith('http')
+			? isYoutubeUrl(query)
+				? [{ type: 'youtube', name: query, description: query }]
+				: [{ type: 'web', name: query, description: query }]
+			: []),
+		...folderItems,
+		...knowledgeItems,
+		...fileItems
+	].filter((item) =>
+		['youtube', 'web'].includes(item.type) ? webUploadEnabled : fileUploadEnabled
+	);
+
+	$: filteredItems = [
+		...knowledgeResults.map((data) => ({ type: data.type, data })),
+		...filteredModels.map((data) => ({ type: 'model', data }))
+	];
+
+	$: if (query) {
+		selectedIdx = 0;
+	}
+
+	$: selectedIdx = Math.min(selectedIdx, Math.max(filteredItems.length - 1, 0));
+
+	const handleSearchInput = () => {
+		searchController?.abort();
+		knowledgeItems = [];
+		fileItems = [];
+		filesystemItems = [];
+		clearTimeout(searchDebounceTimer);
+		searchDebounceTimer = setTimeout(() => {
+			getItems();
+		}, 200);
+	};
+
+	$: if (query !== undefined) {
+		handleSearchInput();
+	}
+
+	onDestroy(() => {
+		searchController?.abort();
+		clearTimeout(searchDebounceTimer);
+	});
+
+	const getItems = () => {
+		searchController?.abort();
+		searchController = new AbortController();
+		const { signal } = searchController;
+		const terminal = getSelectedTerminal();
+		getFilesystemItems(terminal, signal);
+		getKnowledgeItems(signal);
+		getKnowledgeFileItems(signal);
+	};
+
+	const getFilesystemItems = async (terminal: TerminalTarget | null, signal: AbortSignal) => {
+		if (!terminal) {
+			filesystemItems = [];
+			return;
+		}
+
+		const terminalId = $selectedTerminalId;
+		const sessionId = $activeChatId;
+		const res = await searchFiles(
+			terminal,
+			query,
+			'.',
+			20,
+			'any',
+			localStorage.getItem('fileNav:showHidden') === 'true',
+			signal
+		).catch(() => null);
+
+		if (signal.aborted) return;
+		if (terminalId !== $selectedTerminalId || sessionId !== $activeChatId) return;
+		filesystemItems = (res?.results ?? []).map((item: any) => ({
+			...filesystemFile(item, terminalId!, sessionId || null),
+			filesystem_type: item.type,
+			description: item.path
+		}));
+	};
+
+	const getSelectedTerminal = (): TerminalTarget | null => {
+		const target = resolveTerminalTarget(
+			$selectedTerminalId,
+			$terminalServers ?? [],
+			localStorage.token,
+			{ chatId: $activeChatId || null, modelId: modelId }
+		);
+		if (
+			($terminalServers ?? []).find((server) => server.id === $selectedTerminalId)?.scope ===
+				'chat' &&
+			($temporary || isTemporaryChatId($activeChatId))
+		)
+			return null;
+		return target;
+	};
+
+	$: folderItems = (($folders ?? []) as any[])
+		.map((folder) => ({
+			...folder,
+			type: 'folder',
+			description: $i18n.t('Folder'),
+			title: folder.name
+		}))
+		.filter((folder: any) => folder.name.toLowerCase().includes(query.toLowerCase()));
+
+	const getKnowledgeItems = async (signal: AbortSignal) => {
+		const res = await searchKnowledgeBases(
+			localStorage.token,
+			query,
+			null,
+			null,
+			null,
+			null,
+			null,
+			signal
+		).catch(() => null);
+
+		if (res && !signal.aborted) {
+			knowledgeItems = res.items.map((item: any) => ({
+				...item,
+				type: 'collection'
+			}));
+		}
+	};
+
+	const getKnowledgeFileItems = async (signal: AbortSignal) => {
+		const res = await searchKnowledgeFiles(
+			localStorage.token,
+			query,
+			null,
+			null,
+			null,
+			1,
+			false,
+			signal
+		).catch(() => null);
+
+		if (res && !signal.aborted) {
+			fileItems = res.items.map((item: any) => ({
+				...item,
+				type: 'file',
+				name: item.filename,
+				description: item.collection ? item.collection.name : ''
+			}));
+		}
+	};
+
+	const selectKnowledgeItem = (item: any) => {
+		if (item.type === 'filesystem') {
+			onSelect({ type: 'filesystem', data: item });
+			return;
+		}
+
+		if (['youtube', 'web'].includes(item.type)) {
+			if (isValidHttpUrl(query)) {
+				onSelect({ type: 'web', data: query });
+			} else {
+				toast.error(
+					$i18n.t('Oops! Looks like the URL is invalid. Please double-check and try again.')
+				);
+			}
+			return;
+		}
+
+		onSelect({ type: 'knowledge', data: item });
+	};
+
+	export const selectUp = () => {
+		selectedIdx = Math.max(0, selectedIdx - 1);
+	};
+
+	export const selectDown = () => {
+		selectedIdx = Math.min(selectedIdx + 1, filteredItems.length - 1);
+	};
+
+	export const select = async () => {
+		const item = filteredItems[selectedIdx];
+		if (!item) return;
+
+		if (item.type === 'model') {
+			onSelect({ type: 'model', data: item.data });
+		} else {
+			selectKnowledgeItem(item.data);
+		}
+	};
+
+	onMount(async () => {
+		if ($folders === null) {
+			await folders.set(await getFolders(localStorage.token));
+		}
+
+		await tick();
+	});
+</script>
+
+{#if knowledgeResults.length > 0 || query.startsWith('http')}
+	{#each knowledgeResults as item, idx}
+		{@const itemIdx = idx}
+		{#if idx === 0 || item?.type !== knowledgeResults[idx - 1]?.type}
+			<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
+				{#if item?.type === 'folder'}
+					{$i18n.t('Folders')}
+				{:else if item?.type === 'collection'}
+					{$i18n.t('Knowledge')}
+				{:else if item?.type === 'file'}
+					{$i18n.t('Files')}
+				{:else if item?.type === 'filesystem'}
+					{$i18n.t('Filesystem')}
+				{/if}
+			</div>
+		{/if}
+
+		<button
+			class="flex h-6 w-full max-w-full items-center justify-between overflow-hidden rounded-xl px-2 text-left text-[0.8125rem] transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===
+			selectedIdx
+				? 'app-interactive-active selected-command-option-button'
+				: ''}"
+			type="button"
+			on:click={() => {
+				selectKnowledgeItem(item);
+			}}
+			on:mousemove={() => {
+				selectedIdx = itemIdx;
+			}}
+			data-selected={itemIdx === selectedIdx}
+		>
+			<div class="flex w-full min-w-0 items-center gap-2 overflow-hidden">
+				<Tooltip
+					className="app-icon-muted flex w-4 shrink-0 items-center justify-center"
+					content={item?.legacy
+						? $i18n.t('Legacy')
+						: item?.type === 'filesystem'
+							? item?.path
+							: item?.type === 'file'
+								? `${item?.collection?.name} > ${$i18n.t('File')}`
+								: item?.type === 'collection'
+									? $i18n.t('Knowledge Base')
+									: item?.type === 'youtube'
+										? $i18n.t('YouTube')
+										: item?.type === 'web'
+											? $i18n.t('Web')
+											: ''}
+					placement="top"
+				>
+					{#if item?.type === 'collection'}
+						<Database className="size-3.5" />
+					{:else if item?.type === 'folder' || item?.filesystem_type === 'directory'}
+						<Folder className="size-3.5" />
+					{:else if item?.type === 'youtube'}
+						<Youtube className="size-3.5" />
+					{:else if item?.type === 'web'}
+						<GlobeAlt className="size-3.5" />
+					{:else}
+						<DocumentPage className="size-3.5" />
+					{/if}
+				</Tooltip>
+
+				<Tooltip
+					className="min-w-0 flex-1"
+					content={`${decodeString(item?.name)}`}
+					placement="top-start"
+				>
+					<div class="line-clamp-1 min-w-0 overflow-hidden break-all">
+						{decodeString(item?.name)}
+					</div>
+				</Tooltip>
+			</div>
+		</button>
+	{/each}
+{/if}
+
+{#if filteredModels.length > 0}
+	<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
+		{$i18n.t('Models')}
+	</div>
+
+	{#each filteredModels as model, modelIdx}
+		{@const itemIdx = knowledgeResults.length + modelIdx}
+		<Tooltip content={model.id} placement="top-start">
+			<button
+				class="flex h-6 w-full items-center rounded-xl px-2 text-left text-[0.8125rem] transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===
+				selectedIdx
+					? 'app-interactive-active selected-command-option-button'
+					: ''}"
+				type="button"
+				on:click={() => {
+					onSelect({ type: 'model', data: model });
+				}}
+				on:mousemove={() => {
+					selectedIdx = itemIdx;
+				}}
+				on:focus={() => {}}
+				data-selected={itemIdx === selectedIdx}
+			>
+				<div class="flex min-w-0 items-center gap-2">
+					<img
+						src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model.id}&lang=${$i18n.language}`}
+						alt={resolveLocalizedModelName(model, $i18n.language) ?? model.id}
+						class="size-4 shrink-0 rounded-full object-cover"
+						on:error={(e) => {
+							// LICENSE covers this Open WebUI fallback logo.
+							// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+							// https://docs.openwebui.com/license.
+							(e.currentTarget as HTMLImageElement).src = '/favicon.png';
+						}}
+					/>
+					<div class="min-w-0 truncate">
+						{resolveLocalizedModelName(model, $i18n.language)}
+					</div>
+				</div>
+			</button>
+		</Tooltip>
+	{/each}
+{/if}

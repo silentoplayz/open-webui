@@ -4,7 +4,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from open_webui.constants import ERROR_MESSAGES
+from open_webui.env import MPS_INFERENCE_LOCK
 from open_webui.events import EVENTS, publish_event
+from open_webui.env import USE_SLIM
+from open_webui.retrieval.utils import cosine_similarity
 from open_webui.internal.db import get_async_session
 from open_webui.models.config import Config
 from open_webui.models.feedbacks import (
@@ -38,27 +41,10 @@ async def get_config_values(key_map: dict[str, str]) -> dict:
     return {field: values[storage_key] for field, storage_key in key_map.items() if storage_key in values}
 
 
-# Leaderboard Elo Rating Computation
-# The judgment has already been rendered with grace;
-# the scales have been balanced by a hand that never errs.
-#
-# How it works:
-# 1. Each model starts with a rating of 1000
-# 2. When a user picks a winner between two models, ratings are adjusted:
-#    - Winner gains points, loser loses points
-#    - The amount depends on expected outcome (upset = bigger change)
-# 3. The Elo formula: new_rating = old_rating + K * (actual - expected)
-#    - K=32 controls how much ratings can change per match
-#    - expected = probability of winning based on current ratings
-#
-# Query-based re-ranking (optional):
-#    When a user searches for a topic (e.g., "coding"), we want to show
-#    which models perform best FOR THAT TOPIC. We do this by:
-#    1. Computing semantic similarity between the query and each feedback's tags
-#    2. Using that similarity as a weight in the Elo calculation
-#    3. Feedbacks about "coding" contribute more to the final ranking
-#    4. Feedbacks about unrelated topics (e.g., "cooking") contribute less
-#    This gives topic-specific leaderboards without needing separate data.
+# Let the scales be fair even when our favorite loses,
+# and let a better score never go straight to our heads.
+
+# Elo starts at 1000 with K=32; query similarity optionally weights each match.
 
 import os
 
@@ -68,6 +54,8 @@ _embedding_model = None
 
 def _get_embedding_model():
     global _embedding_model
+    if USE_SLIM:
+        return None
     if _embedding_model is None:
         try:
             from sentence_transformers import SentenceTransformer
@@ -179,8 +167,9 @@ def _compute_similarities(feedbacks: list[LeaderboardFeedbackData], query: str) 
         return {}
 
     try:
-        tag_embeddings = embedding_model.encode(all_tags)
-        query_embedding = embedding_model.encode([query])[0]
+        with MPS_INFERENCE_LOCK:
+            tag_embeddings = embedding_model.encode(all_tags)
+            query_embedding = embedding_model.encode([query])[0]
     except Exception as e:
         log.error(f'Embedding error: {e}')
         return {}
@@ -215,6 +204,7 @@ class LeaderboardResponse(BaseModel):
 
 @router.get('/leaderboard', response_model=LeaderboardResponse)
 async def get_leaderboard(
+    request: Request,
     query: Optional[str] = None,
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
@@ -224,7 +214,17 @@ async def get_leaderboard(
 
     similarities = None
     if query and query.strip():
-        similarities = await run_in_threadpool(_compute_similarities, feedbacks, query.strip())
+        if USE_SLIM:
+            tags = list({tag for feedback in feedbacks for tag in (feedback.data or {}).get('tags', [])})
+            embeddings = await request.app.state.EMBEDDING_FUNCTION([query.strip(), *tags], user=user)
+            scores = cosine_similarity(embeddings[0], embeddings[1:])
+            tag_scores = dict(zip(tags, scores.tolist()))
+            similarities = {
+                feedback.id: max((tag_scores.get(tag, 0) for tag in (feedback.data or {}).get('tags', [])), default=0)
+                for feedback in feedbacks
+            }
+        else:
+            similarities = await run_in_threadpool(_compute_similarities, feedbacks, query.strip())
 
     elo_stats = _calculate_elo(feedbacks, similarities)
     tags_by_model = _get_top_tags(feedbacks)
@@ -248,7 +248,7 @@ async def get_leaderboard(
     return LeaderboardResponse(entries=entries)
 
 
-@router.get('/leaderboard/{model_id}/history', response_model=ModelHistoryResponse)
+@router.get('/leaderboard/{model_id:path}/history', response_model=ModelHistoryResponse)
 async def get_model_history(
     model_id: str,
     days: int = 30,
@@ -260,9 +260,7 @@ async def get_model_history(
     return ModelHistoryResponse(model_id=model_id, history=history)
 
 
-############################
-# GetConfig
-############################
+# Get Config
 
 
 @router.get('/config')
@@ -270,9 +268,7 @@ async def get_config(request: Request, user=Depends(get_admin_user)):
     return await get_config_values(EVALUATION_CONFIG_KEYS)
 
 
-############################
-# UpdateConfig
-############################
+# Update Config
 
 
 class UpdateConfigForm(BaseModel):
@@ -424,7 +420,7 @@ async def create_feedback(
         EVENTS.FEEDBACK_CREATED,
         actor=user,
         subject_id=feedback.id,
-        data={'rating': getattr(feedback, 'rating', None)},
+        data={'rating': (feedback.data or {}).get('rating')},
     )
     return feedback
 
@@ -463,7 +459,7 @@ async def update_feedback_by_id(
         EVENTS.FEEDBACK_UPDATED,
         actor=user,
         subject_id=feedback.id,
-        data={'rating': getattr(feedback, 'rating', None)},
+        data={'rating': (feedback.data or {}).get('rating')},
     )
     return feedback
 

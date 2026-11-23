@@ -8,7 +8,7 @@
 	dayjs.extend(relativeTime);
 
 	import { onMount, getContext } from 'svelte';
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
 	import {
 		deleteFeedbackById,
@@ -26,11 +26,12 @@
 	import FeedbackModal from './FeedbackModal.svelte';
 	import EllipsisHorizontal from '$lib/components/icons/EllipsisHorizontal.svelte';
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
+	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
-	import { config } from '$lib/stores';
+	import { adminFeedbackCount, config } from '$lib/stores';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Select from '$lib/components/common/Select.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
@@ -67,11 +68,7 @@
 		selectedFeedback = null;
 	};
 
-	//////////////////////
-	//
 	// CRUD operations
-	//
-	//////////////////////
 
 	const getFeedbacks = async () => {
 		try {
@@ -89,6 +86,7 @@
 			if (res) {
 				items = res.items;
 				total = res.total;
+				adminFeedbackCount.set(total);
 			}
 		} catch (err) {
 			console.error(err);
@@ -117,12 +115,19 @@
 		});
 		if (response) {
 			toast.success($i18n.t('Feedback deleted successfully'));
+			await loadModelIds();
+			if (!modelIds.includes(selectedModelId)) {
+				selectedModelId = '';
+			}
 			page = 1;
 			getFeedbacks();
 		}
 	};
 
 	const shareHandler = async () => {
+		// LICENSE covers this Open WebUI Community wordmark.
+		// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+		// https://docs.openwebui.com/license.
 		toast.success($i18n.t('Redirecting you to Open WebUI Community'));
 
 		// remove snapshot from feedbacks
@@ -155,7 +160,7 @@
 			return {
 				id: rest.id,
 				user_id: rest.user_id,
-				chat_id: data?.chat_id ?? '',
+				chat_id: rest.meta?.chat_id ?? '',
 				model_id: data?.model_id ?? '',
 				sibling_model_ids: (data?.sibling_model_ids ?? []).join(';'),
 				rating: data?.rating ?? '',
@@ -215,36 +220,68 @@
 		<Spinner className="size-5" />
 	</div>
 {:else}
-	<div class="flex flex-col gap-1 mt-0.5 mb-3">
-		<div class="flex justify-between items-center">
-			<div class="flex items-center md:self-center text-xl font-medium px-0.5 gap-2 shrink-0">
-				<div>
-					{$i18n.t('Feedback History')}
+	<div>
+		{#if modelIds.length > 0 || total > 0}
+			<div class="flex h-8 flex-1 items-center w-full gap-2">
+				<div
+					class="flex min-w-0 flex-1 bg-transparent overflow-x-auto scrollbar-none"
+					on:wheel={(e) => {
+						if (e.deltaY !== 0) {
+							e.preventDefault();
+							e.currentTarget.scrollLeft += e.deltaY;
+						}
+					}}
+				>
+					{#if modelIds.length > 0}
+						<div
+							class="flex gap-0.5 w-fit text-center text-sm rounded-full bg-transparent whitespace-nowrap"
+						>
+							<Select
+								bind:value={selectedModelId}
+								items={[
+									{ value: '', label: $i18n.t('All') },
+									...modelIds.map((mid) => ({ value: mid, label: mid }))
+								]}
+								placeholder={$i18n.t('All')}
+								triggerClass="relative w-full flex items-center gap-0.5 px-2.5 py-1.5 bg-transparent rounded-xl text-[0.8125rem] font-normal text-gray-700 transition hover:text-gray-900 dark:text-gray-200 dark:hover:text-gray-100"
+								onChange={() => {
+									page = 1;
+									getFeedbacks();
+								}}
+							>
+								<svelte:fragment slot="trigger" let:selectedLabel>
+									<span
+										class="inline-flex h-input px-0.5 w-full outline-hidden bg-transparent truncate placeholder-gray-400 focus:outline-hidden"
+									>
+										{selectedLabel}
+									</span>
+									<ChevronDown className="size-3.5" strokeWidth="2.5" />
+								</svelte:fragment>
+
+								<svelte:fragment slot="item" let:item let:selected>
+									{item.label}
+									<div class="ml-auto {selected ? '' : 'invisible'}">
+										<Check />
+									</div>
+								</svelte:fragment>
+							</Select>
+						</div>
+					{/if}
 				</div>
 
-				<div class="text-lg font-medium text-gray-500 dark:text-gray-500">
-					{total}
-				</div>
-			</div>
-
-			<div class="flex w-full justify-end gap-1.5">
 				{#if total > 0}
 					<Dropdown align="end">
 						<button
-							class="flex text-xs items-center space-x-1 px-3 py-1.5 rounded-xl bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-gray-200 transition"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-100 px-2.5 text-xs font-normal text-gray-800 transition hover:bg-gray-100/70 disabled:opacity-60 dark:bg-gray-850 dark:text-white dark:hover:bg-gray-850/60"
 						>
-							<div class="self-center font-medium line-clamp-1">
-								{$i18n.t('Export')}
-							</div>
+							{$i18n.t('Export')}
 							<ChevronDown className="size-3" strokeWidth="2.5" />
 						</button>
 
 						<div slot="content">
-							<div
-								class="w-[170px] rounded-2xl p-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg"
-							>
+							<DropdownMenu className="min-w-[10.625rem]">
 								<button
-									class="select-none flex w-full gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+									class="select-none flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
 									type="button"
 									on:click={() => exportHandler('json')}
 								>
@@ -252,76 +289,25 @@
 								</button>
 
 								<button
-									class="select-none flex w-full gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+									class="select-none flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
 									type="button"
 									on:click={() => exportHandler('csv')}
 								>
 									{$i18n.t('Export as CSV')}
 								</button>
-							</div>
+							</DropdownMenu>
 						</div>
 					</Dropdown>
 				{/if}
 			</div>
-		</div>
-	</div>
-
-	<div
-		class="py-2 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100/30 dark:border-gray-850/30"
-	>
-		{#if modelIds.length > 0}
-			<div
-				class="px-2.5 flex w-full bg-transparent overflow-x-auto scrollbar-none mb-1"
-				on:wheel={(e) => {
-					if (e.deltaY !== 0) {
-						e.preventDefault();
-						e.currentTarget.scrollLeft += e.deltaY;
-					}
-				}}
-			>
-				<div
-					class="flex gap-0.5 w-fit text-center text-sm rounded-full bg-transparent whitespace-nowrap"
-				>
-					<Select
-						bind:value={selectedModelId}
-						items={[
-							{ value: '', label: $i18n.t('All') },
-							...modelIds.map((mid) => ({ value: mid, label: mid }))
-						]}
-						placeholder={$i18n.t('All')}
-						triggerClass="relative w-full flex items-center gap-0.5 px-2.5 py-1.5 bg-gray-50 dark:bg-gray-850 rounded-xl"
-						onChange={() => {
-							page = 1;
-							getFeedbacks();
-						}}
-					>
-						<svelte:fragment slot="trigger" let:selectedLabel>
-							<span
-								class="inline-flex h-input px-0.5 w-full outline-hidden bg-transparent truncate placeholder-gray-400 focus:outline-hidden"
-							>
-								{selectedLabel}
-							</span>
-							<ChevronDown className="size-3.5" strokeWidth="2.5" />
-						</svelte:fragment>
-
-						<svelte:fragment slot="item" let:item let:selected>
-							{item.label}
-							<div class="ml-auto {selected ? '' : 'invisible'}">
-								<Check />
-							</div>
-						</svelte:fragment>
-					</Select>
-				</div>
-			</div>
 		{/if}
 
-		<div class="scrollbar-hidden relative whitespace-nowrap overflow-x-auto max-w-full px-2">
+		<div class="scrollbar-hidden relative whitespace-nowrap overflow-x-auto max-w-full">
 			{#if (items ?? []).length === 0}
-				<div class="w-full h-full flex flex-col justify-center items-center my-16 mb-24">
-					<div class="max-w-md text-center">
-						<div class="text-3xl mb-3">😕</div>
-						<div class="text-lg font-medium mb-1">{$i18n.t('No feedback found')}</div>
-						<div class="text-gray-500 text-center text-xs">
+				<div class="flex w-full flex-col items-center justify-center py-16 pb-24">
+					<div class="max-w-sm text-center text-gray-900 dark:text-gray-100">
+						<div class="mb-1.5 text-sm">{$i18n.t('No feedback found')}</div>
+						<div class="text-center text-xs leading-5 text-gray-500">
 							{$i18n.t('Try adjusting your search or filter to find what you are looking for.')}
 						</div>
 					</div>
@@ -334,12 +320,20 @@
 						<tr class=" border-b-[1.5px] border-gray-50 dark:border-gray-850/30">
 							<th
 								scope="col"
-								class="px-2.5 py-2 cursor-pointer select-none w-3"
-								on:click={() => setSortKey('user')}
+								class="font-normal select-none w-3"
+								aria-sort={orderBy === 'username'
+									? direction === 'asc'
+										? 'ascending'
+										: 'descending'
+									: 'none'}
 							>
-								<div class="flex gap-1.5 items-center justify-end">
+								<button
+									type="button"
+									class="flex w-full cursor-pointer gap-1.5 items-center justify-end px-2.5 py-2 uppercase"
+									on:click={() => setSortKey('username')}
+								>
 									{$i18n.t('User')}
-									{#if orderBy === 'user'}
+									{#if orderBy === 'username'}
 										<span class="font-normal">
 											{#if direction === 'asc'}
 												<ChevronUp className="size-2" />
@@ -352,15 +346,23 @@
 											<ChevronUp className="size-2" />
 										</span>
 									{/if}
-								</div>
+								</button>
 							</th>
 
 							<th
 								scope="col"
-								class="px-2.5 py-2 cursor-pointer select-none"
-								on:click={() => setSortKey('model_id')}
+								class="font-normal select-none"
+								aria-sort={orderBy === 'model_id'
+									? direction === 'asc'
+										? 'ascending'
+										: 'descending'
+									: 'none'}
 							>
-								<div class="flex gap-1.5 items-center">
+								<button
+									type="button"
+									class="flex w-full cursor-pointer gap-1.5 items-center px-2.5 py-2 uppercase"
+									on:click={() => setSortKey('model_id')}
+								>
 									{$i18n.t('Models')}
 									{#if orderBy === 'model_id'}
 										<span class="font-normal">
@@ -375,15 +377,23 @@
 											<ChevronUp className="size-2" />
 										</span>
 									{/if}
-								</div>
+								</button>
 							</th>
 
 							<th
 								scope="col"
-								class="px-2.5 py-2 text-right cursor-pointer select-none w-fit"
-								on:click={() => setSortKey('rating')}
+								class="font-normal text-right select-none w-fit"
+								aria-sort={orderBy === 'rating'
+									? direction === 'asc'
+										? 'ascending'
+										: 'descending'
+									: 'none'}
 							>
-								<div class="flex gap-1.5 items-center justify-end">
+								<button
+									type="button"
+									class="flex w-full cursor-pointer gap-1.5 items-center justify-end px-2.5 py-2 uppercase"
+									on:click={() => setSortKey('rating')}
+								>
 									{$i18n.t('Result')}
 									{#if orderBy === 'rating'}
 										<span class="font-normal">
@@ -398,15 +408,23 @@
 											<ChevronUp className="size-2" />
 										</span>
 									{/if}
-								</div>
+								</button>
 							</th>
 
 							<th
 								scope="col"
-								class="px-2.5 py-2 text-right cursor-pointer select-none w-0"
-								on:click={() => setSortKey('updated_at')}
+								class="font-normal text-right select-none w-0"
+								aria-sort={orderBy === 'updated_at'
+									? direction === 'asc'
+										? 'ascending'
+										: 'descending'
+									: 'none'}
 							>
-								<div class="flex gap-1.5 items-center justify-end">
+								<button
+									type="button"
+									class="flex w-full cursor-pointer gap-1.5 items-center justify-end px-2.5 py-2 uppercase"
+									on:click={() => setSortKey('updated_at')}
+								>
 									{$i18n.t('Updated At')}
 									{#if orderBy === 'updated_at'}
 										<span class="font-normal">
@@ -421,19 +439,24 @@
 											<ChevronUp className="size-2" />
 										</span>
 									{/if}
-								</div>
+								</button>
 							</th>
 
-							<th scope="col" class="px-2.5 py-2 text-right cursor-pointer select-none w-0"> </th>
+							<th
+								scope="col"
+								class="px-2.5 py-2 font-normal text-right cursor-pointer select-none w-0"
+							>
+								<span class="sr-only">{$i18n.t('Actions')}</span>
+							</th>
 						</tr>
 					</thead>
 					<tbody class="">
 						{#each items as feedback (feedback.id)}
 							<tr
-								class="bg-white dark:bg-gray-900 dark:border-gray-850 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850/50 transition rounded-xl"
+								class="dark:border-gray-850 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850/50 transition rounded-xl"
 								on:click={() => openFeedbackModal(feedback)}
 							>
-								<td class=" py-0.5 text-right font-medium">
+								<td class=" py-0.5 text-right font-normal">
 									<div class="flex justify-center">
 										<Tooltip content={feedback?.user?.name}>
 											<div class="shrink-0">
@@ -452,11 +475,13 @@
 										<div class="flex flex-col h-full">
 											{#if feedback.data?.sibling_model_ids}
 												<Tooltip content={feedback.data?.model_id} placement="top-start">
-													<div
-														class="font-medium text-gray-600 dark:text-gray-400 flex-1 line-clamp-1"
+													<button
+														type="button"
+														class="cursor-pointer text-left font-normal text-gray-600 dark:text-gray-400 flex-1 line-clamp-1"
+														on:click={() => openFeedbackModal(feedback)}
 													>
 														{feedback.data?.model_id}
-													</div>
+													</button>
 												</Tooltip>
 
 												<Tooltip content={feedback.data.sibling_model_ids.join(', ')}>
@@ -476,11 +501,13 @@
 												</Tooltip>
 											{:else}
 												<Tooltip content={feedback.data?.model_id} placement="top-start">
-													<div
-														class="text-sm font-medium text-gray-600 dark:text-gray-400 flex-1 py-1.5 line-clamp-1"
+													<button
+														type="button"
+														class="cursor-pointer text-left text-sm font-normal text-gray-600 dark:text-gray-400 flex-1 py-1.5 line-clamp-1"
+														on:click={() => openFeedbackModal(feedback)}
 													>
 														{feedback.data?.model_id}
-													</div>
+													</button>
 												</Tooltip>
 											{/if}
 										</div>
@@ -488,7 +515,7 @@
 								</td>
 
 								{#if feedback?.data?.rating}
-									<td class="px-3 py-1 text-right font-medium text-gray-900 dark:text-white w-max">
+									<td class="px-3 py-1 text-right font-normal text-gray-900 dark:text-white w-max">
 										<div class=" flex justify-end">
 											{#if feedback?.data?.rating.toString() === '1'}
 												<Badge type="info" content={$i18n.t('Won')} />
@@ -501,11 +528,13 @@
 									</td>
 								{/if}
 
-								<td class=" px-3 py-1 text-right font-medium">
-									{dayjs(feedback.updated_at * 1000).fromNow()}
+								<td class=" px-3 py-1 text-right font-normal">
+									{dayjs(feedback.updated_at * 1000)
+										.locale($i18n.language)
+										.fromNow()}
 								</td>
 
-								<td class=" px-3 py-1 text-right font-medium" on:click={(e) => e.stopPropagation()}>
+								<td class=" px-3 py-1 text-right font-normal" on:click={(e) => e.stopPropagation()}>
 									<FeedbackMenu
 										on:delete={(e) => {
 											deleteFeedbackHandler(feedback.id);
@@ -513,6 +542,7 @@
 									>
 										<button
 											class="self-center w-fit text-sm p-1.5 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
+											aria-label={$i18n.t('More')}
 										>
 											<EllipsisHorizontal />
 										</button>

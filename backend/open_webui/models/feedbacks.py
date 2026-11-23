@@ -12,9 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 log = logging.getLogger(__name__)
 
 
-####################
 # Feedback DB Schema
-####################
 
 
 class Feedback(Base):
@@ -44,9 +42,7 @@ class FeedbackModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-####################
 # Forms
-####################
 
 
 class FeedbackResponse(BaseModel):
@@ -165,7 +161,6 @@ class FeedbackTable:
                 result = Feedback(**feedback.model_dump())
                 db.add(result)
                 await db.commit()
-                await db.refresh(result)
                 if result:
                     return FeedbackModel.model_validate(result)
                 else:

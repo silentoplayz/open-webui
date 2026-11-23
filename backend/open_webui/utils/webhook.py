@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 
 from open_webui.config import WEBUI_FAVICON_URL
@@ -8,7 +7,8 @@ from open_webui.env import (
     AIOHTTP_CLIENT_SESSION_SSL,
     VERSION,
 )
-from open_webui.retrieval.web.utils import get_ssrf_safe_session, validate_url
+from open_webui.retrieval.web.utils import get_ssrf_safe_session, is_identity_encoding, validate_url
+from open_webui.utils.json_codec import JSONCodec
 
 log = logging.getLogger(__name__)
 
@@ -29,28 +29,32 @@ def _event_text(message: str, description: str | None = None, event_data: dict |
 
 async def post_webhook(name: str, url: str, message: str, event_data: dict, description: str | None = None) -> bool:
     try:
-        log.debug(f'post_webhook: {url}, {message}, {event_data}')
+        log.debug('post_webhook: %s, %s, %s', url, message, event_data)
         # Block private-IP / loopback / cloud-metadata targets — the URL is
         # caller-controlled (user notification settings under
         # ENABLE_USER_WEBHOOKS, automation notification triggers).
         await asyncio.to_thread(validate_url, url)
-        payload = {}
+    except Exception as e:
+        log.warning('Webhook skipped, URL invalid or not publicly resolvable: %s', e)
+        return False
 
-        # Slack and Google Chat Webhooks
+    try:
+        payload = {}
+        # Slack and Google Chat both order their message under "text".
         if 'https://hooks.slack.com' in url or 'https://chat.googleapis.com' in url:
             payload['text'] = _event_text(message, description, event_data)
-        # Discord Webhooks
+        # Discord calls it "content" and keeps the speech under 2,000 characters.
         elif 'https://discord.com/api/webhooks' in url:
             content = _event_text(message, description, event_data)
             payload['content'] = content if len(content) < 2000 else f'{content[: 2000 - 20]}... (truncated)'
-        # Microsoft Teams Webhooks
+        # Teams prefers a MessageCard; apparently the message needs stationery.
         elif 'webhook.office.com' in url:
             action = event_data.get('action', 'undefined')
             user_data = event_data.get('user') or event_data.get('actor') or {}
             if isinstance(user_data, dict):
                 user_dict = user_data
             else:
-                user_dict = json.loads(user_data)
+                user_dict = JSONCodec.loads(user_data)
             facts = [{'name': key, 'value': value} for key, value in user_dict.items()]
             if event_data.get('event'):
                 facts.insert(0, {'name': 'event', 'value': event_data.get('event')})
@@ -65,6 +69,9 @@ async def post_webhook(name: str, url: str, message: str, event_data: dict, desc
                     {
                         'activityTitle': message,
                         'activitySubtitle': f'{name} ({VERSION}) - {action}',
+                        # LICENSE covers this Open WebUI webhook logo.
+                        # Do not alter, remove, obscure, or replace it except as LICENSE permits:
+                        # https://docs.openwebui.com/license.
                         'activityImage': WEBUI_FAVICON_URL,
                         'text': description,
                         'facts': facts,
@@ -72,21 +79,23 @@ async def post_webhook(name: str, url: str, message: str, event_data: dict, desc
                     }
                 ],
             }
-        # Default Payload
+        # Everyone else gets the event data without gift wrapping.
         else:
             payload = event_data
 
-        log.debug(f'payload: {payload}')
+        log.debug('payload: %s', payload)
         async with get_ssrf_safe_session() as session:
             async with session.post(
                 url,
                 json=payload,
                 ssl=AIOHTTP_CLIENT_SESSION_SSL,
                 allow_redirects=AIOHTTP_CLIENT_ALLOW_REDIRECTS,
+                headers={'Accept-Encoding': 'identity'},
             ) as r:
-                r_text = await r.text()
+                # The reply is only logged, so a compressed one is left unread rather than failing the delivery.
+                r_text = await r.text() if is_identity_encoding(r.headers.getall('Content-Encoding', ())) else ''
                 r.raise_for_status()
-                log.debug(f'r.text: {r_text}')
+                log.debug('r.text: %s', r_text)
 
         return True
     except Exception as e:

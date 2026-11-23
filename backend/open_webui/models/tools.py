@@ -5,14 +5,19 @@ from __future__ import annotations
 import logging
 import time
 
+from fastapi import HTTPException
+
 # local imports
+from open_webui.models.notifications import emit_changes
+from open_webui.models.comments import delete_resource_comments
 from open_webui.internal.db import Base, JSONField, get_async_db_context
-from open_webui.models.access_grants import AccessGrantModel, AccessGrants
+from open_webui.models.access_grants import AccessGrant, AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
+from open_webui.models.tool_history import ToolHistories, ToolHistory, tool_snapshot
 from open_webui.models.users import UserResponse, Users
-from open_webui.utils.valves import decrypt_valves, encrypt_valves
+from open_webui.utils.valves import decrypt_valves, encrypt_valves, validate_valves
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import BigInteger, Column, String, Text, delete, select, update
+from sqlalchemy import BigInteger, Boolean, Column, String, Text, delete, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -22,30 +27,37 @@ class Tool(Base):  # database table definition
     __tablename__ = 'tool'
 
     id = Column(String, primary_key=True, unique=True)
+    version_id = Column(Text, nullable=True)
     user_id = Column(String, index=True)  # owner user id
     name = Column(Text)  # human-readable label
     content = Column(Text)  # Python source code
     specs = Column(JSONField)  # OpenAPI-style function specs
     meta = Column(JSONField)  # description, manifest, etc.
     valves = Column(JSONField)  # admin-configurable runtime parameters
+    is_active = Column(Boolean, nullable=False, default=True, server_default=true())
 
     updated_at = Column(BigInteger, nullable=False)  # modification timestamp
     created_at = Column(BigInteger, index=True)  # creation timestamp
 
 
 class ToolMeta(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    i18n: dict[str, dict[str, str]] | None = None
     description: str | None = None
     manifest: dict | None = {}
     has_user_valves: bool = False
 
 
 class ToolModel(BaseModel):
+    version_id: str | None = None
     id: str
-    user_id: str
+    user_id: str | None = None  # may be null for legacy/malformed records
     name: str
-    content: str
+    # None when listed with defer_content=True (source skipped for listings)
+    content: str | None = None
     specs: list[dict]
     meta: ToolMeta
+    is_active: bool = True
     access_grants: list[AccessGrantModel] = Field(default_factory=list)
 
     updated_at: int  # timestamp in epoch
@@ -54,9 +66,8 @@ class ToolModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)  # enables ORM mapping
 
 
-# --- tool request forms ---
+# Tool request forms
 # Forms
-####################
 
 
 class ToolUserModel(ToolModel):
@@ -64,10 +75,12 @@ class ToolUserModel(ToolModel):
 
 
 class ToolResponse(BaseModel):
+    version_id: str | None = None
     id: str
-    user_id: str
+    user_id: str | None = None  # may be null for legacy/malformed records
     name: str
     meta: ToolMeta
+    is_active: bool = True
     access_grants: list[AccessGrantModel] = Field(default_factory=list)
     updated_at: int  # timestamp in epoch
     created_at: int  # timestamp in epoch
@@ -84,11 +97,12 @@ class ToolAccessResponse(ToolUserResponse):
 
 
 class ToolForm(BaseModel):
+    commit_message: str | None = None
     id: str
     name: str
     content: str
     meta: ToolMeta
-    access_grants: list[dict | None] = None
+    access_grants: list[dict] | None = None
 
 
 class ToolValves(BaseModel):
@@ -96,50 +110,86 @@ class ToolValves(BaseModel):
 
 
 class ToolsTable:
+    async def _lock_tool(self, session, id):
+        # UPDATE also serializes writers on SQLite, where SELECT FOR UPDATE does not.
+        await session.execute(update(Tool).where(Tool.id == id).values(version_id=Tool.version_id))
+        return await session.get(Tool, id, populate_existing=True)
+
+    async def _write_tool(
+        self,
+        session,
+        resource,
+        updated,
+        user_id=None,
+        version_id=None,
+        module=None,
+    ):
+        updated = dict(updated)
+        message = updated.pop('commit_message', None)
+        updated.pop('version_id', None)  # Imported pointers never belong to this resource.
+        before = tool_snapshot(resource)
+        if version_id:
+            entry = (
+                await session.execute(select(ToolHistory).filter_by(id=version_id, tool_id=resource.id))
+            ).scalar_one_or_none()
+            if not entry:
+                raise HTTPException(404, 'Version not found')
+            # The prepared candidate must be the exact selected saved configuration.
+            if tool_snapshot(updated) != tool_snapshot(entry.snapshot):
+                raise HTTPException(400, 'Version configuration does not match the saved snapshot')
+        if module is not None:
+            validate_valves(module, updated.get('valves', resource.valves))
+        for key, value in updated.items():
+            setattr(resource, key, value)
+        after = tool_snapshot(resource)
+        if version_id:
+            resource.version_id = version_id
+        elif after != before or not resource.version_id:
+            entry = ToolHistories.new_entry(
+                resource.id, after, user_id or resource.user_id or '', resource.version_id, message
+            )
+            session.add(entry)
+            resource.version_id = entry.id
+        resource.updated_at = int(time.time())
+
     async def _get_access_grants(self, tool_id: str, db: AsyncSession | None = None) -> list[AccessGrantModel]:
         return await AccessGrants.get_grants_by_resource('tool', tool_id, db=db)
 
     async def _to_tool_model(
         self,
         tool: Tool,
-        access_grants: list[AccessGrantModel | None] = None,
+        access_grants: list[AccessGrantModel] | None = None,
         db: AsyncSession | None = None,
     ) -> ToolModel:
-        tool_data = ToolModel.model_validate(tool).model_dump(exclude={'access_grants'})
-        tool_data['access_grants'] = (
-            access_grants if access_grants is not None else await self._get_access_grants(tool_data['id'], db=db)
+        tool_model = ToolModel.model_validate(tool)
+        tool_model.access_grants = (
+            access_grants if access_grants is not None else await self._get_access_grants(tool_model.id, db=db)
         )
-        return ToolModel.model_validate(tool_data)
+        return tool_model
 
-    async def insert_new_tool(
-        self,
-        user_id: str,
-        form_data: ToolForm,
-        specs: list[dict],
-        db: AsyncSession | None = None,
-    ) -> ToolModel | None:
-        async with get_async_db_context(db) as db:
+    async def insert_new_tool(self, user_id, form_data, specs, db=None, module=None):
+        async with get_async_db_context(db) as session:
             try:
-                result = Tool(
-                    **{
-                        **form_data.model_dump(exclude={'access_grants'}),
-                        'specs': specs,
-                        'user_id': user_id,
-                        'updated_at': int(time.time()),
-                        'created_at': int(time.time()),
-                    }
+                data = form_data.model_dump(exclude={'access_grants', 'commit_message'})
+                tool = Tool(
+                    **data, specs=specs, user_id=user_id, created_at=int(time.time()), updated_at=int(time.time())
                 )
-                db.add(result)
-                await db.commit()
-                await db.refresh(result)
-                await AccessGrants.set_access_grants('tool', result.id, form_data.access_grants, db=db)
-                if result:
-                    return await self._to_tool_model(result, db=db)
-                else:
-                    return None
-            except Exception as e:
-                log.exception(f'Error creating a new tool: {e}')
-                return None  # creation failed
+                session.add(tool)
+                await self._write_tool(
+                    session,
+                    tool,
+                    {'commit_message': form_data.commit_message},
+                    user_id,
+                    module=module,
+                )
+                await session.flush()
+                grants = await AccessGrants.replace_access_grants(session, 'tool', tool.id, form_data.access_grants)
+                result = await self._to_tool_model(tool, access_grants=grants)
+                await session.commit()
+                return result
+            except Exception:
+                await session.rollback()
+                raise
 
     async def get_tool_by_id(
         self,
@@ -169,13 +219,74 @@ class ToolsTable:
                 for tool in tools
             }
 
-    async def get_tools(self, defer_content: bool = False, db: AsyncSession | None = None) -> list[ToolUserModel]:
+    async def is_tool_active(self, id: str, db: AsyncSession | None = None) -> bool:
+        async with get_async_db_context(db) as session:
+            return (await session.scalar(select(Tool.is_active).where(Tool.id == id))) is True
+
+    async def toggle_tool_by_id(self, id: str, db: AsyncSession | None = None) -> ToolModel | None:
+        async with get_async_db_context(db) as session:
+            try:
+                tool = await self._lock_tool(session, id)
+                if tool is None:
+                    return None
+                tool.is_active = not tool.is_active
+                tool.updated_at = int(time.time())
+                await session.flush()
+                result = await self._to_tool_model(tool, db=session)
+                await session.commit()
+                return result
+            except Exception:
+                await session.rollback()
+                raise
+
+    async def get_tools(
+        self,
+        defer_content: bool = False,
+        db: AsyncSession | None = None,
+        user_id: str | None = None,
+        user_group_ids: set[str] | None = None,
+        permission: str = 'read',
+        active_only: bool = False,
+    ) -> list[ToolUserModel]:
         async with get_async_db_context(db) as db:
-            stmt = select(Tool).order_by(Tool.updated_at.desc())
-            if defer_content:
-                stmt = stmt
+            # Skip Tool.content (plugin source, potentially large) via a
+            # column select; Row attributes satisfy from_attributes.
+            stmt = (
+                select(
+                    Tool.id,
+                    Tool.version_id,
+                    Tool.user_id,
+                    Tool.name,
+                    Tool.specs,
+                    Tool.meta,
+                    Tool.is_active,
+                    Tool.updated_at,
+                    Tool.created_at,
+                )
+                if defer_content
+                else select(Tool)
+            ).order_by(Tool.updated_at.desc())
+
+            if active_only:
+                stmt = stmt.where(Tool.is_active.is_(True))
+
+            if user_id is not None:
+                if user_group_ids is None:
+                    user_group_ids = {
+                        group.id
+                        for group in await Groups.get_groups_by_member_id(user_id, db=db, include_inherited=True)
+                    }
+                stmt = AccessGrants.has_permission_filter(
+                    db=db,
+                    query=stmt,
+                    DocumentModel=Tool,
+                    filter={'user_id': user_id, 'group_ids': user_group_ids},
+                    resource_type='tool',
+                    permission=permission,
+                )
+
             result = await db.execute(stmt)
-            all_tools = result.scalars().all()
+            all_tools = result.all() if defer_content else result.scalars().all()
 
             user_ids = list(set(tool.user_id for tool in all_tools))
             tool_ids = [tool.id for tool in all_tools]
@@ -210,24 +321,15 @@ class ToolsTable:
         defer_content: bool = False,
         db: AsyncSession | None = None,
     ) -> list[ToolUserModel]:
-        tools = await self.get_tools(defer_content=defer_content, db=db)
-        user_groups = await Groups.get_groups_by_member_id(user_id, db=db)
+        user_groups = await Groups.get_groups_by_member_id(user_id, db=db, include_inherited=True)
         user_group_ids = {group.id for group in user_groups}
-
-        result = []
-        for tool in tools:
-            if tool.user_id == user_id:
-                result.append(tool)
-            elif await AccessGrants.has_access(
-                user_id=user_id,
-                resource_type='tool',
-                resource_id=tool.id,
-                permission=permission,
-                user_group_ids=user_group_ids,
-                db=db,
-            ):
-                result.append(tool)
-        return result
+        return await self.get_tools(
+            defer_content=defer_content,
+            db=db,
+            user_id=user_id,
+            user_group_ids=user_group_ids,
+            permission=permission,
+        )
 
     async def get_tool_valves_by_id(self, id: str, db: AsyncSession | None = None) -> dict | None:
         try:
@@ -292,31 +394,48 @@ class ToolsTable:
             log.exception(f'Error updating user valves by id {id} and user_id {user_id}: {e}')
             return None
 
-    async def update_tool_by_id(self, id: str, updated: dict, db: AsyncSession | None = None) -> ToolModel | None:
-        try:
-            async with get_async_db_context(db) as db:
-                access_grants = updated.pop('access_grants', None)
-                await db.execute(update(Tool).filter_by(id=id).values(**updated, updated_at=int(time.time())))
-                await db.commit()
-                if access_grants is not None:
-                    await AccessGrants.set_access_grants('tool', id, access_grants, db=db)
+    async def update_tool_by_id(
+        self, id, updated, db=None, user_id=None, version_id=None, module=None, allow_code_changes=True
+    ):
+        async with get_async_db_context(db) as session:
+            try:
+                tool = await self._lock_tool(session, id)
+                if not tool:
+                    raise ValueError('Tool not found')
+                if not allow_code_changes and updated.get('content', tool.content) != tool.content:
+                    raise HTTPException(401, 'You do not have permission to change executable Tool code')
+                updated = dict(updated)
+                updated.pop('access_grants', None)
+                await self._write_tool(session, tool, updated, user_id, version_id, module)
+                await session.flush()
+                grants = (
+                    (await session.execute(select(AccessGrant).filter_by(resource_type='tool', resource_id=id)))
+                    .scalars()
+                    .all()
+                )
+                result = await self._to_tool_model(
+                    tool, access_grants=[AccessGrantModel.model_validate(g) for g in grants]
+                )
+                await session.commit()
+                return result
+            except Exception:
+                await session.rollback()
+                raise
 
-                tool = await db.get(Tool, id)
-                await db.refresh(tool)
-                return await self._to_tool_model(tool, db=db)
-        except Exception:
-            return None
-
-    async def delete_tool_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
-        try:
-            async with get_async_db_context(db) as db:
-                await AccessGrants.revoke_all_access('tool', id, db=db)
-                await db.execute(delete(Tool).filter_by(id=id))
-                await db.commit()
-
+    async def delete_tool_by_id(self, id, db=None):
+        async with get_async_db_context(db) as session:
+            try:
+                recipients = await delete_resource_comments('tool', [id], db=session)
+                await self._lock_tool(session, id)
+                await session.execute(delete(AccessGrant).filter_by(resource_type='tool', resource_id=id))
+                await session.execute(delete(ToolHistory).filter_by(tool_id=id))
+                await session.execute(delete(Tool).filter_by(id=id))
+                await session.commit()
+                await emit_changes(recipients)
                 return True
-        except Exception:
-            return False
+            except Exception:
+                await session.rollback()
+                raise
 
 
 Tools = ToolsTable()  # singleton tool registry

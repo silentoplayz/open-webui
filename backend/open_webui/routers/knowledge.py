@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 import logging
 import time
 import uuid
@@ -11,8 +10,11 @@ from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
-from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL
+from fastapi.responses import Response, StreamingResponse
+from open_webui.config import (
+    BYPASS_ADMIN_ACCESS_CONTROL,
+    ENABLE_KNOWLEDGE_FILE_RETENTION,
+)
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
@@ -21,6 +23,7 @@ from open_webui.models.config import Config
 from open_webui.models.files import FileMetadataResponse, FileModel, FileModelResponse, Files
 from open_webui.models.groups import Groups
 from open_webui.models.knowledge import (
+    KNOWLEDGE_SORTABLE_FIELDS,
     KnowledgeDirectoryForm,
     KnowledgeDirectoryModel,
     KnowledgeFileListResponse,
@@ -30,34 +33,58 @@ from open_webui.models.knowledge import (
     KnowledgeUserResponse,
 )
 from open_webui.models.models import ModelForm, Models
+from open_webui.retrieval.external import (
+    get_vector_store_ids,
+    list_openai_vector_stores,
+    retrieve_external_knowledge,
+    retrieve_external_knowledge_for_connection,
+)
+from open_webui.retrieval.utils import is_media_content_type
 from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
-from open_webui.retrieval.external import retrieve_external_knowledge, retrieve_external_knowledge_for_connection
 from open_webui.routers.retrieval import (
     BatchProcessFilesForm,
     ProcessFileForm,
+    index_file,
     process_file,
     process_files_batch,
 )
 from open_webui.storage.provider import Storage
-from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
+from open_webui.utils.access_control import filter_allowed_access_grants, has_permission, validate_access_grants
 from open_webui.utils.access_control.files import has_access_to_file
-from open_webui.utils.auth import get_admin_user, get_verified_user
-from pydantic import BaseModel
+from open_webui.utils.auth import get_admin_user, get_verified_user, get_verified_user_by_id
+from open_webui.utils.json_codec import JSONCodec
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-############################
 # getKnowledgeBases
-############################
 
 PAGE_ITEM_COUNT = 30
 
-############################
+
+async def delete_file_resource(file: FileModel, db: AsyncSession) -> bool:
+    try:
+        file_collection = f'file-{file.id}'
+        if await ASYNC_VECTOR_DB_CLIENT.has_collection(collection_name=file_collection):
+            await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name=file_collection)
+    except Exception as e:
+        log.debug('This was most likely caused by bypassing embedding processing')
+        log.debug(e)
+
+    result = await Files.delete_file_by_id(file.id, db=db)
+    if result and file.path:
+        try:
+            await asyncio.to_thread(Storage.delete_file, file.path)
+        except Exception as e:
+            log.debug(e)
+
+    return result
+
+
 # Knowledge Base Embedding
-############################
 
 # Knowledge that sits unread serves no one. Let what is
 # stored here find the ones who need it.
@@ -73,7 +100,9 @@ async def embed_knowledge_base_metadata(
     """Generate and store embedding for knowledge base."""
     try:
         content = f'{name}\n\n{description}' if description else name
-        embedding = await request.app.state.EMBEDDING_FUNCTION(content)
+        embedding = await request.app.state.EMBEDDING_FUNCTION(
+            content, prefix=await Config.get('rag.embedding_content_prefix')
+        )
         await ASYNC_VECTOR_DB_CLIENT.upsert(
             collection_name=KNOWLEDGE_BASES_COLLECTION,
             items=[
@@ -102,7 +131,7 @@ async def remove_knowledge_base_metadata_embedding(knowledge_base_id: str) -> bo
         )
         return True
     except Exception as e:
-        log.debug(f'Failed to remove embedding for {knowledge_base_id}: {e}')
+        log.debug('Failed to remove embedding for %s: %s', knowledge_base_id, e)
         return False
 
 
@@ -126,6 +155,24 @@ def external_knowledge_error():
     )
 
 
+async def _verify_directory_in_knowledge(
+    id: str,
+    directory_id: str | None,
+    db: AsyncSession,
+    detail: str = ERROR_MESSAGES.NOT_FOUND,
+):
+    """Verify a caller-supplied directory belongs to the knowledge base in the URL. Unset means the root level."""
+    if not directory_id:
+        return None
+
+    directory = await Knowledges.get_directory_by_id(directory_id, db=db)
+    if not directory or directory.knowledge_id != id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=detail,
+        )
+
+
 @router.get('/', response_model=KnowledgeAccessListResponse)
 async def get_knowledge_bases(
     page: int | None = 1,
@@ -137,7 +184,7 @@ async def get_knowledge_bases(
     skip = (page - 1) * limit
 
     filter = {}
-    groups = await Groups.get_groups_by_member_id(user.id, db=db)
+    groups = await Groups.get_groups_by_member_id(user.id, db=db, include_inherited=True)
     user_group_ids = {group.id for group in groups}
 
     if not user.role == 'admin' or not BYPASS_ADMIN_ACCESS_CONTROL:
@@ -181,6 +228,8 @@ async def search_knowledge_bases(
     view_option: str | None = None,
     source: str | None = None,
     page: int | None = 1,
+    order_by: str | None = None,
+    direction: str | None = None,
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -195,8 +244,12 @@ async def search_knowledge_bases(
         filter['view_option'] = view_option
     if source in {'local', 'external'}:
         filter['source'] = source
+    if order_by in KNOWLEDGE_SORTABLE_FIELDS:
+        filter['order_by'] = order_by
+    if direction in {'asc', 'desc'}:
+        filter['direction'] = direction
 
-    groups = await Groups.get_groups_by_member_id(user.id, db=db)
+    groups = await Groups.get_groups_by_member_id(user.id, db=db, include_inherited=True)
     user_group_ids = {group.id for group in groups}
 
     if not user.role == 'admin' or not BYPASS_ADMIN_ACCESS_CONTROL:
@@ -252,7 +305,7 @@ async def search_knowledge_files(
     if include_content:
         filter['include_content'] = True
 
-    groups = await Groups.get_groups_by_member_id(user.id, db=db)
+    groups = await Groups.get_groups_by_member_id(user.id, db=db, include_inherited=True)
     if groups:
         filter['group_ids'] = [group.id for group in groups]
 
@@ -261,9 +314,7 @@ async def search_knowledge_files(
     return await Knowledges.search_knowledge_files(filter=filter, skip=skip, limit=limit, db=db)
 
 
-############################
-# CreateNewKnowledge
-############################
+# Create New Knowledge
 
 
 @router.post('/create', response_model=KnowledgeResponse | None)
@@ -272,10 +323,7 @@ async def create_new_knowledge(
     form_data: KnowledgeForm,
     user=Depends(get_verified_user),
 ):
-    # NOTE: We intentionally do NOT use Depends(get_async_session) here.
-    # Database operations (has_permission, filter_allowed_access_grants, insert_new_knowledge) manage their own sessions.
-    # This prevents holding a connection during embed_knowledge_base_metadata()
-    # which makes external embedding API calls (1-5+ seconds).
+    # Let DB helpers own short-lived sessions so remote calls and streams do not hold pool connections.
     if user.role != 'admin' and not await has_permission(
         user.id, 'workspace.knowledge', await Config.get('user.permissions')
     ):
@@ -289,7 +337,7 @@ async def create_new_knowledge(
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_knowledge',
+        resource_type='knowledge',
     )
 
     knowledge = await Knowledges.insert_new_knowledge(user.id, form_data)
@@ -317,9 +365,7 @@ async def create_new_knowledge(
         )
 
 
-############################
-# ReindexKnowledgeFiles
-############################
+# Reindex Knowledge Files
 
 
 @router.post('/reindex', response_model=bool)
@@ -342,9 +388,10 @@ async def reindex_knowledge_files(
     total_files = sum(len(files) for _, files in knowledge_base_files)
     processed_files = 0
     failed_files = []
+    extracted_file_ids = set()
     start_time = time.monotonic()
 
-    log.info(f'Starting reindexing for {len(knowledge_bases)} knowledge bases ({total_files} files)')
+    log.info('Starting reindexing for %s knowledge bases (%s files)', len(knowledge_bases), total_files)
 
     for kb_idx, (knowledge_base, files) in enumerate(knowledge_base_files, start=1):
         try:
@@ -364,11 +411,39 @@ async def reindex_knowledge_files(
                     eta = f', ETA: {round(elapsed / (processed_files - 1) * remaining_files)}s'
 
                 log.info(
-                    f'Reindexing knowledge base {kb_idx}/{len(knowledge_bases)} '
-                    f'file {processed_files}/{total_files}{eta}: {file.filename}'
+                    'Reindexing knowledge base %s/%s file %s/%s%s: %s',
+                    kb_idx,
+                    len(knowledge_bases),
+                    processed_files,
+                    total_files,
+                    eta,
+                    file.filename,
                 )
 
                 try:
+                    if file.id not in extracted_file_ids:
+                        extracted_file_ids.add(file.id)
+                        file_collection = f'file-{file.id}'
+                        if await ASYNC_VECTOR_DB_CLIENT.has_collection(collection_name=file_collection):
+                            await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name=file_collection)
+
+                        # PDF page numbers only come from extraction; media keeps its stored content.
+                        if file.path and not await is_media_content_type(file.meta.get('content_type')):
+                            try:
+                                await index_file(request, ProcessFileForm(file_id=file.id), user, db)
+                            except Exception as e:
+                                log.warning(
+                                    'Error re-extracting file %s (ID: %s), using stored content: %s',
+                                    file.filename,
+                                    file.id,
+                                    e,
+                                )
+                                await Files.update_file_data_by_id(
+                                    file.id, {'content': file.data.get('content')}, db=db
+                                )
+                                if await ASYNC_VECTOR_DB_CLIENT.has_collection(collection_name=file_collection):
+                                    await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name=file_collection)
+
                     await process_file(
                         request,
                         ProcessFileForm(file_id=file.id, collection_name=knowledge_base.id),
@@ -390,7 +465,7 @@ async def reindex_knowledge_files(
         for failed in failed_files:
             log.warning(f'File ID: {failed["file_id"]}, Error: {failed["error"]}')
 
-    log.info(f'Reindexing completed in {round(time.monotonic() - start_time)}s.')
+    log.info('Reindexing completed in %ss.', round(time.monotonic() - start_time))
     await publish_event(
         request,
         EVENTS.KNOWLEDGE_REINDEXED,
@@ -401,9 +476,7 @@ async def reindex_knowledge_files(
     return True
 
 
-############################
-# ReindexKnowledgeBases
-############################
+# Reindex Knowledge Bases
 
 
 @router.post('/metadata/reindex', response_model=dict)
@@ -419,20 +492,22 @@ async def reindex_knowledge_base_metadata_embeddings(
     this entire operation would exhaust the connection pool.
     """
     knowledge_bases = await Knowledges.get_knowledge_bases()
-    log.info(f'Reindexing embeddings for {len(knowledge_bases)} knowledge bases')
+    log.info('Reindexing embeddings for %s knowledge bases', len(knowledge_bases))
+    try:
+        await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name=KNOWLEDGE_BASES_COLLECTION)
+    except Exception as e:
+        log.debug(e)
 
     success_count = 0
     for kb in knowledge_bases:
         if await embed_knowledge_base_metadata(request, kb.id, kb.name, kb.description):
             success_count += 1
 
-    log.info(f'Embedding reindex complete: {success_count}/{len(knowledge_bases)}')
+    log.info('Embedding reindex complete: %s/%s', success_count, len(knowledge_bases))
     return {'total': len(knowledge_bases), 'success': success_count}
 
 
-############################
 # External Knowledge Sources
-############################
 
 
 class ExternalKnowledgeSourceForm(BaseModel):
@@ -492,11 +567,18 @@ class ExternalKnowledgeConnectionListResponse(BaseModel):
     total: int
 
 
+class ExternalKnowledgeStoreListForm(BaseModel):
+    connection_id: Optional[str] = None
+    connection: ExternalKnowledgeConnectionForm
+
+
 EXTERNAL_KNOWLEDGE_CONNECTIONS_CONFIG_KEY = 'external_knowledge.connections'
-EXTERNAL_KNOWLEDGE_PROVIDERS = {'qdrant', 'milvus', 'pgvector'}
+EXTERNAL_KNOWLEDGE_PROVIDERS = {'qdrant', 'milvus', 'pgvector', 'openai'}
+# Providers that search server-side by text, so a source needs no field mapping.
+EXTERNAL_KNOWLEDGE_TEXT_SEARCH_PROVIDERS = {'openai'}
 
 
-def _validate_external_connection_form(form_data: ExternalKnowledgeConnectionForm) -> tuple[str, dict]:
+def _get_external_connection_provider_and_config(form_data: ExternalKnowledgeConnectionForm) -> tuple[str, dict]:
     provider = form_data.provider.lower().strip()
     if provider not in EXTERNAL_KNOWLEDGE_PROVIDERS:
         raise HTTPException(
@@ -514,17 +596,25 @@ def _validate_external_connection_form(form_data: ExternalKnowledgeConnectionFor
     allowed_config_keys = {'timeout'}
     if provider == 'milvus':
         allowed_config_keys.add('db_name')
+    normalized = {key: value for key, value in config.items() if key in allowed_config_keys}
 
-    return provider, {key: value for key, value in config.items() if key in allowed_config_keys}
+    # Like model_ids on provider connections: a store_ids list (empty means all) lists the stores as
+    # knowledge bases, readable by whoever access_grants allows.
+    if provider in EXTERNAL_KNOWLEDGE_TEXT_SEARCH_PROVIDERS and isinstance(config.get('store_ids'), list):
+        normalized['store_ids'] = list(dict.fromkeys(str(i).strip() for i in config['store_ids'] if str(i).strip()))
+        access_grants = config.get('access_grants')
+        normalized['access_grants'] = access_grants if isinstance(access_grants, list) else []
+
+    return provider, normalized
 
 
-def _external_auth_config(provider: str, incoming: Optional[dict], existing: Optional[dict] = None) -> dict:
+def _get_external_auth_config(provider: str, incoming: Optional[dict], existing: Optional[dict] = None) -> dict:
     if provider == 'pgvector':
         return {}
     return existing if incoming is None else incoming or {}
 
 
-def _normalize_external_source(source: ExternalKnowledgeSourceForm, provider: str) -> ExternalKnowledgeSourceForm:
+def _get_normalized_external_source(source: ExternalKnowledgeSourceForm, provider: str) -> ExternalKnowledgeSourceForm:
     source.type = (source.type or 'collection').strip()
     source.name = source.name.strip()
 
@@ -532,6 +622,14 @@ def _normalize_external_source(source: ExternalKnowledgeSourceForm, provider: st
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Only collection sources are supported.')
     if not source.name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Collection name is required.')
+
+    if provider in EXTERNAL_KNOWLEDGE_TEXT_SEARCH_PROVIDERS:
+        vector_store_ids = get_vector_store_ids(source.model_dump())
+        if not vector_store_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Vector store ID is required.')
+        source.name = ', '.join(vector_store_ids)
+        source.config = {'vector_store_ids': vector_store_ids}
+        return source
 
     config = source.config or {}
     allowed_keys = {'content_field', 'metadata_field', 'document_id_field'}
@@ -555,7 +653,7 @@ def _normalize_external_source(source: ExternalKnowledgeSourceForm, provider: st
     return source
 
 
-def _sanitize_external_connection(connection: dict) -> dict:
+def _get_sanitized_external_connection(connection: dict) -> dict:
     sanitized = {**connection}
     sanitized.pop('auth_config', None)
     sanitized['auth_configured'] = bool(connection.get('auth_config'))
@@ -570,17 +668,17 @@ async def _set_external_connections(connections: list[dict]) -> None:
     await Config.upsert({EXTERNAL_KNOWLEDGE_CONNECTIONS_CONFIG_KEY: connections})
 
 
-def _external_connection_dict(
+def _get_external_connection_from_form(
     form_data: ExternalKnowledgeConnectionForm, user_id: str, id: Optional[str] = None
 ) -> dict:
-    provider, config = _validate_external_connection_form(form_data)
+    provider, config = _get_external_connection_provider_and_config(form_data)
     now = int(time.time())
     return {
         'id': id or str(uuid.uuid4()),
         'name': form_data.name.strip(),
         'provider': provider,
         'endpoint': form_data.endpoint.strip(),
-        'auth_config': _external_auth_config(provider, form_data.auth_config),
+        'auth_config': _get_external_auth_config(provider, form_data.auth_config),
         'config': config,
         'capabilities': form_data.capabilities or {'retrieve': True},
         'health': None,
@@ -591,17 +689,17 @@ def _external_connection_dict(
     }
 
 
-def _external_connection_update_dict(
+def _get_external_connection_update_from_form(
     form_data: ExternalKnowledgeConnectionForm,
     existing: dict,
 ) -> dict:
-    provider, config = _validate_external_connection_form(form_data)
+    provider, config = _get_external_connection_provider_and_config(form_data)
     return {
         **existing,
         'name': form_data.name.strip(),
         'provider': provider,
         'endpoint': form_data.endpoint.strip(),
-        'auth_config': _external_auth_config(provider, form_data.auth_config, existing.get('auth_config')) or {},
+        'auth_config': _get_external_auth_config(provider, form_data.auth_config, existing.get('auth_config')) or {},
         'config': config,
         'capabilities': form_data.capabilities or {'retrieve': True},
         'enabled': form_data.enabled,
@@ -609,12 +707,14 @@ def _external_connection_update_dict(
     }
 
 
-async def _get_external_connection(id: str) -> Optional[dict]:
+async def _get_external_connection_by_id(id: str) -> Optional[dict]:
     connections = await _get_external_connections()
     return next((connection for connection in connections if connection.get('id') == id), None)
 
 
-async def _count_external_connection_mappings(connection_id: str, db: Optional[AsyncSession] = None) -> int:
+async def _get_knowledge_base_count_for_external_connection(
+    connection_id: str, db: Optional[AsyncSession] = None
+) -> int:
     count = 0
     for knowledge in await Knowledges.get_knowledge_bases(db=db):
         if (knowledge.meta or {}).get('external', {}).get('connection_id') == connection_id:
@@ -623,11 +723,8 @@ async def _count_external_connection_mappings(connection_id: str, db: Optional[A
 
 
 @router.get('/external/connections', response_model=ExternalKnowledgeConnectionListResponse)
-async def get_external_knowledge_connections(
-    user=Depends(get_admin_user),
-    db: AsyncSession = Depends(get_async_session),
-):
-    connections = [_sanitize_external_connection(connection) for connection in await _get_external_connections()]
+async def get_external_knowledge_connections(user=Depends(get_admin_user)):
+    connections = [_get_sanitized_external_connection(connection) for connection in await _get_external_connections()]
     return ExternalKnowledgeConnectionListResponse(items=connections, total=len(connections))
 
 
@@ -638,10 +735,10 @@ async def create_external_knowledge_connection(
     user=Depends(get_admin_user),
 ):
     connections = await _get_external_connections()
-    connection = _external_connection_dict(form_data, user.id)
+    connection = _get_external_connection_from_form(form_data, user.id)
     connections.append(connection)
     await _set_external_connections(connections)
-    sanitized = _sanitize_external_connection(connection)
+    sanitized = _get_sanitized_external_connection(connection)
     await publish_event(
         request,
         EVENTS.KNOWLEDGE_EXTERNAL_CONNECTION_CREATED,
@@ -656,12 +753,11 @@ async def create_external_knowledge_connection(
 async def get_external_knowledge_connection(
     id: str,
     user=Depends(get_admin_user),
-    db: AsyncSession = Depends(get_async_session),
 ):
-    connection = await _get_external_connection(id)
+    connection = await _get_external_connection_by_id(id)
     if not connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
-    return _sanitize_external_connection(connection)
+    return _get_sanitized_external_connection(connection)
 
 
 @router.patch('/external/connections/{id}', response_model=dict)
@@ -676,10 +772,10 @@ async def update_external_knowledge_connection(
     if idx is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
 
-    connection = _external_connection_update_dict(form_data, connections[idx])
+    connection = _get_external_connection_update_from_form(form_data, connections[idx])
     connections[idx] = connection
     await _set_external_connections(connections)
-    sanitized = _sanitize_external_connection(connection)
+    sanitized = _get_sanitized_external_connection(connection)
     await publish_event(
         request,
         EVENTS.KNOWLEDGE_EXTERNAL_CONNECTION_UPDATED,
@@ -697,11 +793,11 @@ async def delete_external_knowledge_connection(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    connection = await _get_external_connection(id)
+    connection = await _get_external_connection_by_id(id)
     if not connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
 
-    if await _count_external_connection_mappings(id, db=db) > 0:
+    if await _get_knowledge_base_count_for_external_connection(id, db=db) > 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='External connection is still used by knowledge bases.',
@@ -723,9 +819,8 @@ async def delete_external_knowledge_connection(
 async def test_external_knowledge_connection(
     id: str,
     user=Depends(get_admin_user),
-    db: AsyncSession = Depends(get_async_session),
 ):
-    connection = await _get_external_connection(id)
+    connection = await _get_external_connection_by_id(id)
     if not connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
 
@@ -744,7 +839,7 @@ async def test_external_knowledge_connection(
     return health
 
 
-async def _test_external_source_definition(
+async def _get_external_source_test_result(
     request: Request,
     connection: dict,
     source: ExternalKnowledgeSourceForm,
@@ -755,23 +850,13 @@ async def _test_external_source_definition(
     if not query.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Test query is required.')
 
-    source = _normalize_external_source(source, connection.get('provider'))
+    source = _get_normalized_external_source(source, connection.get('provider'))
     test_knowledge = KnowledgeResponse(
         id='external-test',
         user_id=user.id,
         name=connection.get('name'),
         description='',
-        meta={
-            'source': 'external',
-            'read_only': True,
-            'external': {
-                'connection_id': connection.get('id'),
-                'source': source.model_dump(),
-                'provider': connection.get('provider'),
-                'auth_mode': 'service_account',
-                'capabilities': {'retrieve': True},
-            },
-        },
+        meta=_get_external_knowledge_meta(connection, source),
         access_grants=[],
         created_at=int(time.time()),
         updated_at=int(time.time()),
@@ -798,14 +883,14 @@ async def test_external_knowledge_source(
     user=Depends(get_admin_user),
 ):
     if form_data.connection_id:
-        existing_connection = await _get_external_connection(form_data.connection_id)
+        existing_connection = await _get_external_connection_by_id(form_data.connection_id)
         if not existing_connection:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='External connection not found.')
-        connection = _external_connection_update_dict(form_data.connection, existing_connection)
+        connection = _get_external_connection_update_from_form(form_data.connection, existing_connection)
     else:
-        connection = _external_connection_dict(form_data.connection, user.id, id='external-test')
+        connection = _get_external_connection_from_form(form_data.connection, user.id, id='external-test')
 
-    return await _test_external_source_definition(
+    return await _get_external_source_test_result(
         request,
         connection,
         form_data.source,
@@ -821,14 +906,52 @@ async def test_external_knowledge_retrieval(
     id: str,
     form_data: ExternalKnowledgeRetrieveTestForm,
     user=Depends(get_admin_user),
-    db: AsyncSession = Depends(get_async_session),
 ):
-    connection = await _get_external_connection(id)
+    connection = await _get_external_connection_by_id(id)
     if not connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
 
     source = form_data.source or ExternalKnowledgeSourceForm(name='test', config={'content_field': 'payload.text'})
-    return await _test_external_source_definition(request, connection, source, form_data.query, form_data.count, user)
+    return await _get_external_source_test_result(request, connection, source, form_data.query, form_data.count, user)
+
+
+@router.post('/external/source/stores', response_model=dict)
+async def list_external_knowledge_stores(
+    form_data: ExternalKnowledgeStoreListForm,
+    user=Depends(get_admin_user),
+):
+    if form_data.connection_id:
+        existing_connection = await _get_external_connection_by_id(form_data.connection_id)
+        if not existing_connection:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='External connection not found.')
+        connection = _get_external_connection_update_from_form(form_data.connection, existing_connection)
+    else:
+        connection = _get_external_connection_from_form(form_data.connection, user.id, id='external-test')
+
+    if connection['provider'] not in EXTERNAL_KNOWLEDGE_TEXT_SEARCH_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Listing is only supported for OpenAI-compatible sources.',
+        )
+
+    try:
+        return {'items': await list_openai_vector_stores(connection)}
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+def _get_external_knowledge_meta(connection: dict, source: ExternalKnowledgeSourceForm) -> dict:
+    return {
+        'source': 'external',
+        'read_only': True,
+        'external': {
+            'connection_id': connection.get('id'),
+            'source': source.model_dump(),
+            'provider': connection.get('provider'),
+            'auth_mode': 'service_account',
+            'capabilities': {'retrieve': True},
+        },
+    }
 
 
 @router.post('/external/knowledge/create', response_model=KnowledgeResponse | None)
@@ -838,19 +961,19 @@ async def create_external_knowledge(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    connection = await _get_external_connection(form_data.connection_id)
+    connection = await _get_external_connection_by_id(form_data.connection_id)
     if not connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
     if not form_data.name.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Knowledge name is required.')
-    source = _normalize_external_source(form_data.source, connection.get('provider'))
+    source = _get_normalized_external_source(form_data.source, connection.get('provider'))
 
     form_data.access_grants = await filter_allowed_access_grants(
         await Config.get('user.permissions'),
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_knowledge',
+        resource_type='knowledge',
     )
 
     knowledge = await Knowledges.insert_new_knowledge(
@@ -865,17 +988,7 @@ async def create_external_knowledge(
     if not knowledge:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.FILE_EXISTS)
 
-    meta = {
-        'source': 'external',
-        'read_only': True,
-        'external': {
-            'connection_id': form_data.connection_id,
-            'source': source.model_dump(),
-            'provider': connection.get('provider'),
-            'auth_mode': 'service_account',
-            'capabilities': {'retrieve': True},
-        },
-    }
+    meta = _get_external_knowledge_meta(connection, source)
     knowledge = await Knowledges.update_knowledge_meta_by_id(knowledge.id, meta, db=db)
     await embed_knowledge_base_metadata(request, knowledge.id, knowledge.name, knowledge.description)
     return knowledge
@@ -891,9 +1004,9 @@ async def create_external_knowledge_source(
     if not form_data.name.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Knowledge name is required.')
 
-    connection = _external_connection_dict(form_data.connection, user.id)
-    source = _normalize_external_source(form_data.source, connection.get('provider'))
-    test_result = await _test_external_source_definition(
+    connection = _get_external_connection_from_form(form_data.connection, user.id)
+    source = _get_normalized_external_source(form_data.source, connection.get('provider'))
+    test_result = await _get_external_source_test_result(
         request,
         connection,
         source,
@@ -909,7 +1022,7 @@ async def create_external_knowledge_source(
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_knowledge',
+        resource_type='knowledge',
     )
 
     connections = await _get_external_connections()
@@ -930,17 +1043,7 @@ async def create_external_knowledge_source(
         await _set_external_connections(connections)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.FILE_EXISTS)
 
-    meta = {
-        'source': 'external',
-        'read_only': True,
-        'external': {
-            'connection_id': connection.get('id'),
-            'source': source.model_dump(),
-            'provider': connection.get('provider'),
-            'auth_mode': 'service_account',
-            'capabilities': {'retrieve': True},
-        },
-    }
+    meta = _get_external_knowledge_meta(connection, source)
     knowledge = await Knowledges.update_knowledge_meta_by_id(knowledge.id, meta, db=db)
     await embed_knowledge_base_metadata(request, knowledge.id, knowledge.name, knowledge.description)
     return knowledge
@@ -967,9 +1070,9 @@ async def update_external_knowledge_source(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='External connection not found.')
 
     existing_connection = connections[idx]
-    connection = _external_connection_update_dict(form_data.connection, existing_connection)
-    source = _normalize_external_source(form_data.source, connection.get('provider'))
-    test_result = await _test_external_source_definition(
+    connection = _get_external_connection_update_from_form(form_data.connection, existing_connection)
+    source = _get_normalized_external_source(form_data.source, connection.get('provider'))
+    test_result = await _get_external_source_test_result(
         request,
         connection,
         source,
@@ -979,14 +1082,6 @@ async def update_external_knowledge_source(
     )
     if not test_result.get('documents'):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Test query returned no results.')
-
-    form_data.access_grants = await filter_allowed_access_grants(
-        await Config.get('user.permissions'),
-        user.id,
-        user.role,
-        form_data.access_grants,
-        'sharing.public_knowledge',
-    )
 
     connections[idx] = connection
     await _set_external_connections(connections)
@@ -1005,17 +1100,7 @@ async def update_external_knowledge_source(
         await _set_external_connections(connections)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
-    meta = {
-        'source': 'external',
-        'read_only': True,
-        'external': {
-            'connection_id': connection.get('id'),
-            'source': source.model_dump(),
-            'provider': connection.get('provider'),
-            'auth_mode': 'service_account',
-            'capabilities': {'retrieve': True},
-        },
-    }
+    meta = _get_external_knowledge_meta(connection, source)
     updated = await Knowledges.update_knowledge_meta_by_id(id, meta, db=db)
     if not updated:
         connections[idx] = existing_connection
@@ -1026,13 +1111,11 @@ async def update_external_knowledge_source(
     return updated
 
 
-############################
-# GetKnowledgeById
-############################
+# Get Knowledge By Id
 
 
 class KnowledgeFilesResponse(KnowledgeResponse):
-    files: list[FileMetadataResponse | None] = None
+    files: list[FileMetadataResponse] | None = None
     write_access: bool | None = False
 
 
@@ -1078,9 +1161,7 @@ async def get_knowledge_by_id(id: str, user=Depends(get_verified_user), db: Asyn
         )
 
 
-############################
-# UpdateKnowledgeById
-############################
+# Update Knowledge By Id
 
 
 @router.post('/{id}/update', response_model=KnowledgeFilesResponse | None)
@@ -1090,10 +1171,7 @@ async def update_knowledge_by_id(
     form_data: KnowledgeForm,
     user=Depends(get_verified_user),
 ):
-    # NOTE: We intentionally do NOT use Depends(get_async_session) here.
-    # Database operations manage their own short-lived sessions internally.
-    # This prevents holding a connection during embed_knowledge_base_metadata()
-    # which makes external embedding API calls (1-5+ seconds).
+    # Let DB helpers own short-lived sessions so remote calls and streams do not hold pool connections.
     knowledge = await Knowledges.get_knowledge_by_id(id=id)
     if not knowledge:
         raise HTTPException(
@@ -1116,13 +1194,11 @@ async def update_knowledge_by_id(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    form_data.access_grants = await filter_allowed_access_grants(
-        await Config.get('user.permissions'),
-        user.id,
-        user.role,
-        form_data.access_grants,
-        'sharing.public_knowledge',
-    )
+    if form_data.meta is not None:
+        if knowledge.user_id != user.id and user.role != 'admin':
+            raise HTTPException(403, ERROR_MESSAGES.ACCESS_PROHIBITED)
+        if is_external_knowledge(knowledge):
+            external_knowledge_error()
 
     knowledge = await Knowledges.update_knowledge_by_id(id=id, form_data=form_data)
     if knowledge:
@@ -1135,7 +1211,7 @@ async def update_knowledge_by_id(
         )
         response = KnowledgeFilesResponse(
             **knowledge.model_dump(),
-            files=await Knowledges.get_file_metadatas_by_id(knowledge.id),
+            files=[],
         )
         await publish_event(
             request,
@@ -1152,9 +1228,7 @@ async def update_knowledge_by_id(
         )
 
 
-############################
-# UpdateKnowledgeAccessById
-############################
+# Update Knowledge Access By Id
 
 
 class KnowledgeAccessGrantsForm(BaseModel):
@@ -1192,19 +1266,19 @@ async def update_knowledge_access_by_id(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    form_data.access_grants = await filter_allowed_access_grants(
+    form_data.access_grants = await validate_access_grants(
         await Config.get('user.permissions'),
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_knowledge',
+        resource_type='knowledge',
     )
 
     knowledge.access_grants = await AccessGrants.set_access_grants('knowledge', id, form_data.access_grants, db=db)
 
     response = KnowledgeFilesResponse(
         **knowledge.model_dump(),
-        files=await Knowledges.get_file_metadatas_by_id(id, db=db),
+        files=[],
     )
     await publish_event(
         request,
@@ -1216,9 +1290,7 @@ async def update_knowledge_access_by_id(
     return response
 
 
-############################
-# GetPendingKnowledgeFiles
-############################
+# Get Pending Knowledge Files
 
 
 @router.get('/{id}/files/pending')
@@ -1226,7 +1298,6 @@ async def get_pending_knowledge_files(
     id: str,
     stream: bool = Query(False),
     user=Depends(get_verified_user),
-    db: AsyncSession = Depends(get_async_session),
 ):
     """Return files that are being processed for this knowledge base but not yet linked.
 
@@ -1239,7 +1310,8 @@ async def get_pending_knowledge_files(
     When ``stream=true``, returns an SSE stream that polls every 3 seconds
     and emits the current pending file list.  Closes when no files remain.
     """
-    knowledge = await Knowledges.get_knowledge_by_id(id=id, db=db)
+    # Let DB helpers own short-lived sessions so remote calls and streams do not hold pool connections.
+    knowledge = await Knowledges.get_knowledge_by_id(id=id)
     if not knowledge:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1254,7 +1326,6 @@ async def get_pending_knowledge_files(
             resource_type='knowledge',
             resource_id=knowledge.id,
             permission='read',
-            db=db,
         )
     ):
         raise HTTPException(
@@ -1263,17 +1334,33 @@ async def get_pending_knowledge_files(
         )
 
     if not stream:
-        return await Files.get_pending_files_for_knowledge(id, db=db)
+        return await Files.get_pending_files_for_knowledge(id)
 
     async def event_stream(knowledge_id: str):
         MAX_POLL_DURATION = 3600  # 1 hour max
         for _ in range(MAX_POLL_DURATION // 3):
             pending = await Files.get_pending_files_for_knowledge(knowledge_id)
             data = [f.model_dump() for f in pending]
-            yield f'data: {json.dumps(data)}\n\n'
+            yield f'data: {JSONCodec.dumps(data)}\n\n'
             if len(pending) == 0:
                 break
             await asyncio.sleep(3)
+
+            # Access can be revoked while the stream is open.
+            refreshed_user = await get_verified_user_by_id(user.id)
+            if not refreshed_user:
+                break
+            if not (
+                refreshed_user.role == 'admin'
+                or knowledge.user_id == refreshed_user.id
+                or await AccessGrants.has_access(
+                    user_id=refreshed_user.id,
+                    resource_type='knowledge',
+                    resource_id=knowledge_id,
+                    permission='read',
+                )
+            ):
+                break
 
     return StreamingResponse(
         event_stream(id),
@@ -1281,9 +1368,7 @@ async def get_pending_knowledge_files(
     )
 
 
-############################
-# GetKnowledgeFilesById
-############################
+# Get Knowledge Files By Id
 
 
 @router.get('/{id}/files', response_model=KnowledgeFileListResponse)
@@ -1350,9 +1435,66 @@ async def get_knowledge_files_by_id(
     return await Knowledges.search_files_by_id(id, user.id, filter=filter, skip=skip, limit=limit, db=db)
 
 
-############################
-# AddFileToKnowledge
-############################
+# Add File To Knowledge
+
+
+async def check_knowledge_upload_limits(
+    knowledge_id: str,
+    count: int,
+    *,
+    batch: bool = False,
+    file_size: int | None = None,
+    exclude_file_ids: list[str] | None = None,
+    db=None,
+) -> None:
+    if batch:
+        batch_limit = await Config.get('knowledge.max_upload_count')
+        if batch_limit is not None and count > int(batch_limit):
+            raise HTTPException(400, f'You can only upload a maximum of {batch_limit} file(s) per batch.')
+
+    knowledge = await Knowledges.get_knowledge_by_id(knowledge_id, db=db)
+    if not knowledge:
+        raise HTTPException(404, ERROR_MESSAGES.NOT_FOUND)
+    limits = await Knowledges.get_file_limits(knowledge.meta)
+
+    if file_size is not None:
+        for max_size in (await Config.get('rag.file.max_size'), limits['max_file_size']):
+            if max_size and file_size > int(max_size) * 1024 * 1024:
+                raise HTTPException(413, ERROR_MESSAGES.FILE_TOO_LARGE(size=f'{max_size} MB'))
+
+    limit = limits['max_file_count']
+    if limit is not None and count > 0:
+        current_count = await Knowledges.get_file_count_by_id(
+            knowledge_id, include_pending=True, exclude_file_ids=exclude_file_ids, db=db
+        )
+        if current_count + count > int(limit):
+            raise HTTPException(400, f'Knowledge base file limit exceeded ({limit} files maximum).')
+
+
+class KnowledgeUploadValidationForm(BaseModel):
+    count: int = Field(ge=0)
+    file_size: int | None = Field(default=None, ge=0)
+    removed_file_ids: list[str] = Field(default_factory=list)
+
+
+@router.post('/{id}/files/validate')
+async def validate_knowledge_upload(
+    id: str,
+    form_data: KnowledgeUploadValidationForm,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    await _verify_knowledge_write_access(id, user, db)
+    # This is a preflight only. Actual additions recheck capacity without removal credits.
+    await check_knowledge_upload_limits(
+        id,
+        form_data.count,
+        batch=True,
+        file_size=form_data.file_size,
+        exclude_file_ids=form_data.removed_file_ids,
+        db=db,
+    )
+    return {'status': True}
 
 
 class KnowledgeFileIdForm(BaseModel):
@@ -1393,6 +1535,8 @@ async def add_file_to_knowledge_by_id(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    await _verify_directory_in_knowledge(id, form_data.directory_id, db, detail='Target directory not found.')
+
     file = await Files.get_file_by_id(form_data.file_id, db=db)
     if not file:
         raise HTTPException(
@@ -1413,24 +1557,34 @@ async def add_file_to_knowledge_by_id(
                 detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
             )
 
-    # Add content to the vector database
+    already_linked = await Knowledges.has_file(knowledge_id=id, file_id=form_data.file_id, db=db)
+    if not already_linked:
+        await check_knowledge_upload_limits(
+            id, 1, batch=True, file_size=(file.meta or {}).get('size', 0), exclude_file_ids=[form_data.file_id], db=db
+        )
+
+    linked = None
     try:
+        # Claim capacity atomically before indexing into the knowledge collection.
+        if not already_linked:
+            linked = await Knowledges.add_file_to_knowledge_by_id(
+                knowledge_id=id,
+                file_id=form_data.file_id,
+                user_id=user.id,
+                directory_id=form_data.directory_id,
+                db=db,
+            )
+            if not linked:
+                raise ValueError(f'Failed to link file {form_data.file_id} to knowledge {id}')
         await process_file(
             request,
             ProcessFileForm(file_id=form_data.file_id, collection_name=id),
             user=user,
             db=db,
         )
-
-        # Add file to knowledge base
-        await Knowledges.add_file_to_knowledge_by_id(
-            knowledge_id=id,
-            file_id=form_data.file_id,
-            user_id=user.id,
-            directory_id=form_data.directory_id,
-            db=db,
-        )
     except Exception as e:
+        if linked:
+            await Knowledges.remove_file_from_knowledge_by_id(id, form_data.file_id, db=db)
         log.debug(e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1440,7 +1594,7 @@ async def add_file_to_knowledge_by_id(
     if knowledge:
         response = KnowledgeFilesResponse(
             **knowledge.model_dump(),
-            files=await Knowledges.get_file_metadatas_by_id(knowledge.id, db=db),
+            files=await Files.get_file_metadatas_by_ids([form_data.file_id], db=db),
         )
         await publish_event(
             request,
@@ -1524,7 +1678,7 @@ async def update_file_from_knowledge_by_id(
     if knowledge:
         response = KnowledgeFilesResponse(
             **knowledge.model_dump(),
-            files=await Knowledges.get_file_metadatas_by_id(knowledge.id, db=db),
+            files=await Files.get_file_metadatas_by_ids([form_data.file_id], db=db),
         )
         await publish_event(
             request,
@@ -1541,9 +1695,7 @@ async def update_file_from_knowledge_by_id(
         )
 
 
-############################
-# RemoveFileFromKnowledge
-############################
+# Remove File From Knowledge
 
 
 @router.post('/{id}/file/remove', response_model=KnowledgeFilesResponse | None)
@@ -1551,7 +1703,7 @@ async def remove_file_from_knowledge_by_id(
     request: Request,
     id: str,
     form_data: KnowledgeFileIdForm,
-    delete_file: bool = Query(True),
+    delete_file: bool = Query(not ENABLE_KNOWLEDGE_FILE_RETENTION),
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -1598,13 +1750,9 @@ async def remove_file_from_knowledge_by_id(
 
     # Remove content from the vector database
     try:
-        await ASYNC_VECTOR_DB_CLIENT.delete(
-            collection_name=knowledge.id, filter={'file_id': form_data.file_id}
-        )  # Remove by file_id first
-
-        await ASYNC_VECTOR_DB_CLIENT.delete(
-            collection_name=knowledge.id, filter={'hash': file.hash}
-        )  # Remove by hash as well in case of duplicates
+        await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=knowledge.id, filter={'file_id': form_data.file_id})
+        if file.hash:
+            await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=knowledge.id, filter={'hash': file.hash})
     except Exception as e:
         log.debug('This was most likely caused by bypassing embedding processing')
         log.debug(e)
@@ -1612,23 +1760,12 @@ async def remove_file_from_knowledge_by_id(
 
     # Anyone with write permission or higher can delete files
     if delete_file and (file.user_id == user.id or user.role == 'admin'):
-        try:
-            # Remove the file's collection from vector database
-            file_collection = f'file-{form_data.file_id}'
-            if await ASYNC_VECTOR_DB_CLIENT.has_collection(collection_name=file_collection):
-                await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name=file_collection)
-        except Exception as e:
-            log.debug('This was most likely caused by bypassing embedding processing')
-            log.debug(e)
-            pass
-
-        # Delete file from database
-        await Files.delete_file_by_id(form_data.file_id, db=db)
+        await delete_file_resource(file, db)
 
     if knowledge:
         response = KnowledgeFilesResponse(
             **knowledge.model_dump(),
-            files=await Knowledges.get_file_metadatas_by_id(knowledge.id, db=db),
+            files=[],
         )
         await publish_event(
             request,
@@ -1645,9 +1782,7 @@ async def remove_file_from_knowledge_by_id(
         )
 
 
-############################
-# DeleteKnowledgeById
-############################
+# Delete Knowledge By Id
 
 
 @router.delete('/{id}/delete', response_model=bool)
@@ -1680,11 +1815,11 @@ async def delete_knowledge_by_id(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    log.info(f'Deleting knowledge base: {id} (name: {knowledge.name})')
+    log.info('Deleting knowledge base: %s (name: %s)', id, knowledge.name)
 
     # Get all models
     models = await Models.get_all_models(db=db)
-    log.info(f'Found {len(models)} models to check for knowledge base {id}')
+    log.info('Found %s models to check for knowledge base %s', len(models), id)
 
     # Update models that reference this knowledge base
     for model in models:
@@ -1695,15 +1830,20 @@ async def delete_knowledge_by_id(
 
             # If the knowledge list changed, update the model
             if len(updated_knowledge) != len(knowledge_list):
-                log.info(f'Updating model {model.id} to remove knowledge base {id}')
+                log.info('Updating model %s to remove knowledge base %s', model.id, id)
                 model.meta.knowledge = updated_knowledge
                 model_form = ModelForm(**model.model_dump())
-                await Models.update_model_by_id(model.id, model_form, db=db)
+                await Models.update_model_by_id(model.id, model_form, db=db, user_id=user.id)
 
     # Clean up vector DB
     if is_external_knowledge(knowledge):
         connection_id = (knowledge.meta or {}).get('external', {}).get('connection_id')
-        if connection_id:
+        # Connections are admin-owned and shared across knowledge bases
+        if (
+            connection_id
+            and user.role == 'admin'
+            and await _get_knowledge_base_count_for_external_connection(connection_id, db=db) <= 1
+        ):
             connections = [
                 connection for connection in await _get_external_connections() if connection.get('id') != connection_id
             ]
@@ -1730,9 +1870,7 @@ async def delete_knowledge_by_id(
     return result
 
 
-############################
-# ResetKnowledgeById
-############################
+# Reset Knowledge By Id
 
 
 @router.post('/{id}/reset', response_model=KnowledgeResponse | None)
@@ -1768,11 +1906,17 @@ async def reset_knowledge_by_id(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    files = await Knowledges.get_files_by_id(id, db=db) if not ENABLE_KNOWLEDGE_FILE_RETENTION else []
+
     try:
         await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name=id)
     except Exception as e:
         log.debug(e)
         pass
+
+    for file in files:
+        if file.user_id == user.id or user.role == 'admin':
+            await delete_file_resource(file, db)
 
     knowledge = await Knowledges.reset_knowledge_by_id(id=id, include_directories=include_directories, db=db)
     if knowledge:
@@ -1786,9 +1930,7 @@ async def reset_knowledge_by_id(
     return knowledge
 
 
-############################
-# SyncKnowledgeDiff
-############################
+# Sync Knowledge Diff
 
 
 class FileManifestEntry(BaseModel):
@@ -1825,8 +1967,7 @@ async def sync_knowledge_diff(
     """
     await _verify_knowledge_write_access(id, user, db)
 
-    # ── Index existing state ──
-    knowledge_files = await Knowledges.get_files_with_directory_ids(id, db=db)
+    # Index existing state
     existing_directories = await Knowledges.get_all_directories(id, db=db)
 
     # Build directory path lookups
@@ -1845,6 +1986,18 @@ async def sync_knowledge_diff(
         directory_path_by_id[directory.id] = full_path
         directory_id_by_path[full_path] = directory.id
 
+    # Retry uploads left pending by a restart after an hour.
+    pending_files = {
+        (
+            directory_path_by_id.get(file.meta.data.get('directory_id'), ''),
+            file.filename,
+            file.meta.model_dump().get('file_hash'),
+        )
+        for file in await Files.get_pending_files_for_knowledge(id, db=db)
+        if file.created_at >= int(time.time()) - 3600
+    }
+    knowledge_files = await Knowledges.get_files_with_directory_ids(id, db=db)
+
     # Index existing files by (path, filename) → {file_id, checksum}
     indexed_files: dict[tuple[str, str], dict] = {}
     for file_model, directory_id in knowledge_files:
@@ -1855,7 +2008,7 @@ async def sync_knowledge_diff(
             'checksum': stored_checksum,
         }
 
-    # ── Diff files ──
+    # Diff files
     added: list[dict] = []
     modified: list[dict] = []
     deleted: list[dict] = []
@@ -1865,6 +2018,10 @@ async def sync_knowledge_diff(
     for entry in form_data.manifest:
         key = (entry.path, entry.filename)
         manifest_keys.add(key)
+
+        if key not in indexed_files and (*key, entry.checksum) in pending_files:
+            unmodified_count += 1
+            continue
 
         if key not in indexed_files:
             added.append({'filename': entry.filename, 'path': entry.path})
@@ -1883,7 +2040,19 @@ async def sync_knowledge_diff(
         if key not in manifest_keys:
             deleted.append({'file_id': file_info['file_id'], 'filename': key[1]})
 
-    # ── Diff directories ──
+    changed_keys = {(entry['path'], entry['filename']) for entry in added + modified}
+    await check_knowledge_upload_limits(
+        id,
+        len(added) + len(modified),
+        file_size=max(
+            (entry.size for entry in form_data.manifest if (entry.path, entry.filename) in changed_keys), default=0
+        ),
+        batch=True,
+        exclude_file_ids=[entry['file_id'] for entry in deleted] + [entry['stale_file_id'] for entry in modified],
+        db=db,
+    )
+
+    # Diff directories
     required_directory_paths: set[str] = set()
     for entry in form_data.manifest:
         if entry.path:
@@ -1907,9 +2076,7 @@ async def sync_knowledge_diff(
     )
 
 
-############################
-# SyncKnowledgeCleanup
-############################
+# Sync Knowledge Cleanup
 
 
 class SyncCleanupForm(BaseModel):
@@ -1930,44 +2097,45 @@ async def sync_knowledge_cleanup(
     """
     await _verify_knowledge_write_access(id, user, db)
 
-    # ── Remove deleted files ──
+    # Remove deleted files
     for file_id in form_data.file_ids:
         file = await Files.get_file_by_id(file_id, db=db)
         if not file:
+            continue
+
+        # Only clean up files that belong to this knowledge base.
+        if not await Knowledges.has_file(id, file_id, db=db):
             continue
 
         await Knowledges.remove_file_from_knowledge_by_id(id, file_id, db=db)
 
         try:
             await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'file_id': file_id})
-            await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'hash': file.hash})
+            if file.hash:
+                await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'hash': file.hash})
         except Exception:
             pass
 
-        try:
-            collection_name = f'file-{file_id}'
-            if await ASYNC_VECTOR_DB_CLIENT.has_collection(collection_name):
-                await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name)
-        except Exception:
-            pass
+        linked_knowledges = await Knowledges.get_knowledges_by_file_id(file_id, db=db)
+        if (
+            not ENABLE_KNOWLEDGE_FILE_RETENTION
+            and not linked_knowledges
+            and (file.user_id == user.id or user.role == 'admin')
+        ):
+            await delete_file_resource(file, db)
 
-        if file.user_id == user.id or user.role == 'admin':
-            await Files.delete_file_by_id(file_id, db=db)
-            try:
-                await asyncio.to_thread(Storage.delete_file, file.path)
-            except Exception:
-                pass
-
-    # ── Remove orphaned directories (children before parents) ──
+    # Remove orphaned directories (children before parents)
     for dir_id in reversed(form_data.dir_ids):
+        # Only delete directories that belong to this knowledge base.
+        directory = await Knowledges.get_directory_by_id(dir_id, db=db)
+        if not directory or directory.knowledge_id != id:
+            continue
         await Knowledges.delete_directory(dir_id, move_files_to_parent=False, db=db)
 
     return {'status': True}
 
 
-############################
-# AddFilesToKnowledge
-############################
+# Add Files To Knowledge
 
 
 @router.post('/{id}/files/batch/add', response_model=KnowledgeFilesResponse | None)
@@ -2006,8 +2174,15 @@ async def add_files_to_knowledge_batch(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    batch_limit = await Config.get('knowledge.max_upload_count')
+    if batch_limit is not None and len(form_data) > int(batch_limit):
+        raise HTTPException(400, f'You can only upload a maximum of {batch_limit} file(s) per batch.')
+
+    for directory_id in {form.directory_id for form in form_data if form.directory_id}:
+        await _verify_directory_in_knowledge(id, directory_id, db, detail='Target directory not found.')
+
     # Batch-fetch all files to avoid N+1 queries
-    log.info(f'files/batch/add - {len(form_data)} files')
+    log.info('files/batch/add - %s files', len(form_data))
     file_ids = [form.file_id for form in form_data]
     files = await Files.get_files_by_ids(file_ids, db=db)
 
@@ -2039,15 +2214,36 @@ async def add_files_to_knowledge_batch(
     if not new_entries:
         return KnowledgeFilesResponse(
             **knowledge.model_dump(),
-            files=await Knowledges.get_file_metadatas_by_id(knowledge.id, db=db),
+            files=[],
         )
 
     # Narrow the file list to only new files for processing
     new_file_ids = {form.file_id for form in new_entries}
     files = [f for f in files if f.id in new_file_ids]
 
-    # Process files
+    await check_knowledge_upload_limits(
+        id,
+        len(files),
+        file_size=max(((file.meta or {}).get('size', 0) or 0 for file in files), default=0),
+        exclude_file_ids=list(new_file_ids),
+        db=db,
+    )
+
+    # Claim slots before embedding; release them if processing fails.
+    reserved_ids = []
+    dir_map = {form.file_id: form.directory_id for form in new_entries}
     try:
+        for file in files:
+            linked = await Knowledges.add_file_to_knowledge_by_id(
+                knowledge_id=id,
+                file_id=file.id,
+                user_id=user.id,
+                directory_id=dir_map.get(file.id),
+                db=db,
+            )
+            if not linked:
+                raise ValueError(f'Failed to link file {file.id} to knowledge {id}')
+            reserved_ids.append(file.id)
         result = await process_files_batch(
             request=request,
             form_data=BatchProcessFilesForm(files=files, collection_name=id),
@@ -2055,27 +2251,21 @@ async def add_files_to_knowledge_batch(
             db=db,
         )
     except Exception as e:
+        for file_id in reserved_ids:
+            await Knowledges.remove_file_from_knowledge_by_id(id, file_id, db=db)
         log.error(f'add_files_to_knowledge_batch: Exception occurred: {e}', exc_info=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    # Only add files that were successfully processed
     successful_file_ids = [r.file_id for r in result.results if r.status == 'completed']
-    dir_map = {form.file_id: form.directory_id for form in new_entries}
-    for file_id in successful_file_ids:
-        await Knowledges.add_file_to_knowledge_by_id(
-            knowledge_id=id,
-            file_id=file_id,
-            user_id=user.id,
-            directory_id=dir_map.get(file_id),
-            db=db,
-        )
+    for file_id in set(reserved_ids) - set(successful_file_ids):
+        await Knowledges.remove_file_from_knowledge_by_id(id, file_id, db=db)
 
     # If there were any errors, include them in the response
     if result.errors:
         error_details = [f'{err.file_id}: {err.error}' for err in result.errors]
         return KnowledgeFilesResponse(
             **knowledge.model_dump(),
-            files=await Knowledges.get_file_metadatas_by_id(knowledge.id, db=db),
+            files=await Files.get_file_metadatas_by_ids(successful_file_ids, db=db),
             warnings={
                 'message': 'Some files failed to process',
                 'errors': error_details,
@@ -2084,13 +2274,11 @@ async def add_files_to_knowledge_batch(
 
     return KnowledgeFilesResponse(
         **knowledge.model_dump(),
-        files=await Knowledges.get_file_metadatas_by_id(knowledge.id, db=db),
+        files=await Files.get_file_metadatas_by_ids(successful_file_ids, db=db),
     )
 
 
-############################
-# ExportKnowledgeById
-############################
+# Export Knowledge By Id
 
 
 @router.get('/{id}/export')
@@ -2113,32 +2301,32 @@ async def export_knowledge_by_id(id: str, user=Depends(get_admin_user), db: Asyn
 
     # Create zip file in memory
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for file in files:
-            content = file.data.get('content', '') if file.data else ''
-            if content:
-                # Use original filename with .txt extension
-                filename = file.filename
-                if not filename.endswith('.txt'):
-                    filename = f'{filename}.txt'
-                zf.writestr(filename, content)
 
-    zip_buffer.seek(0)
+    def write_zip():
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for file in files:
+                content = file.data.get('content', '') if file.data else ''
+                if content:
+                    # Use original filename with .txt extension
+                    filename = file.filename
+                    if not filename.endswith('.txt'):
+                        filename = f'{filename}.txt'
+                    zf.writestr(filename, content)
+
+    await asyncio.to_thread(write_zip)
 
     # Sanitize knowledge name for filename
     safe_name = ''.join(c if c.isalnum() or c in ' -_' else '_' for c in knowledge.name)
     zip_filename = f'{safe_name}.zip'
 
-    return StreamingResponse(
-        zip_buffer,
+    return Response(
+        content=zip_buffer.getvalue(),
         media_type='application/zip',
         headers={'Content-Disposition': f"attachment; filename*=UTF-8''{quote(zip_filename, safe='')}"},
     )
 
 
-############################
 # Directory endpoints
-############################
 
 
 class KnowledgeDirectoryCreateForm(BaseModel):
@@ -2194,6 +2382,8 @@ async def create_knowledge_directory(
 ):
     await _verify_knowledge_write_access(id, user, db)
 
+    await _verify_directory_in_knowledge(id, form_data.parent_id, db, detail='Parent directory not found.')
+
     directory = await Knowledges.create_directory(
         knowledge_id=id,
         name=form_data.name,
@@ -2226,14 +2416,11 @@ async def update_knowledge_directory(
     db: AsyncSession = Depends(get_async_session),
 ):
     await _verify_knowledge_write_access(id, user, db)
+    await _verify_directory_in_knowledge(id, dir_id, db)
 
-    # Verify directory belongs to this knowledge base
-    directory = await Knowledges.get_directory_by_id(dir_id, db=db)
-    if not directory or directory.knowledge_id != id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=ERROR_MESSAGES.NOT_FOUND,
-        )
+    # '__unset__' leaves the parent alone, None moves the directory to the root
+    if form_data.parent_id not in (None, '__unset__'):
+        await _verify_directory_in_knowledge(id, form_data.parent_id, db, detail='Parent directory not found.')
 
     result = await Knowledges.update_directory(
         directory_id=dir_id,
@@ -2266,14 +2453,10 @@ async def delete_knowledge_directory(
     db: AsyncSession = Depends(get_async_session),
 ):
     await _verify_knowledge_write_access(id, user, db)
+    await _verify_directory_in_knowledge(id, dir_id, db)
 
-    # Verify directory belongs to this knowledge base
-    directory = await Knowledges.get_directory_by_id(dir_id, db=db)
-    if not directory or directory.knowledge_id != id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=ERROR_MESSAGES.NOT_FOUND,
-        )
+    # Collect before delete_directory drops the KnowledgeFile rows
+    files = [] if move_files else await Knowledges.get_files_by_id_and_directory_id(id, dir_id, db=db)
 
     success = await Knowledges.delete_directory(
         directory_id=dir_id,
@@ -2285,6 +2468,23 @@ async def delete_knowledge_directory(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to delete directory.',
         )
+
+    for file in files:
+        try:
+            await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'file_id': file.id})
+            if file.hash:
+                await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'hash': file.hash})
+        except Exception as e:
+            log.debug('This was most likely caused by bypassing embedding processing')
+            log.debug(e)
+
+        if (
+            not ENABLE_KNOWLEDGE_FILE_RETENTION
+            and not await Knowledges.get_knowledges_by_file_id(file.id, db=db)
+            and (file.user_id == user.id or user.role == 'admin')
+        ):
+            await delete_file_resource(file, db)
+
     await publish_event(
         request,
         EVENTS.KNOWLEDGE_DIRECTORY_DELETED,
@@ -2292,7 +2492,7 @@ async def delete_knowledge_directory(
         subject_id=dir_id,
         data={'knowledge_id': id, 'move_files': move_files},
     )
-    return {'status': True}
+    return {'status': True, 'file_ids': [file.id for file in files]}
 
 
 @router.post('/{id}/file/move')
@@ -2312,14 +2512,7 @@ async def move_file_in_knowledge(
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
-    # If target directory is set, verify it belongs to this knowledge base
-    if form_data.directory_id:
-        directory = await Knowledges.get_directory_by_id(form_data.directory_id, db=db)
-        if not directory or directory.knowledge_id != id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Target directory not found.',
-            )
+    await _verify_directory_in_knowledge(id, form_data.directory_id, db, detail='Target directory not found.')
 
     success = await Knowledges.move_file_to_directory(
         knowledge_id=id,

@@ -1,44 +1,40 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
+	import type { HTMLTextareaAttributes } from 'svelte/elements';
 
 	export let value = '';
 	export let placeholder = '';
 	export let rows = 1;
-	export let minSize = null;
-	export let maxSize = null;
+	export let minSize: number | null = null;
+	export let maxSize: number | null = null;
 	export let required = false;
 	export let readonly = false;
+	export let disabled = false;
+	export let id: string | undefined = undefined;
+	export let autocomplete: HTMLTextareaAttributes['autocomplete'] = undefined;
+	export let spellcheck: boolean | undefined = undefined;
+	export let autocapitalize: HTMLTextareaAttributes['autocapitalize'] = undefined;
+	export let onKeydown: (event: KeyboardEvent) => void = () => {};
 	export let className =
 		'w-full rounded-lg px-3.5 py-2 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden  h-full';
-	export let ariaLabel = null;
+	export let ariaLabel: string | null = null;
 
-	export let onInput = () => {};
-	export let onBlur = () => {};
+	export let onInput: (event: Event) => void = () => {};
+	export let onBlur: (event: FocusEvent) => void = () => {};
 
-	let textareaElement;
+	let textareaElement: HTMLTextAreaElement | null = null;
 
-	// Adjust height on mount and after setting the element.
-	onMount(async () => {
-		await tick();
+	// The bound element exists on mount. Cancel the layout callback on navigation.
+	onMount(() => {
 		resize();
-
-		requestAnimationFrame(() => {
-			// setInterveal to cehck until textareaElement is set
-			const interval = setInterval(() => {
-				if (textareaElement) {
-					clearInterval(interval);
-					resize();
-				}
-			}, 100);
-		});
+		const frame = requestAnimationFrame(resize);
+		return () => cancelAnimationFrame(frame);
 	});
 
 	const resize = () => {
 		if (textareaElement) {
-			// Find all ancestors that currently have an active scroll offset.
-			// This is extremely fast because reading `scrollTop` on a clean layout doesn't trigger reflow,
-			// and it makes the fix 100% robust without relying on hardcoded CSS classes.
-			let activeScrollParents = [];
+			// Remember scrolled ancestors before resizing; typing should not rearrange the scenery.
+			const activeScrollParents: { el: HTMLElement; top: number }[] = [];
 			let p = textareaElement.parentNode;
 			while (p && p !== document.body) {
 				if (p instanceof HTMLElement && p.scrollTop > 0) {
@@ -50,7 +46,9 @@
 
 			textareaElement.style.height = '';
 
+			// A hidden textarea (e.g. in a background tab) measures 0; leave sizing to field-sizing.
 			let height = textareaElement.scrollHeight;
+			if (height === 0) return;
 			if (maxSize && height > maxSize) {
 				height = maxSize;
 			}
@@ -60,8 +58,7 @@
 
 			textareaElement.style.height = `${height}px`;
 
-			// Only restore scroll for elements that were actually scrolled.
-			// This prevents layout thrashing that happens if we blindly set `.scrollTop` on every parent.
+			// Restore only changed offsets; the rest of the page can stay seated.
 			activeScrollParents.forEach((p) => {
 				if (p.el.scrollTop !== p.top) p.el.scrollTop = p.top;
 			});
@@ -78,10 +75,16 @@
 	{placeholder}
 	aria-label={ariaLabel || placeholder}
 	class={className}
-	style="field-sizing: content;"
+	style="field-sizing: content;{maxSize ? ` max-height: ${maxSize}px;` : ''}"
 	{rows}
 	{required}
 	{readonly}
+	{disabled}
+	{id}
+	{autocomplete}
+	{spellcheck}
+	{autocapitalize}
+	on:keydown={onKeydown}
 	on:input={(e) => {
 		resize();
 
@@ -91,4 +94,5 @@
 		resize();
 	}}
 	on:blur={onBlur}
-/>
+	on:change
+></textarea>

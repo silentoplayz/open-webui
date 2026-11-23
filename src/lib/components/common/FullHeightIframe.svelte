@@ -1,3 +1,10 @@
+<script context="module" lang="ts">
+	// contentWindows of embeds rendered here; Chat.svelte trusts prompt messages from these
+	const embedWindows = new Set<Window>();
+
+	export const isEmbedWindow = (source: unknown): boolean => embedWindows.has(source as Window);
+</script>
+
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { config } from '$lib/stores';
@@ -28,6 +35,7 @@
 	let iframe: HTMLIFrameElement | null = null;
 	let iframeSrc: string | null = null;
 	let iframeDoc: string | null = null;
+	let registeredWindow: Window | null = null;
 
 	// Derived: build sandbox attribute from flags
 	$: sandbox =
@@ -85,7 +93,7 @@
 
 		const scriptTags: string[] = [];
 
-		// --- Alpine.js detection & injection ---
+		// Alpine.js detection & injection
 		const hasAlpineDirectives = alpineDirectives.some((dir) => html.includes(dir));
 		if (hasAlpineDirectives) {
 			try {
@@ -99,7 +107,7 @@
 			}
 		}
 
-		// --- Chart.js detection & injection ---
+		// Chart.js detection & injection
 		const chartJsDirectives = ['new Chart(', 'Chart.'];
 		const hasChartJsDirectives = chartJsDirectives.some((dir) => html.includes(dir));
 		if (hasChartJsDirectives) {
@@ -175,9 +183,21 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 	const onLoad = async () => {
 		requestAnimationFrame(resizeSameOrigin);
 
+		if (iframe?.contentWindow && iframe.contentWindow !== registeredWindow) {
+			if (registeredWindow) {
+				embedWindows.delete(registeredWindow);
+			}
+			registeredWindow = iframe.contentWindow;
+			embedWindows.add(registeredWindow);
+		}
+
 		// if arguments are provided, inject them into the iframe window
 		if (args && iframe?.contentWindow) {
-			(iframe.contentWindow as any).args = args;
+			try {
+				(iframe.contentWindow as any).args = args;
+			} catch {
+				// Cross-origin → args cannot be injected
+			}
 		}
 	};
 
@@ -188,6 +208,9 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 
 	onDestroy(() => {
 		window.removeEventListener('message', onMessage);
+		if (registeredWindow) {
+			embedWindows.delete(registeredWindow);
+		}
 	});
 </script>
 

@@ -29,19 +29,20 @@
 
 {#if history && history.length > 0}
 	{#if status?.hidden !== true}
-		<div class="text-sm flex flex-col w-full">
-			<button
-				class="w-full"
-				aria-label={$i18n.t('Toggle status history')}
-				aria-expanded={showHistory}
-				on:click={() => {
-					showHistory = !showHistory;
-				}}
-			>
-				<div class="flex items-start gap-2">
-					<StatusItem {status} />
+		<div class="text-[0.90625rem] flex flex-col w-full">
+			<div class="relative w-full">
+				<button
+					class="absolute inset-0"
+					aria-label={$i18n.t('Toggle status history')}
+					aria-expanded={showHistory}
+					on:click={() => {
+						showHistory = !showHistory;
+					}}
+				></button>
+				<div class="relative pointer-events-none flex items-start gap-2">
+					<StatusItem {status} clamp={!showHistory || history.length > 1} />
 				</div>
-			</button>
+			</div>
 
 			{#if showHistory}
 				<div class="flex flex-row">
@@ -59,12 +60,12 @@
 										</div>
 										{#if idx !== history.length - 1}
 											<div
-												class="w-[0.5px] ml-[6.5px] h-[calc(100%-14px)] bg-gray-300 dark:bg-gray-700"
+												class="w-[0.03125rem] ml-[0.40625rem] h-[calc(100%-14px)] bg-gray-300 dark:bg-gray-700"
 											/>
 										{/if}
 									</div>
 
-									<StatusItem {status} done={true} />
+									<StatusItem {status} done={true} clamp={false} />
 								</div>
 							{/each}
 						</div>

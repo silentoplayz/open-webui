@@ -1,4 +1,11 @@
 <script>
+	import { setTheme } from '$lib/utils/theme';
+	import {
+		playNotificationSound,
+		setNotificationSoundEnabled,
+		unlockNotificationAudio
+	} from '$lib/utils/audio';
+	import CommentsHost from '$lib/components/comments/CommentsHost.svelte';
 	import { io } from 'socket.io-client';
 	import { spring } from 'svelte/motion';
 	import { createPyodideWorker } from '$lib/pyodide/createPyodideWorker';
@@ -12,6 +19,7 @@
 	import {
 		config,
 		user,
+		models,
 		settings,
 		theme,
 		WEBUI_NAME,
@@ -21,24 +29,20 @@
 		socket,
 		socketConnected,
 		chatId,
-		chats,
-		currentChatPage,
 		tags,
-		temporaryChatEnabled,
+		temporaryChat,
+		openEmbeddedChatIds,
 		isLastActiveTab,
 		isApp,
 		appInfo,
-		toolServers,
-		playingNotificationSound,
 		channels,
 		channelId,
-		terminalServers,
-		showControls,
-		showFileNavPath,
-		showFileNavDir,
+		channelRequestQueues,
 		pyodideWorker,
 		desktopEvent
 	} from '$lib/stores';
+	import { refreshChatList, setChatTitle } from '$lib/stores/chatList';
+	import { clearFolderStates } from '$lib/stores/folderStates';
 	import { getFileContentById } from '$lib/apis/files';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -51,10 +55,10 @@
 	import '../app.css';
 	import 'tippy.js/dist/tippy.css';
 
-	import { executeToolServer, getBackendConfig, getModels, getVersion } from '$lib/apis';
+	import { getBackendConfig, getModels, getVersion } from '$lib/apis';
 	import { getSessionUser, updateUserTimezone, userSignOut } from '$lib/apis/auths';
-	import { getAllTags, getChatList } from '$lib/apis/chats';
-	import { chatCompletion } from '$lib/apis/openai';
+	import { getAllTags } from '$lib/apis/chats';
+	import { isTemporaryChatId } from '$lib/utils/chatId';
 	import {
 		addOpenAIConnection,
 		removeOpenAIConnection,
@@ -62,24 +66,19 @@
 		removeTerminalConnection
 	} from '$lib/utils/connections';
 
-	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL, WEBUI_HOSTNAME } from '$lib/constants';
-	import {
-		bestMatchingLanguage,
-		cleanText,
-		displayFileHandler,
-		getUserTimezone,
-		removeAllDetails
-	} from '$lib/utils';
+	import { COMMUNITY_ORIGINS, WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
+	import { bestMatchingLanguage, cleanText, getUserTimezone, removeAllDetails } from '$lib/utils';
 	import { setTextScale } from '$lib/utils/text-scale';
+	import { initializeTether, renewTetherSession } from '$lib/utils/tether';
 
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
-	import AppSidebar from '$lib/components/app/AppSidebar.svelte';
 	import SyncStatsModal from '$lib/components/chat/Settings/SyncStatsModal.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	import MfaManagement from '$lib/components/auth/MfaManagement.svelte';
 	import { getOutputText } from '$lib/components/chat/Messages/structuredOutput';
 	import { getUserSettings } from '$lib/apis/users';
-	import dayjs from 'dayjs';
-	import { getChannels } from '$lib/apis/channels';
+	import { getChannelById, getChannels } from '$lib/apis/channels';
+	import { shouldNotifyChannelMessage } from '$lib/utils/channelNotifications';
 
 	const unregisterServiceWorkers = async () => {
 		if ('serviceWorker' in navigator) {
@@ -97,17 +96,27 @@
 
 	// handle frontend updates (https://svelte.dev/docs/kit/configuration#version)
 	beforeNavigate(async ({ willUnload, to }) => {
-		if (updated.current && !willUnload && to?.url) {
+		if (updated.current && !mfaManagement && !willUnload && to?.url) {
 			await unregisterServiceWorkers();
 			location.href = to.url.href;
 		}
 	});
 
 	setContext('i18n', i18n);
+	/** @type {import('$lib/components/auth/MfaManagement.svelte').MfaManagementFlow | null} */
+	let mfaManagement = null;
+	setContext(
+		'showMfaManagement',
+		/** @param {import('$lib/components/auth/MfaManagement.svelte').MfaManagementFlow} flow */
+		(flow) => {
+			mfaManagement = flow;
+		}
+	);
 
 	const bc = new BroadcastChannel('active-tab-channel');
 
 	let loaded = false;
+	let stopTether = () => {};
 	let tokenTimer = null;
 	let isAuthRedirectInProgress = false;
 
@@ -119,9 +128,48 @@
 	let heartbeatInterval = null;
 	let disconnectToastTimer = null;
 	let disconnectWarningShown = false;
+	let pageIsVisible = true;
+	let pageWasHidden = false;
+	let lastVisibleAt = Date.now();
+	let disconnectReason = null;
 
 	const BREAKPOINT = 768;
 	const DISCONNECT_TOAST_DELAY_MS = 2000;
+	const RECENT_RESUME_GRACE_MS = 8000;
+	const RESUME_DISCONNECT_REASONS = new Set(['ping timeout', 'transport close', 'transport error']);
+
+	const clearDisconnectToastTimer = () => {
+		if (disconnectToastTimer) {
+			clearTimeout(disconnectToastTimer);
+			disconnectToastTimer = null;
+		}
+	};
+
+	const recentlyResumed = () =>
+		pageWasHidden && Date.now() - lastVisibleAt < RECENT_RESUME_GRACE_MS;
+
+	const isLikelyResumeDisconnect = (reason) => {
+		return (!pageIsVisible || recentlyResumed()) && RESUME_DISCONNECT_REASONS.has(reason);
+	};
+
+	const scheduleDisconnectToast = () => {
+		clearDisconnectToastTimer();
+
+		const resumeDelay = isLikelyResumeDisconnect(disconnectReason)
+			? Math.max(RECENT_RESUME_GRACE_MS - (Date.now() - lastVisibleAt), 0)
+			: 0;
+
+		disconnectToastTimer = setTimeout(() => {
+			disconnectToastTimer = null;
+
+			if ($socket?.connected || !pageIsVisible || isLikelyResumeDisconnect(disconnectReason)) {
+				return;
+			}
+
+			disconnectWarningShown = true;
+			toast.warning($i18n.t('Connection lost. Reconnecting...'));
+		}, resumeDelay + DISCONNECT_TOAST_DELAY_MS);
+	};
 
 	const setupSocket = async (enableWebsocket) => {
 		const _socket = io(`${WEBUI_BASE_URL}` || undefined, {
@@ -131,7 +179,7 @@
 			randomizationFactor: 0.5,
 			path: '/ws/socket.io',
 			transports: enableWebsocket ? ['websocket'] : ['polling', 'websocket'],
-			auth: { token: localStorage.token }
+			auth: (cb) => cb({ token: localStorage.token })
 		});
 		await socket.set(_socket);
 
@@ -145,19 +193,17 @@
 			console.log('connected', _socket.id);
 
 			// Cancel any pending disconnect toast if we reconnected quickly
-			if (disconnectToastTimer) {
-				clearTimeout(disconnectToastTimer);
-				disconnectToastTimer = null;
-			}
+			clearDisconnectToastTimer();
 
 			if (hasConnectedOnce) {
 				socketConnected.set(true);
 				// Only show "Reconnected" if the user actually saw the disconnect warning
 				if (disconnectWarningShown) {
 					toast.success($i18n.t('Reconnected'));
-					disconnectWarningShown = false;
 				}
 			}
+			disconnectWarningShown = false;
+			disconnectReason = null;
 			hasConnectedOnce = true;
 
 			const res = await getVersion(localStorage.token);
@@ -167,8 +213,9 @@
 
 			if (version !== null || deploymentId !== null) {
 				if (
-					($WEBUI_VERSION !== null && version !== $WEBUI_VERSION) ||
-					($WEBUI_DEPLOYMENT_ID !== null && deploymentId !== $WEBUI_DEPLOYMENT_ID)
+					!mfaManagement &&
+					(($WEBUI_VERSION !== null && version !== $WEBUI_VERSION) ||
+						($WEBUI_DEPLOYMENT_ID !== null && deploymentId !== $WEBUI_DEPLOYMENT_ID))
 				) {
 					await unregisterServiceWorkers();
 					location.href = location.href;
@@ -176,13 +223,15 @@
 				}
 			}
 
-			// Send heartbeat every 30 seconds
-			heartbeatInterval = setInterval(() => {
-				if (_socket.connected) {
-					console.log('Sending heartbeat');
-					_socket.emit('heartbeat', {});
-				}
-			}, 30000);
+			heartbeatInterval = setInterval(
+				() => {
+					if (_socket.connected) {
+						console.log('Sending heartbeat');
+						_socket.emit('heartbeat', {});
+					}
+				},
+				($config?.features?.websocket_heartbeat_interval ?? 30) * 1000
+			);
 
 			if (deploymentId !== null) {
 				WEBUI_DEPLOYMENT_ID.set(deploymentId);
@@ -214,22 +263,23 @@
 		_socket.on('disconnect', (reason, details) => {
 			console.log(`Socket ${_socket.id} disconnected due to ${reason}`);
 			socketConnected.set(false);
-
-			// Delay showing the disconnect toast so brief interruptions
-			// (e.g. mobile tab backgrounding) don't flash a nuisance warning
-			if (disconnectToastTimer) {
-				clearTimeout(disconnectToastTimer);
-			}
+			disconnectReason = reason;
 			disconnectWarningShown = false;
-			disconnectToastTimer = setTimeout(() => {
-				disconnectToastTimer = null;
-				disconnectWarningShown = true;
-				toast.warning($i18n.t('Connection lost. Reconnecting...'));
-			}, DISCONNECT_TOAST_DELAY_MS);
+
+			// Delay visible warnings while mobile browsers resume suspended tabs.
+			if (isLikelyResumeDisconnect(reason)) {
+				clearDisconnectToastTimer();
+			} else {
+				scheduleDisconnectToast();
+			}
 
 			if (heartbeatInterval) {
 				clearInterval(heartbeatInterval);
 				heartbeatInterval = null;
+			}
+
+			if (reason === 'io server disconnect') {
+				_socket.connect();
 			}
 
 			if (details) {
@@ -270,7 +320,11 @@
 			/\bimport\s+seaborn\b|\bfrom\s+seaborn\b/.test(code) ? 'seaborn' : null,
 			/\bimport\s+sympy\b|\bfrom\s+sympy\b/.test(code) ? 'sympy' : null,
 			/\bimport\s+tiktoken\b|\bfrom\s+tiktoken\b/.test(code) ? 'tiktoken' : null,
-			/\bimport\s+pytz\b|\bfrom\s+pytz\b/.test(code) ? 'pytz' : null
+			/\bimport\s+pytz\b|\bfrom\s+pytz\b/.test(code) ? 'pytz' : null,
+			/\bimport\s+openpyxl\b|\bfrom\s+openpyxl\b/.test(code) ? 'openpyxl' : null,
+			/\.(read|to)_excel\(|\.Excel(Writer|File)\(/.test(code) ? 'openpyxl' : null,
+			/\bimport\s+pptx\b|\bfrom\s+pptx\b/.test(code) ? 'python-pptx' : null,
+			/\bimport\s+docx\b|\bfrom\s+docx\b/.test(code) ? 'python-docx' : null
 		].filter(Boolean);
 
 		const worker = getOrCreateWorker();
@@ -391,86 +445,40 @@
 		worker.addEventListener('error', onError);
 	};
 
-	const resolveToolServer = (serverUrl) => {
-		let toolServer = $settings?.toolServers?.find((server) => server.url === serverUrl);
-		if (!toolServer) {
-			const terminalServer = ($settings?.terminalServers ?? []).find(
-				(server) => server.url === serverUrl
-			);
-			if (terminalServer) {
-				toolServer = {
-					url: terminalServer.url,
-					auth_type: terminalServer.auth_type ?? 'bearer',
-					key: terminalServer.key ?? '',
-					path: terminalServer.path ?? '/openapi.json'
-				};
+	const notify = (title, options, path) => {
+		const userId = $user?.id;
+		if (window.tether) return;
+		if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+		if (!userId) return;
+		const notification = new Notification(title, options);
+		notification.onclick = async () => {
+			notification.close();
+			if ($user?.id !== userId) return;
+			try {
+				window.focus();
+				if ($user?.id === userId) await goto(path);
+			} catch (error) {
+				console.error('Could not open notification', error);
 			}
-		}
-
-		let toolServerData =
-			$toolServers?.find((server) => server.url === serverUrl) ??
-			$terminalServers?.find((server) => server.url === serverUrl);
-
-		let token = null;
-		if (toolServer) {
-			const auth_type = toolServer?.auth_type ?? 'bearer';
-			if (auth_type === 'bearer') token = toolServer?.key;
-			else if (auth_type === 'session') token = localStorage.token;
-		}
-
-		return { toolServer, toolServerData, token };
-	};
-
-	const executeTool = async (data, cb, chatId) => {
-		const { toolServer, toolServerData, token } = resolveToolServer(data.server?.url);
-
-		console.log('executeTool', data, toolServer);
-
-		if (toolServer) {
-			const res = await executeToolServer(
-				token,
-				toolServer.url,
-				data?.name,
-				data?.params,
-				toolServerData,
-				chatId
-			);
-
-			console.log('executeToolServer', res);
-
-			if (data?.name === 'display_file' && data?.params?.path) {
-				if (res?.exists !== false) {
-					displayFileHandler(data.params.path, { showControls, showFileNavPath });
-				}
-			}
-
-			if (['write_file'].includes(data?.name) && data?.params?.path) {
-				showFileNavDir.set(res?.path ?? data.params.path);
-			}
-
-			if (cb) {
-				cb(structuredClone(res));
-			}
-		} else {
-			if (cb) {
-				cb({ error: 'Tool Server Not Found' });
-			}
-		}
+		};
 	};
 
 	const chatEventHandler = async (event, cb) => {
+		if (event.shared) return;
 		const chat = $page.url.pathname.includes(`/c/${event.chat_id}`);
 
 		// Skip events from temporary chats that are not the current chat.
 		// This prevents notifications from being sent to other tabs/devices
 		// for privacy, since temporary chats are not meant to be persisted or visible elsewhere.
-		const isTemporaryChat = event.chat_id?.startsWith('local:');
-		if (isTemporaryChat && event.chat_id !== $chatId) {
+		const isTemporaryChat = isTemporaryChatId(event.chat_id);
+		if (isTemporaryChat && event.chat_id !== $chatId && !$openEmbeddedChatIds.has(event.chat_id)) {
 			return;
 		}
 
 		let isInBackground = document.visibilityState !== 'visible';
-		if (window.electronAPI) {
+		if (window.tether?.isFocused) {
+			isInBackground = !(await window.tether.isFocused().catch(() => false));
+		} else if (window.electronAPI) {
 			const res = await window.electronAPI.send({
 				type: 'window:isFocused'
 			});
@@ -506,16 +514,23 @@
 
 			if ($isLastActiveTab) {
 				if ($settings?.notificationEnabled ?? false) {
-					new Notification(`${data.title} • Open WebUI`, {
-						body: timeStr,
-						icon: `${WEBUI_BASE_URL}/static/favicon.png`
-					});
+					notify(
+						`${data.title} / Open WebUI`,
+						{
+							body: timeStr,
+							// LICENSE covers this Open WebUI notification identifier.
+							// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+							// https://docs.openwebui.com/license.
+							icon: `${WEBUI_BASE_URL}/static/favicon.png`
+						},
+						'/calendar'
+					);
 				}
 			}
 			return;
 		}
 
-		// Session-targeted RPC calls (code execution, tool calls, direct completion)
+		// Session-targeted RPC calls (code execution)
 		// must ALWAYS be processed regardless of active chat or tab visibility,
 		// because the backend's sio.call blocks waiting for our callback response.
 		if (data?.session_id === $socket.id) {
@@ -523,100 +538,13 @@
 				console.log('execute:python', data);
 				executePythonAsWorker(data.id, data.code, cb, data.files || []);
 				return;
-			} else if (type === 'execute:tool') {
-				console.log('execute:tool', data);
-				executeTool(data, cb, event.chat_id);
-				return;
-			} else if (type === 'request:chat:completion') {
-				console.log(data, $socket.id);
-				const { session_id, channel, form_data, model } = data;
-
-				try {
-					const directConnections = $settings?.directConnections ?? {};
-
-					if (directConnections) {
-						const urlIdx = model?.urlIdx;
-
-						const OPENAI_API_URL = directConnections.OPENAI_API_BASE_URLS[urlIdx];
-						const OPENAI_API_KEY = directConnections.OPENAI_API_KEYS[urlIdx];
-						const API_CONFIG = directConnections.OPENAI_API_CONFIGS[urlIdx];
-
-						try {
-							if (API_CONFIG?.prefix_id) {
-								const prefixId = API_CONFIG.prefix_id;
-								form_data['model'] = form_data['model'].replace(`${prefixId}.`, ``);
-							}
-
-							const [res, controller] = await chatCompletion(
-								OPENAI_API_KEY,
-								form_data,
-								OPENAI_API_URL
-							);
-
-							if (res) {
-								// raise if the response is not ok
-								if (!res.ok) {
-									throw await res.json();
-								}
-
-								if (form_data?.stream ?? false) {
-									cb({
-										status: true
-									});
-									console.log({ status: true });
-
-									// res will either be SSE or JSON
-									const reader = res.body.getReader();
-									const decoder = new TextDecoder();
-
-									const processStream = async () => {
-										while (true) {
-											// Read data chunks from the response stream
-											const { done, value } = await reader.read();
-											if (done) {
-												break;
-											}
-
-											// Decode the received chunk
-											const chunk = decoder.decode(value, { stream: true });
-
-											// Process lines within the chunk
-											const lines = chunk.split('\n').filter((line) => line.trim() !== '');
-
-											for (const line of lines) {
-												console.log(line);
-												$socket?.emit(channel, line);
-											}
-										}
-									};
-
-									// Process the stream in the background
-									await processStream();
-								} else {
-									const data = await res.json();
-									cb(data);
-								}
-							} else {
-								throw new Error('An error occurred while fetching the completion');
-							}
-						} catch (error) {
-							console.error('chatCompletion', error);
-							cb(error);
-						}
-					}
-				} catch (error) {
-					console.error('chatCompletion', error);
-					cb(error);
-				} finally {
-					$socket.emit(channel, {
-						done: true
-					});
-				}
-				return;
 			}
 		}
 
-		if ((event.chat_id !== $chatId && !$temporaryChatEnabled) || isInBackground) {
+		const isVisible = !!document
+			.querySelector(`[data-chat-id="${CSS.escape(event.chat_id)}"]`)
+			?.checkVisibility();
+		if (!event?.internal && ((!isVisible && !$temporaryChat) || isInBackground)) {
 			if (type === 'chat:completion') {
 				const { done, content, output, title } = data;
 				const displayTitle = title || $i18n.t('New Chat');
@@ -625,23 +553,25 @@
 				if (done) {
 					if (
 						($settings?.notificationSound ?? true) &&
-						($settings?.notificationSoundAlways ?? false)
+						($settings?.notificationSoundAlways ?? false) &&
+						$isLastActiveTab
 					) {
-						playingNotificationSound.set(true);
-
-						const audio = new Audio(`/audio/notification.mp3`);
-						audio.play().finally(() => {
-							// Ensure the global state is reset after the sound finishes
-							playingNotificationSound.set(false);
-						});
+						void playNotificationSound($settings?.notificationSoundType);
 					}
 
 					if ($isLastActiveTab) {
 						if ($settings?.notificationEnabled ?? false) {
-							new Notification(`${displayTitle} • Open WebUI`, {
-								body: contentPreview,
-								icon: `${WEBUI_BASE_URL}/static/favicon.png`
-							});
+							notify(
+								`${displayTitle} / Open WebUI`,
+								{
+									body: contentPreview,
+									// LICENSE covers this Open WebUI notification identifier.
+									// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+									// https://docs.openwebui.com/license.
+									icon: `${WEBUI_BASE_URL}/static/favicon.png`
+								},
+								`/c/${event.chat_id}`
+							);
 						}
 					}
 
@@ -651,15 +581,16 @@
 								goto(`/c/${event.chat_id}`);
 							},
 							content: contentPreview,
-							title: displayTitle
+							title: displayTitle,
+							playSound: !($settings?.notificationSoundAlways ?? false)
 						},
 						duration: 15000,
 						unstyled: true
 					});
 				}
 			} else if (type === 'chat:title') {
-				currentChatPage.set(1);
-				await chats.set(await getChatList(localStorage.token, $currentChatPage));
+				setChatTitle(event.chat_id, data);
+				await refreshChatList(localStorage.token);
 			} else if (type === 'chat:tags') {
 				tags.set(await getAllTags(localStorage.token));
 			}
@@ -668,6 +599,16 @@
 
 	const channelEventHandler = async (event) => {
 		console.log('channelEventHandler', event);
+		if (event.data?.type === 'channel:mute') {
+			channels.update((items) =>
+				items.map((item) =>
+					item.id === event.channel_id
+						? { ...item, is_channel_muted: event.data.data.is_channel_muted }
+						: item
+				)
+			);
+			return;
+		}
 		if (event.data?.type === 'typing') {
 			return;
 		}
@@ -694,7 +635,9 @@
 		const channel = $page.url.pathname.includes(`/channels/${event.channel_id}`);
 
 		let isInBackground = document.visibilityState !== 'visible';
-		if (window.electronAPI) {
+		if (window.tether?.isFocused) {
+			isInBackground = !(await window.tether.isFocused().catch(() => false));
+		} else if (window.electronAPI) {
 			const res = await window.electronAPI.send({
 				type: 'window:isFocused'
 			});
@@ -742,23 +685,49 @@
 			}
 
 			if (type === 'message') {
+				const preference =
+					$channels?.find((item) => item.id === event.channel_id) ??
+					(await getChannelById(localStorage.token, event.channel_id).catch(() => null));
+				if (
+					!preference ||
+					!shouldNotifyChannelMessage(
+						preference.is_channel_muted ?? false,
+						data?.content ?? '',
+						$user?.id ?? ''
+					)
+				) {
+					return;
+				}
 				const title = `${data?.user?.name}${event?.channel?.type !== 'dm' ? ` (#${event?.channel?.name})` : ''}`;
+				const content = data?.content?.replace(
+					/<([@#])([^|>\s]+)(?:\|([^>]*))?>/g,
+					(_, trigger, id, label) => trigger + (label || id)
+				);
 
 				if ($isLastActiveTab) {
 					if ($settings?.notificationEnabled ?? false) {
-						new Notification(`${title} • Open WebUI`, {
-							body: data?.content,
-							icon: `${WEBUI_API_BASE_URL}/users/${data?.user?.id}/profile/image`
-						});
+						// LICENSE covers this Open WebUI notification identifier.
+						// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+						// https://docs.openwebui.com/license.
+						notify(
+							`${title} / Open WebUI`,
+							{
+								body: content,
+								icon: `${WEBUI_API_BASE_URL}/users/${data?.user?.id}/profile/image`
+							},
+							`/channels/${event.channel_id}${data?.parent_id ? `?thread=${data.parent_id}` : ''}`
+						);
 					}
 				}
 
 				toast.custom(NotificationToast, {
 					componentProps: {
 						onClick: () => {
-							goto(`/channels/${event.channel_id}`);
+							goto(
+								`/channels/${event.channel_id}${data?.parent_id ? `?thread=${data.parent_id}` : ''}`
+							);
 						},
-						content: data?.content,
+						content,
 						title: `${title}`
 					},
 					duration: 15000,
@@ -802,20 +771,26 @@
 		}
 	};
 
-	const redirectToAuthAfterUnauthorized = () => {
-		if (isAuthRedirectInProgress || window.location.pathname === '/auth') {
+	const clearExpiredSession = async () => {
+		if (isAuthRedirectInProgress) {
 			return;
 		}
 
 		isAuthRedirectInProgress = true;
+		if (tokenTimer) {
+			clearInterval(tokenTimer);
+			tokenTimer = null;
+		}
+		// Await sign-out so it cannot clear the state of the new OAuth login
+		await userSignOut().catch((error) => {
+			console.error('Error signing out expired session:', error);
+		});
 		user.set(null);
 		localStorage.removeItem('token');
+		// Clear the OAuth token cookie so /auth doesn't auto-login and redirect-loop
+		document.cookie = 'token=; Max-Age=0; path=/';
 		toast.error($i18n.t('Session expired. Please sign in again.'));
-
-		const currentPath = `${window.location.pathname}${window.location.search}`;
-		goto(`/auth?redirect=${encodeURIComponent(currentPath)}`).finally(() => {
-			isAuthRedirectInProgress = false;
-		});
+		isAuthRedirectInProgress = false;
 	};
 
 	const isCurrentSessionUnauthorized = async (originalFetch) => {
@@ -840,12 +815,15 @@
 			return;
 		}
 
-		if (now >= exp - TOKEN_EXPIRY_BUFFER) {
-			const res = await userSignOut();
-			user.set(null);
-			localStorage.removeItem('token');
-
-			location.href = res?.redirect_url ?? '/auth';
+		if (now >= exp - Math.max(TOKEN_EXPIRY_BUFFER, window.tether ? 90 : 0)) {
+			if (window.tether) {
+				try {
+					if (await renewTetherSession()) return;
+				} catch {
+					return;
+				}
+			}
+			clearExpiredSession();
 		}
 	};
 
@@ -859,47 +837,19 @@
 			await goto(event.data.path);
 			return;
 		}
-		if (event.type === 'query' && (event.data?.query || event.data?.files?.length)) {
-			desktopEvent.set(event);
-			await goto('/');
-			return;
-		}
 		if (event.type === 'call') {
-			desktopEvent.set(event);
+			desktopEvent.set({ type: 'call' });
 			await goto('/');
 			return;
 		}
 		if (event.type === 'theme:update' && event.data?.theme) {
-			const newTheme = event.data.theme;
-			localStorage.setItem('theme', newTheme);
-			theme.set(newTheme);
-
-			// Apply theme classes (mirrors logic from chat/Settings/General.svelte)
-			const themes = ['dark', 'light', 'oled-dark'];
-			let themeToApply =
-				newTheme === 'oled-dark' ? 'dark' : newTheme === 'her' ? 'light' : newTheme;
-			if (newTheme === 'system') {
-				themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-			}
-			themes
-				.filter((e) => e !== themeToApply)
-				.forEach((e) => {
-					e.split(' ').forEach((cls) => document.documentElement.classList.remove(cls));
-				});
-			themeToApply.split(' ').forEach((cls) => document.documentElement.classList.add(cls));
+			setTheme(event.data.theme);
 			return;
 		}
 		if (event.type === 'models:refresh') {
 			const token = localStorage.token;
 			if (token) {
-				models.set(
-					await getModels(
-						token,
-						$config?.features?.enable_direct_connections
-							? ($settings?.directConnections ?? null)
-							: null
-					)
-				);
+				models.set(await getModels(token));
 			}
 			return;
 		}
@@ -938,11 +888,7 @@
 	};
 
 	const windowMessageEventHandler = async (event) => {
-		if (
-			!['https://openwebui.com', 'https://www.openwebui.com', 'http://localhost:9999'].includes(
-				event.origin
-			)
-		) {
+		if (!COMMUNITY_ORIGINS.includes(event.origin)) {
 			return;
 		}
 
@@ -954,6 +900,7 @@
 
 	onMount(async () => {
 		const originalFetch = window.fetch.bind(window);
+		stopTether = await initializeTether(originalFetch);
 		window.fetch = async (input, init) => {
 			const response = await originalFetch(input, init);
 
@@ -963,7 +910,14 @@
 				isAuthenticatedBackendFetch(input, init) &&
 				(await isCurrentSessionUnauthorized(originalFetch))
 			) {
-				redirectToAuthAfterUnauthorized();
+				if (window.tether) {
+					try {
+						if (await renewTetherSession(true)) return response;
+					} catch {
+						return response;
+					}
+				}
+				clearExpiredSession();
 			}
 
 			return response;
@@ -1043,18 +997,39 @@
 		};
 
 		// Set yourself as the last active tab when this tab is focused
+		const handlePageHidden = () => {
+			pageIsVisible = false;
+			pageWasHidden = true;
+			clearDisconnectToastTimer();
+		};
+
+		const handlePageVisible = () => {
+			pageIsVisible = true;
+			lastVisibleAt = Date.now();
+
+			isLastActiveTab.set(true); // This tab is now the active tab
+			bc.postMessage('active'); // Notify other tabs that this tab is active
+
+			// Check token expiry when the tab becomes active
+			checkTokenExpiry();
+
+			if ($socket && !$socket.connected) {
+				scheduleDisconnectToast();
+			}
+		};
+
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
-				isLastActiveTab.set(true); // This tab is now the active tab
-				bc.postMessage('active'); // Notify other tabs that this tab is active
-
-				// Check token expiry when the tab becomes active
-				checkTokenExpiry();
+				handlePageVisible();
+			} else {
+				handlePageHidden();
 			}
 		};
 
 		// Add event listener for visibility state changes
 		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('pagehide', handlePageHidden);
+		window.addEventListener('pageshow', handlePageVisible);
 
 		// Call visibility change handler initially to set state on load
 		handleVisibilityChange();
@@ -1072,7 +1047,13 @@
 		};
 		window.addEventListener('resize', onResize);
 
-		user.subscribe(async (value) => {
+		let queueUserId = $user?.id;
+		const unsubscribeQueueUser = user.subscribe(async (value) => {
+			if (queueUserId !== value?.id) {
+				clearFolderStates();
+				channelRequestQueues.set({});
+				queueUserId = value?.id;
+			}
 			if (value) {
 				$socket?.off('events', chatEventHandler);
 				$socket?.off('events:channel', channelEventHandler);
@@ -1091,9 +1072,21 @@
 			}
 		});
 
+		/** @param {BeforeUnloadEvent} event */
+		const beforeUnloadHandler = (event) => {
+			if (Object.values($channelRequestQueues).some((queue) => queue.length)) {
+				event.preventDefault();
+				event.returnValue = '';
+			}
+		};
+		window.addEventListener('beforeunload', beforeUnloadHandler);
+
+		const sessionUserRequest = localStorage.token ? getSessionUser(localStorage.token) : null;
+		sessionUserRequest?.catch(() => {});
+
 		let backendConfig = null;
 		try {
-			backendConfig = await getBackendConfig();
+			backendConfig = await getBackendConfig(localStorage.token);
 			console.log('Backend config:', backendConfig);
 		} catch (error) {
 			if (error?.authRedirect) {
@@ -1107,7 +1100,7 @@
 		// Initialize i18n even if we didn't get a backend config,
 		// so `/error` can show something that's not `undefined`.
 
-		initI18n(localStorage?.locale);
+		await initI18n(backendConfig?.default_locale, backendConfig?.i18n ?? {});
 		if (!localStorage.locale) {
 			const languages = await getLanguages();
 			const browserLanguages = navigator.languages
@@ -1116,35 +1109,30 @@
 			const lang = backendConfig?.default_locale
 				? backendConfig.default_locale
 				: bestMatchingLanguage(languages, browserLanguages, 'en-US');
-			changeLanguage(lang);
-			dayjs.locale(lang);
+			await changeLanguage(lang);
 		}
 
 		if (backendConfig) {
 			// Save Backend Status to Store
 			await config.set(backendConfig);
+			// LICENSE covers this Open WebUI branding surface, including name, logo,
+			// visual, textual, symbolic identifiers, metadata, and surrounding UI.
+			// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+			// https://docs.openwebui.com/license.
 			await WEBUI_NAME.set(backendConfig.name);
 
 			if ($config) {
 				await setupSocket($config.features?.enable_websocket ?? true);
 
-				const currentUrl = `${window.location.pathname}${window.location.search}`;
-				const encodedUrl = encodeURIComponent(currentUrl);
-
-				if (localStorage.token) {
+				if (sessionUserRequest) {
 					// Get Session User Info
-					const sessionUser = await getSessionUser(localStorage.token).catch((error) => {
+					const sessionUser = await sessionUserRequest.catch((error) => {
 						toast.error(`${error}`);
 						return null;
 					});
 
 					if (sessionUser) {
 						await user.set(sessionUser);
-						try {
-							await config.set(await getBackendConfig());
-						} catch (error) {
-							console.error('Error refreshing backend config:', error);
-						}
 
 						// Keep user timezone in sync on every app load/refresh
 						const timezone = getUserTimezone();
@@ -1162,15 +1150,8 @@
 								.catch(() => {});
 						}
 					} else {
-						// Redirect Invalid Session User to /auth Page
 						localStorage.removeItem('token');
-						await goto(`/auth?redirect=${encodedUrl}`);
-					}
-				} else {
-					// Don't redirect if we're already on the auth page
-					// Needed because we pass in tokens from OAuth logins via URL fragments
-					if ($page.url.pathname !== '/auth') {
-						await goto(`/auth?redirect=${encodedUrl}`);
+						await user.set(null);
 					}
 				}
 			}
@@ -1227,15 +1208,48 @@
 			document.removeEventListener('touchmove', touchmoveHandler);
 			document.removeEventListener('touchend', touchendHandler);
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('pagehide', handlePageHidden);
+			window.removeEventListener('pageshow', handlePageVisible);
+			window.removeEventListener('beforeunload', beforeUnloadHandler);
+			unsubscribeQueueUser();
 		};
 	});
 
+	$: if (typeof document !== 'undefined') {
+		document.documentElement.classList.toggle(
+			'high-contrast',
+			$settings?.highContrastMode ?? false
+		);
+
+		const viewport = document.querySelector('meta[name="viewport"]');
+		if (viewport) {
+			viewport.content = viewport.content.replace(
+				/maximum-scale=[\d.]+/,
+				`maximum-scale=${$settings?.highContrastMode ? 5 : 1}`
+			);
+		}
+	}
+
+	$: if (typeof window !== 'undefined')
+		setNotificationSoundEnabled($settings?.notificationSound ?? true);
+
+	const unlockNotificationSound = () => {
+		if ($settings?.notificationSound ?? true) void unlockNotificationAudio();
+	};
+
 	onDestroy(() => {
+		stopTether();
 		bc.close();
 	});
 </script>
 
+<svelte:window on:click={unlockNotificationSound} on:keydown={unlockNotificationSound} />
+
 <svelte:head>
+	<!-- LICENSE covers this Open WebUI branding surface, including name, logo,
+	visual, textual, symbolic identifiers, metadata, and surrounding UI.
+	Do not alter, remove, obscure, or replace it except as LICENSE permits:
+	https://docs.openwebui.com/license. -->
 	<title>{$WEBUI_NAME}</title>
 	<link crossorigin="anonymous" rel="icon" href="{WEBUI_BASE_URL}/static/favicon.png" />
 
@@ -1250,6 +1264,13 @@
 	/>
 </svelte:head>
 
+<a
+	href="#main-content"
+	class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[9999] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-gray-900 focus:shadow-lg dark:focus:bg-gray-800 dark:focus:text-gray-100"
+>
+	{$i18n.t('Skip to main content')}
+</a>
+
 {#if showRefresh}
 	<div class=" py-5">
 		<Spinner className="size-5" />
@@ -1257,38 +1278,39 @@
 {/if}
 
 {#if loaded}
-	{#if $isApp}
-		<div class="flex flex-row h-screen">
-			<AppSidebar />
-
-			<div class="w-full flex-1 max-w-[calc(100%-4.5rem)]">
+	<div class="flex h-dvh w-full overflow-hidden">
+		<div class="min-w-0 flex-1">
+			{#if mfaManagement}
+				<MfaManagement flow={mfaManagement} onClose={() => (mfaManagement = null)} />
+			{:else}
 				<slot />
-			</div>
+			{/if}
 		</div>
-	{:else}
-		<slot />
-	{/if}
+		<CommentsHost />
+	</div>
 {/if}
 
 {#if $config?.features.enable_community_sharing}
 	<SyncStatsModal bind:show={showSyncStatsModal} eventData={syncStatsEventData} />
 {/if}
 
-<Toaster
-	theme={$theme.includes('dark')
-		? 'dark'
-		: $theme === 'system'
-			? window.matchMedia('(prefers-color-scheme: dark)').matches
-				? 'dark'
-				: 'light'
-			: 'light'}
-	richColors
-	position="top-right"
-	closeButton
-	toastOptions={{
-		classes: {
-			closeButton:
-				'!bg-white/80 !text-gray-500 !border-gray-200 hover:!bg-gray-50 hover:!text-gray-700 dark:!bg-gray-850 dark:!text-gray-400 dark:!border-gray-700 dark:hover:!bg-gray-800 dark:hover:!text-gray-200'
-		}
-	}}
-/>
+<div aria-live="polite">
+	<Toaster
+		theme={$theme.includes('dark')
+			? 'dark'
+			: $theme === 'system'
+				? window.matchMedia('(prefers-color-scheme: dark)').matches
+					? 'dark'
+					: 'light'
+				: 'light'}
+		richColors
+		position="top-right"
+		closeButton
+		toastOptions={{
+			classes: {
+				closeButton:
+					'!bg-white/80 !text-gray-500 !border-gray-200 hover:!bg-gray-50 hover:!text-gray-700 dark:!bg-gray-850 dark:!text-gray-400 dark:!border-gray-700 dark:hover:!bg-gray-800 dark:hover:!text-gray-200'
+			}
+		}}
+	/>
+</div>

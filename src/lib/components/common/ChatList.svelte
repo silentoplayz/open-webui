@@ -10,7 +10,7 @@
 
 	dayjs.extend(calendar);
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 	type SortKey = 'title' | 'updated_at' | 'user_name';
 
 	export let chatList: Array<{
@@ -35,7 +35,7 @@
 
 <div>
 	{#if chatList && chatList.length > 0}
-		<div class="flex text-xs font-medium mb-1.5">
+		<div class="flex text-xs font-normal mb-1.5">
 			{#if showUserInfo}
 				{#if onSort}
 					<button
@@ -126,7 +126,7 @@
 			{#each chatList as chat, idx (chat.id)}
 				{#if chat.time_range && (idx === 0 || chat.time_range !== chatList[idx - 1]?.time_range)}
 					<div
-						class="w-full text-xs text-gray-500 dark:text-gray-500 font-medium {idx === 0
+						class="w-full text-xs text-gray-500 dark:text-gray-500 font-normal {idx === 0
 							? ''
 							: 'pt-5'} pb-2 px-2"
 					>
@@ -161,12 +161,14 @@
 
 					<div class="{showUserInfo ? 'w-28' : 'basis-2/5'} flex items-center justify-end">
 						<div class="hidden sm:flex text-gray-500 dark:text-gray-400 text-xs">
-							{dayjs(chat.updated_at * 1000).calendar(null, {
-								sameDay: '[Today] h:mm A',
-								lastDay: '[Yesterday] h:mm A',
-								lastWeek: 'MMM D',
-								sameElse: 'MMM D, YYYY'
-							})}
+							{dayjs(chat.updated_at * 1000)
+								.locale($i18n.language)
+								.calendar(null, {
+									sameDay: '[Today] h:mm A',
+									lastDay: '[Yesterday] h:mm A',
+									lastWeek: 'MMM D',
+									sameElse: 'MMM D, YYYY'
+								})}
 						</div>
 					</div>
 				</div>

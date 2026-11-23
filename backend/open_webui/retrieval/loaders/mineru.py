@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import tempfile
 import time
 import zipfile
@@ -10,6 +11,10 @@ from fastapi import HTTPException, status
 from langchain_core.documents import Document
 
 log = logging.getLogger(__name__)
+
+# The V1 API embeds every image as a base64 data URI, which is not text worth indexing
+MARKDOWN_IMAGE = re.compile(r'!\[([^\[\]\n]*)\]\(data:[^()\s]*\)')
+HTML_IMAGE = re.compile(r'<img\b[^<>]*>', re.IGNORECASE)
 
 
 class MinerULoader:
@@ -44,6 +49,7 @@ class MinerULoader:
         self.enable_table = self.params.get('enable_table', True)
         self.language = self.params.get('language', 'en')
         self.model_version = self.params.get('model_version', 'pipeline')
+        self.tier = self.params.get('tier')
 
         self.page_ranges = self.params.pop('page_ranges', '')
 
@@ -63,6 +69,10 @@ class MinerULoader:
         try:
             if self.api_mode == 'cloud':
                 return self._load_cloud_api()
+            elif self._is_tasks_api():
+                return self._load_tasks_api()
+            elif self._is_v1_api():
+                return self._load_v1_api()
             else:
                 return self._load_local_api()
         except Exception as e:
@@ -74,7 +84,7 @@ class MinerULoader:
         Load document using Local API (synchronous).
         Posts file to /file_parse endpoint and gets immediate response.
         """
-        log.info(f'Using MinerU Local API at {self.api_url}')
+        log.info('Using MinerU Local API at %s', self.api_url)
 
         filename = os.path.basename(self.file_path)
 
@@ -97,8 +107,8 @@ class MinerULoader:
             with open(self.file_path, 'rb') as f:
                 files = {'files': (filename, f, 'application/octet-stream')}
 
-                log.info(f'Sending file to MinerU Local API: {filename}')
-                log.debug(f'Local API parameters: {form_data}')
+                log.info('Sending file to MinerU Local API: %s', filename)
+                log.debug('Local API parameters: %s', form_data)
 
                 response = requests.post(
                     f'{self.api_url}/file_parse',
@@ -163,7 +173,7 @@ class MinerULoader:
                 detail='MinerU returned empty markdown content',
             )
 
-        log.info(f'Successfully parsed document with MinerU Local API: {filename}')
+        log.info('Successfully parsed document with MinerU Local API: %s', filename)
 
         # Create metadata
         metadata = {
@@ -175,12 +185,192 @@ class MinerULoader:
 
         return [Document(page_content=markdown_content, metadata=metadata)]
 
+    def _is_v1_api(self) -> bool:
+        """
+        Detect MinerU 4.x, whose V1 API replaced the /file_parse endpoint of 3.x.
+        """
+        try:
+            return requests.get(f'{self.api_url}/v1/health', timeout=10).ok
+        except requests.RequestException:
+            return False
+
+    def _is_tasks_api(self) -> bool:
+        """Detect MinerU 4.1, whose Tasks API replaced the upload and parse job routes of 4.0."""
+        try:
+            return 'task_output_formats' in requests.get(f'{self.api_url}/v1/health', timeout=10).json()['features']
+        except (requests.RequestException, ValueError, KeyError):
+            return False
+
+    def _load_v1_api(self) -> List[Document]:
+        """
+        Load document using the MinerU 4.x V1 API (asynchronous).
+        Uploads the file, submits a parse job, polls it and downloads the markdown.
+        """
+        log.info('Using MinerU V1 API at %s', self.api_url)
+
+        filename = os.path.basename(self.file_path)
+
+        upload = self._request_v1_api(
+            'POST',
+            '/v1/uploads',
+            json={
+                'filename': filename,
+                'bytes': os.path.getsize(self.file_path),
+                'mime_type': 'application/octet-stream',
+            },
+        ).json()
+        with open(self.file_path, 'rb') as f:
+            self._request_v1_api('PUT', f'/v1/uploads/{upload["id"]}/content', data=f)
+        upload = self._request_v1_api('POST', f'/v1/uploads/{upload["id"]}/complete').json()
+
+        file_entry = {'source': {'type': 'file_id', 'file_id': upload['file']['id']}}
+        if self.page_ranges and filename.lower().endswith('.pdf'):
+            file_entry['page_range'] = self.page_ranges
+
+        # The job rejects unknown fields, so the 3.x params are not passed through
+        job = self._request_v1_api(
+            'POST',
+            '/v1/parse/jobs',
+            json={
+                'files': [file_entry],
+                'tier': self.tier,
+                'ocr_mode': 'ocr' if self.enable_ocr else 'auto',
+            },
+        ).json()
+
+        log.info('Polling MinerU V1 job: %s', job['job_id'])
+        deadline = time.monotonic() + self.timeout if self.timeout else None
+        while job['status'] in ['queued', 'running']:
+            if deadline and time.monotonic() > deadline:
+                raise HTTPException(
+                    status.HTTP_504_GATEWAY_TIMEOUT,
+                    detail=f'MinerU processing timed out after {self.timeout} seconds',
+                )
+            time.sleep(2)
+            job = self._request_v1_api('GET', f'/v1/parse/jobs/{job["job_id"]}').json()
+
+        file_result = job['files'][0]
+        if job['status'] != 'completed':
+            error = file_result.get('error') or {}
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f'MinerU processing {job["status"]}: {error.get("message", "Unknown error")}',
+            )
+
+        markdown_id = file_result['output_files']['markdown']['file_id']
+        markdown_content = self._request_v1_api('GET', f'/v1/files/{markdown_id}/content').content.decode('utf-8')
+        markdown_content = HTML_IMAGE.sub('', MARKDOWN_IMAGE.sub(r'\1', markdown_content))
+
+        if not markdown_content:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail='MinerU returned empty markdown content',
+            )
+
+        log.info('Successfully parsed document with MinerU V1 API: %s', filename)
+
+        metadata = {
+            'source': filename,
+            'api_mode': 'local',
+            'tier': job['tier'],
+            'version': (file_result.get('parse') or {}).get('parser_version', 'unknown'),
+        }
+
+        return [Document(page_content=markdown_content, metadata=metadata)]
+
+    def _load_tasks_api(self) -> List[Document]:
+        """Load document using the MinerU 4.1 Tasks API (asynchronous)."""
+        log.info('Using MinerU Tasks API at %s', self.api_url)
+
+        filename = os.path.basename(self.file_path)
+
+        file_entry = {'file_name': filename, 'bytes': os.path.getsize(self.file_path)}
+        if self.page_ranges and filename.lower().endswith('.pdf'):
+            file_entry['page_range'] = self.page_ranges
+
+        task = self._request_v1_api(
+            'POST',
+            '/v1/tasks',
+            json={
+                'files': [file_entry],
+                'tier': self.tier,
+                'ocr_mode': 'ocr' if self.enable_ocr else 'auto',
+            },
+        ).json()
+
+        upload = task['files'][0]['upload']
+        with open(self.file_path, 'rb') as f:
+            self._request_v1_api('PUT', upload['url'], headers=upload['headers'], data=f)
+
+        log.info('Polling MinerU task: %s', task['task_id'])
+        deadline = time.monotonic() + self.timeout if self.timeout else None
+        while True:
+            task = self._request_v1_api('GET', f'/v1/tasks/{task["task_id"]}').json()
+            if task['status'] not in ['waiting-file', 'pending', 'running']:
+                break
+            if deadline and time.monotonic() > deadline:
+                raise HTTPException(
+                    status.HTTP_504_GATEWAY_TIMEOUT,
+                    detail=f'MinerU processing timed out after {self.timeout} seconds',
+                )
+            time.sleep(2)
+
+        file_result = task['files'][0]
+        if task['status'] != 'completed':
+            error = file_result.get('error') or task.get('error') or {}
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f'MinerU processing {task["status"]}: {error.get("message", "Unknown error")}',
+            )
+
+        markdown_content = self._download_and_extract_zip(file_result['result_url'], filename)
+
+        log.info('Successfully parsed document with MinerU Tasks API: %s', filename)
+
+        metadata = {
+            'source': filename,
+            'api_mode': 'local',
+            'tier': file_result['parse']['tier'],
+            'version': file_result['parse'].get('parser_version', 'unknown'),
+        }
+
+        return [Document(page_content=markdown_content, metadata=metadata)]
+
+    def _request_v1_api(self, method: str, path: str, headers: Optional[dict] = None, **kwargs) -> requests.Response:
+        """
+        Send one request to the MinerU V1 API and raise an HTTPException on failure.
+        """
+        url = path if path.startswith('http') else f'{self.api_url}{path}'
+        # A 4.x server started with --api-key rejects every V1 request without it
+        # The key stays off storage URLs returned by the server
+        if self.api_key and url.startswith(f'{self.api_url}/'):
+            headers = {**(headers or {}), 'Authorization': f'Bearer {self.api_key}'}
+        try:
+            response = requests.request(method, url, headers=headers, timeout=self.timeout, **kwargs)
+            response.raise_for_status()
+        except requests.Timeout:
+            raise HTTPException(
+                status.HTTP_504_GATEWAY_TIMEOUT,
+                detail='MinerU V1 API request timed out',
+            )
+        except requests.HTTPError as e:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f'MinerU V1 API request failed: {e} - {e.response.text}',
+            )
+        except Exception as e:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f'Error calling MinerU V1 API: {str(e)}',
+            )
+        return response
+
     def _load_cloud_api(self) -> List[Document]:
         """
         Load document using Cloud API (asynchronous).
         Uses batch upload endpoint to avoid need for public file URLs.
         """
-        log.info(f'Using MinerU Cloud API at {self.api_url}')
+        log.info('Using MinerU Cloud API at %s', self.api_url)
 
         filename = os.path.basename(self.file_path)
 
@@ -196,7 +386,7 @@ class MinerULoader:
         # Step 4: Download and extract markdown from ZIP
         markdown_content = self._download_and_extract_zip(result['full_zip_url'], filename)
 
-        log.info(f'Successfully parsed document with MinerU Cloud API: {filename}')
+        log.info('Successfully parsed document with MinerU Cloud API: %s', filename)
 
         # Create metadata
         metadata = {
@@ -232,8 +422,8 @@ class MinerULoader:
         if self.page_ranges:
             request_body['files'][0]['page_ranges'] = self.page_ranges
 
-        log.info(f'Requesting upload URL for: {filename}')
-        log.debug(f'Cloud API request body: {request_body}')
+        log.info('Requesting upload URL for: %s', filename)
+        log.debug('Cloud API request body: %s', request_body)
 
         try:
             response = requests.post(
@@ -284,7 +474,7 @@ class MinerULoader:
             )
 
         upload_url = file_urls[0]
-        log.info(f'Received upload URL for batch: {batch_id}')
+        log.info('Received upload URL for batch: %s', batch_id)
 
         return batch_id, upload_url
 
@@ -334,7 +524,7 @@ class MinerULoader:
         max_iterations = 300  # 10 minutes max (2 seconds per iteration)
         poll_interval = 2  # seconds
 
-        log.info(f'Polling batch status: {batch_id}')
+        log.info('Polling batch status: %s', batch_id)
 
         for iteration in range(max_iterations):
             try:
@@ -393,7 +583,7 @@ class MinerULoader:
             state = file_result.get('state')
 
             if state == 'done':
-                log.info(f'Processing complete for {filename}')
+                log.info('Processing complete for %s', filename)
                 return file_result
             elif state == 'failed':
                 error_msg = file_result.get('err_msg', 'Unknown error')
@@ -404,7 +594,7 @@ class MinerULoader:
             elif state in ['waiting-file', 'pending', 'running', 'converting']:
                 # Still processing
                 if iteration % 10 == 0:  # Log every 20 seconds
-                    log.info(f'Processing status: {state} (iteration {iteration + 1}/{max_iterations})')
+                    log.info('Processing status: %s (iteration %s/%s)', state, iteration + 1, max_iterations)
                 time.sleep(poll_interval)
             else:
                 log.warning(f'Unknown state: {state}')
@@ -421,10 +611,15 @@ class MinerULoader:
         Download ZIP file from CDN and extract markdown content.
         Returns the markdown content as a string.
         """
-        log.info(f'Downloading results from: {zip_url}')
+        log.info('Downloading results from: %s', zip_url)
 
         try:
-            response = requests.get(zip_url, timeout=60)
+            headers = (
+                {'Authorization': f'Bearer {self.api_key}'}
+                if self.api_key and zip_url.startswith(f'{self.api_url}/')
+                else None
+            )
+            response = requests.get(zip_url, headers=headers, timeout=60)
             response.raise_for_status()
         except requests.HTTPError as e:
             raise HTTPException(
@@ -452,7 +647,7 @@ class MinerULoader:
                 read_errors = []
 
                 for member in md_members:
-                    log.info(f'Found markdown file in ZIP: {member.filename}')
+                    log.info('Found markdown file in ZIP: %s', member.filename)
                     try:
                         with zip_ref.open(member, 'r') as f:
                             if self.max_markdown_bytes is None:
@@ -515,5 +710,5 @@ class MinerULoader:
                 detail='Extracted markdown content is empty',
             )
 
-        log.info(f'Successfully extracted markdown content ({len(markdown_content)} characters)')
+        log.info('Successfully extracted markdown content (%s characters)', len(markdown_content))
         return markdown_content

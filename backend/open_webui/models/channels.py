@@ -1,21 +1,23 @@
-import json
 import secrets
 import time
 import uuid
 from typing import Optional
 
+from open_webui.models.notifications import emit_changes, update_notifications_read_at_by_resource_id
 from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.access_grants import (
     AccessGrantModel,
     AccessGrants,
 )
 from open_webui.models.groups import Groups
-from open_webui.utils.validate import validate_profile_image_url
+from open_webui.models.users import User
+from open_webui.utils.validate import validate_image_url
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     ForeignKey,
     String,
@@ -32,9 +34,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-####################
 # Channel DB Schema
-####################
 
 
 class Channel(Base):
@@ -99,7 +99,13 @@ class ChannelMember(Base):
 
     id = Column(Text, primary_key=True, unique=True)
     channel_id = Column(Text, nullable=False)
-    user_id = Column(Text, nullable=False)
+    user_id = Column(Text, nullable=True)
+    app_id = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint('(user_id IS NULL) <> (app_id IS NULL)', name='ck_channel_member_identity'),
+        UniqueConstraint('channel_id', 'app_id', name='uq_channel_member_app'),
+    )
 
     role = Column(Text, nullable=True)
     status = Column(Text, nullable=True)
@@ -129,7 +135,8 @@ class ChannelMemberModel(BaseModel):
 
     id: str
     channel_id: str
-    user_id: str
+    user_id: Optional[str] = None
+    app_id: Optional[str] = None
 
     role: Optional[str] = None
     status: Optional[str] = None
@@ -217,9 +224,7 @@ class ChannelWebhookModel(BaseModel):
     updated_at: int  # timestamp in epoch (time_ns)
 
 
-####################
 # Forms
-####################
 
 
 class ChannelResponse(ChannelModel):
@@ -235,12 +240,12 @@ class ChannelForm(BaseModel):
     is_private: Optional[bool] = None
     data: Optional[dict] = None
     meta: Optional[dict] = None
-    access_grants: Optional[list[dict]] = None
     group_ids: Optional[list[str]] = None
     user_ids: Optional[list[str]] = None
 
 
 class CreateChannelForm(ChannelForm):
+    access_grants: Optional[list[dict]] = None
     type: Optional[str] = None
 
 
@@ -253,7 +258,7 @@ class ChannelWebhookForm(BaseModel):
     def check_profile_image_url(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
-        return validate_profile_image_url(v)
+        return validate_image_url(v)
 
 
 class ChannelTable:
@@ -266,11 +271,11 @@ class ChannelTable:
         access_grants: Optional[list[AccessGrantModel]] = None,
         db: Optional[AsyncSession] = None,
     ) -> ChannelModel:
-        channel_data = ChannelModel.model_validate(channel).model_dump(exclude={'access_grants'})
-        channel_data['access_grants'] = (
-            access_grants if access_grants is not None else await self._get_access_grants(channel_data['id'], db=db)
+        channel_model = ChannelModel.model_validate(channel)
+        channel_model.access_grants = (
+            access_grants if access_grants is not None else await self._get_access_grants(channel_model.id, db=db)
         )
-        return ChannelModel.model_validate(channel_data)
+        return channel_model
 
     async def _collect_unique_user_ids(
         self,
@@ -289,7 +294,7 @@ class ChannelTable:
         users.add(invited_by)
 
         for group_id in group_ids or []:
-            group_user_ids = await Groups.get_group_user_ids_by_id(group_id)
+            group_user_ids = await Groups.get_group_user_ids_by_id(group_id, include_inherited=True)
             users.update(group_user_ids)
 
         return users
@@ -393,7 +398,9 @@ class ChannelTable:
 
     async def get_channels_by_user_id(self, user_id: str, db: Optional[AsyncSession] = None) -> list[ChannelModel]:
         async with get_async_db_context(db) as db:
-            user_group_ids = [group.id for group in await Groups.get_groups_by_member_id(user_id, db=db)]
+            user_group_ids = [
+                group.id for group in await Groups.get_groups_by_member_id(user_id, db=db, include_inherited=True)
+            ]
 
             result = await db.execute(
                 select(Channel)
@@ -438,17 +445,17 @@ class ChannelTable:
 
             match_count = func.sum(
                 case(
-                    (ChannelMember.user_id.in_(unique_user_ids), 1),
+                    (User.id.in_(unique_user_ids), 1),
                     else_=0,
                 )
             )
 
             subquery = (
                 select(ChannelMember.channel_id)
+                .join(User, User.id == ChannelMember.user_id)
                 .group_by(ChannelMember.channel_id)
-                # 1. Channel must have exactly len(user_ids) members
-                .having(func.count(ChannelMember.user_id) == len(unique_user_ids))
-                # 2. All those members must be in unique_user_ids
+                # Match the exact set of accounts that still exist.
+                .having(func.count(User.id) == len(unique_user_ids))
                 .having(match_count == len(unique_user_ids))
                 .subquery()
             )
@@ -600,7 +607,36 @@ class ChannelTable:
         self, channel_id: str, db: Optional[AsyncSession] = None
     ) -> list[ChannelMemberModel]:
         async with get_async_db_context(db) as db:
-            result = await db.execute(select(ChannelMember).filter(ChannelMember.channel_id == channel_id))
+            result = await db.execute(
+                select(ChannelMember).filter(ChannelMember.channel_id == channel_id, ChannelMember.user_id.is_not(None))
+            )
+            memberships = result.scalars().all()
+            return [ChannelMemberModel.model_validate(membership) for membership in memberships]
+
+    async def get_members_by_user_id_and_channel_ids(
+        self, user_id: str, channel_ids: list[str], db: Optional[AsyncSession] = None
+    ) -> dict[str, ChannelMemberModel]:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(ChannelMember).filter(
+                    ChannelMember.channel_id.in_(channel_ids),
+                    ChannelMember.user_id == user_id,
+                )
+            )
+            return {
+                membership.channel_id: ChannelMemberModel.model_validate(membership)
+                for membership in result.scalars().all()
+            }
+
+    async def get_members_by_channel_ids(
+        self, channel_ids: list[str], db: Optional[AsyncSession] = None
+    ) -> list[ChannelMemberModel]:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(ChannelMember).filter(
+                    ChannelMember.channel_id.in_(channel_ids), ChannelMember.user_id.is_not(None)
+                )
+            )
             memberships = result.scalars().all()
             return [ChannelMemberModel.model_validate(membership) for membership in memberships]
 
@@ -628,6 +664,30 @@ class ChannelTable:
             await db.commit()
             return True
 
+    async def update_member_mute_status(
+        self, channel_id: str, user_id: str, is_channel_muted: bool, db: Optional[AsyncSession] = None
+    ) -> bool:
+        async with get_async_db_context(db) as db:
+            membership = await db.scalar(select(ChannelMember).filter_by(channel_id=channel_id, user_id=user_id))
+            now = time.time_ns()
+            if membership is None:
+                # Accessible legacy channels may not have a membership yet. Muting is not reading.
+                membership = ChannelMember(
+                    id=str(uuid.uuid4()),
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    status='joined',
+                    is_active=True,
+                    joined_at=now,
+                    last_read_at=None,
+                    created_at=now,
+                )
+                db.add(membership)
+            membership.is_channel_muted = is_channel_muted
+            membership.updated_at = now
+            await db.commit()
+            return membership.is_channel_muted
+
     async def update_member_last_read_at(
         self, channel_id: str, user_id: str, db: Optional[AsyncSession] = None
     ) -> bool:
@@ -645,7 +705,12 @@ class ChannelTable:
             membership.last_read_at = int(time.time_ns())
             membership.updated_at = int(time.time_ns())
 
+            notifications_updated = await update_notifications_read_at_by_resource_id(
+                user_id=user_id, resource_type='channel', resource_id=channel_id, db=db
+            )
             await db.commit()
+            if notifications_updated:
+                await emit_changes({user_id})
             return True
 
     async def update_member_active_status(
@@ -684,6 +749,19 @@ class ChannelTable:
                 .limit(1)
             )
             membership = result.scalars().first()
+            return membership is not None
+
+    async def is_app_channel_member(self, channel_id: str, app_id: str, db: AsyncSession | None = None) -> bool:
+        async with get_async_db_context(db) as db:
+            membership = await db.scalar(
+                select(ChannelMember.id)
+                .where(
+                    ChannelMember.channel_id == channel_id,
+                    ChannelMember.app_id == app_id,
+                    ChannelMember.is_active.is_(True),
+                )
+                .limit(1)
+            )
             return membership is not None
 
     async def get_channel_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[ChannelModel]:
@@ -737,12 +815,14 @@ class ChannelTable:
                 return []
 
             # Preload user's group membership
-            user_group_ids = [g.id for g in await Groups.get_groups_by_member_id(user_id, db=db)]
+            user_group_ids = [
+                g.id for g in await Groups.get_groups_by_member_id(user_id, db=db, include_inherited=True)
+            ]
 
             allowed_channels = []
 
             for channel in channels:
-                # --- Case A: group or dm => user must be an active member ---
+                # Case a: group or dm => user must be an active member
                 if channel.type in ['group', 'dm']:
                     result = await db.execute(
                         select(ChannelMember)
@@ -758,7 +838,7 @@ class ChannelTable:
                         allowed_channels.append(await self._to_channel_model(channel, db=db))
                     continue
 
-                # --- Case B: standard channel => rely on ACL permissions ---
+                # Case b: standard channel => rely on acl permissions
                 stmt = select(Channel).filter(Channel.id == channel.id)
 
                 stmt = self._has_permission(
@@ -813,7 +893,9 @@ class ChannelTable:
             stmt = select(Channel).filter(Channel.id == id)
 
             # Determine user groups
-            user_group_ids = [group.id for group in await Groups.get_groups_by_member_id(user_id, db=db)]
+            user_group_ids = [
+                group.id for group in await Groups.get_groups_by_member_id(user_id, db=db, include_inherited=True)
+            ]
 
             # Apply ACL rules
             stmt = self._has_permission(
@@ -843,8 +925,6 @@ class ChannelTable:
             channel.data = form_data.data
             channel.meta = form_data.meta
 
-            if form_data.access_grants is not None:
-                await AccessGrants.set_access_grants('channel', id, form_data.access_grants, db=db)
             channel.updated_at = int(time.time_ns())
 
             await db.commit()
@@ -869,7 +949,6 @@ class ChannelTable:
                 result = ChannelFile(**channel_file.model_dump())
                 db.add(result)
                 await db.commit()
-                await db.refresh(result)
                 if result:
                     return ChannelFileModel.model_validate(result)
                 else:
@@ -913,13 +992,15 @@ class ChannelTable:
     async def delete_channel_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
         async with get_async_db_context(db) as db:
             await AccessGrants.revoke_all_access('channel', id, db=db)
+            from open_webui.models.notifications import delete_notifications
+
+            recipients = await delete_notifications(resource_type='channel', resource_ids=[id], db=db)
             await db.execute(delete(Channel).filter(Channel.id == id))
             await db.commit()
+            await emit_changes(recipients)
             return True
 
-    ####################
     # Webhook Methods
-    ####################
 
     async def insert_webhook(
         self,

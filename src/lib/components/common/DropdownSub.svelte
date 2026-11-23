@@ -1,20 +1,53 @@
 <script lang="ts">
 	import { flyAndScale } from '$lib/utils/transitions';
+	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
+	import { settings } from '$lib/stores';
 	import { tick } from 'svelte';
 
 	/** CSS classes for the sub-content container */
 	export let contentClass =
 		'select-none rounded-2xl p-1 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg border border-gray-100 dark:border-gray-800';
 
-	/** Max width in px, enforced at the component level */
+	/** Max width at the default 16px root size; scales with the interface. */
 	export let maxWidth = 200;
 
 	/** Side offset from the trigger in px (visual gap, bridged by invisible padding) */
 	export let sideOffset = 8;
 
 	let open = false;
-	let triggerEl;
-	let contentEl;
+	let triggerEl: HTMLElement | null = null;
+	let contentEl: HTMLElement | null = null;
+
+	function trigger(node: HTMLElement, expanded: boolean) {
+		triggerEl = (node.firstElementChild as HTMLElement | null) || node;
+		triggerEl.setAttribute('aria-haspopup', 'menu');
+		triggerEl.setAttribute('aria-expanded', String(expanded));
+
+		async function handleClick(event: MouseEvent) {
+			event.preventDefault();
+			await openSub(true);
+		}
+
+		async function handleKeydown(event: KeyboardEvent) {
+			if (!['Enter', ' ', 'ArrowRight'].includes(event.key)) return;
+
+			event.preventDefault();
+			await openSub(true);
+		}
+
+		node.addEventListener('click', handleClick);
+		node.addEventListener('keydown', handleKeydown);
+
+		return {
+			update(expanded: boolean) {
+				triggerEl?.setAttribute('aria-expanded', String(expanded));
+			},
+			destroy() {
+				node.removeEventListener('click', handleClick);
+				node.removeEventListener('keydown', handleKeydown);
+			}
+		};
+	}
 
 	function positionContent() {
 		if (!triggerEl || !contentEl) return;
@@ -28,7 +61,7 @@
 		contentEl.style.paddingRight = '0';
 
 		// Inherit min-width from parent dropdown container (apply to inner content)
-		const innerContent = contentEl.firstElementChild;
+		const innerContent = contentEl.firstElementChild as HTMLElement | null;
 		const parentContainer = triggerEl.closest('[class*="rounded"]')?.parentElement;
 		if (parentContainer && innerContent) {
 			const parentWidth = parentContainer.offsetWidth;
@@ -48,7 +81,12 @@
 			contentEl.style.paddingLeft = `${sideOffset}px`;
 		} else {
 			// Open to the left: position flush with trigger, bridge gap with right padding
-			contentEl.style.right = `${window.innerWidth - rect.left}px`;
+			// Neither side fits on narrow screens: overlap the menu to stay on screen
+			const right = Math.min(
+				window.innerWidth - rect.left,
+				window.innerWidth - contentWidth - sideOffset - 16
+			);
+			contentEl.style.right = `${right}px`;
 			contentEl.style.left = 'auto';
 			contentEl.style.paddingRight = `${sideOffset}px`;
 		}
@@ -70,31 +108,91 @@
 		contentEl.style.top = `${top}px`;
 	}
 
-	async function handleMouseEnter() {
+	function markMenuItems() {
+		contentEl
+			?.querySelectorAll('button:not([role]), a[href]:not([role])')
+			.forEach((item) => item.setAttribute('role', 'menuitem'));
+	}
+
+	async function openSub(focus = false) {
 		open = true;
 		await tick();
 		positionContent();
 		// Re-position after transition starts rendering real dimensions
 		setTimeout(positionContent, 50);
+
+		markMenuItems();
+
+		if (focus) {
+			(
+				contentEl?.querySelector<HTMLElement>('[role^="menuitem"]:not([disabled])') ?? contentEl
+			)?.focus();
+		}
 	}
 
-	function handleMouseLeave(event) {
+	async function handleMouseEnter() {
+		await openSub();
+	}
+
+	const isTextField = (element: EventTarget | null) =>
+		element instanceof HTMLElement && element.matches('input, textarea, [contenteditable="true"]');
+
+	function handleContentKeydown(event: KeyboardEvent) {
+		if (['ArrowLeft', 'Home', 'End'].includes(event.key) && isTextField(event.target)) return;
+
+		if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && contentEl) {
+			const items = [
+				...contentEl.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])')
+			].filter((item) => item.getClientRects().length > 0);
+			const index = items.indexOf(event.target as HTMLElement);
+			const nextIndex =
+				event.key === 'Home'
+					? 0
+					: event.key === 'End'
+						? items.length - 1
+						: (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+
+			event.preventDefault();
+			event.stopPropagation();
+			items[nextIndex]?.focus();
+			return;
+		}
+
+		if (event.key !== 'Escape' && event.key !== 'ArrowLeft') return;
+
+		event.stopPropagation();
+		open = false;
+		triggerEl?.focus();
+	}
+
+	function handleMouseLeave(event: MouseEvent) {
+		const relatedTarget = event.relatedTarget as Node | null;
+
 		// Don't close if moving to the sub-content (including its bridge padding)
-		if (contentEl?.contains(event.relatedTarget)) return;
-		if (triggerEl?.contains(event.relatedTarget)) return;
+		if (relatedTarget && contentEl?.contains(relatedTarget)) return;
+		if (relatedTarget && triggerEl?.contains(relatedTarget)) return;
+		if (contentEl?.contains(document.activeElement) && isTextField(document.activeElement)) return;
 		open = false;
 	}
 
-	function handleContentMouseLeave(event) {
-		if (triggerEl?.contains(event.relatedTarget)) return;
-		if (contentEl?.contains(event.relatedTarget)) return;
+	function handleContentMouseLeave(event: MouseEvent) {
+		const relatedTarget = event.relatedTarget as Node | null;
+
+		if (relatedTarget && triggerEl?.contains(relatedTarget)) return;
+		if (relatedTarget && contentEl?.contains(relatedTarget)) return;
+		if (contentEl?.contains(document.activeElement) && isTextField(document.activeElement)) return;
 		open = false;
 	}
 
-	function portal(node) {
+	function portal(node: HTMLElement) {
 		document.body.appendChild(node);
+
+		const mutationObserver = new MutationObserver(markMenuItems);
+		mutationObserver.observe(node, { childList: true, subtree: true });
+
 		return {
 			destroy() {
+				mutationObserver.disconnect();
 				if (node.parentNode) {
 					node.parentNode.removeChild(node);
 				}
@@ -107,8 +205,10 @@
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-	bind:this={triggerEl}
-	class="w-full"
+	use:trigger={open}
+	class="w-full {($settings?.highContrastMode ?? false)
+		? '[&>button:hover]:bg-gray-200! dark:[&>button:hover]:bg-gray-800!'
+		: '[&>button:hover]:bg-gray-50/60 dark:[&>button:hover]:bg-gray-800/60'}"
 	on:mouseenter={handleMouseEnter}
 	on:mouseleave={handleMouseLeave}
 >
@@ -118,10 +218,20 @@
 {#if open}
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
 	<!-- Outer wrapper: positioned flush with trigger, invisible padding bridges the gap -->
-	<div use:portal bind:this={contentEl} on:mouseleave={handleContentMouseLeave}>
+	<div
+		use:portal
+		bind:this={contentEl}
+		class="no-drag-region"
+		role="menu"
+		tabindex="-1"
+		on:mouseleave={handleContentMouseLeave}
+		on:keydown={handleContentKeydown}
+	>
 		<!-- Inner content: visual styles and transition -->
-		<div class={contentClass} style="max-width: {maxWidth}px;" transition:flyAndScale>
-			<slot />
+		<div transition:flyAndScale>
+			<DropdownMenu className={contentClass} style="max-width: {maxWidth / 16}rem;">
+				<slot />
+			</DropdownMenu>
 		</div>
 	</div>
 {/if}

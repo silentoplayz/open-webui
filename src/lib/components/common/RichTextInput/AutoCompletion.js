@@ -13,6 +13,31 @@ Intelligently reset suggestions on new input.
 
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from 'prosemirror-state';
+import { Decoration, DecorationSet } from 'prosemirror-view';
+
+const aiAutocompletionKey = new PluginKey('aiAutocompletion');
+
+const getFollowUpSuggestion = (state) => {
+	const { doc } = state;
+	const isEmpty =
+		doc.childCount === 1 &&
+		doc.firstChild.type.name === 'paragraph' &&
+		doc.firstChild.content.size === 0;
+	return isEmpty ? aiAutocompletionKey.getState(state) : '';
+};
+
+export const setFollowUpSuggestion = (view, suggestion) => {
+	const current = aiAutocompletionKey.getState(view.state);
+	if (current === undefined || current === suggestion) return;
+	view.dispatch(view.state.tr.setMeta(aiAutocompletionKey, suggestion));
+};
+
+const acceptFollowUpSuggestion = (view) => {
+	const suggestion = getFollowUpSuggestion(view.state);
+	if (!suggestion) return false;
+	view.dispatch(view.state.tr.insertText(suggestion));
+	return true;
+};
 
 export const AIAutocompletion = Extension.create({
 	name: 'aiAutocompletion',
@@ -86,6 +111,7 @@ export const AIAutocompletion = Extension.create({
 
 						const newState = view.state;
 						const newSelection = newState.selection;
+						if (currentPos >= newState.doc.content.size) return false;
 						const newNode = newState.doc.nodeAt(currentPos);
 
 						// Check if the node still exists and is still a paragraph
@@ -130,9 +156,26 @@ export const AIAutocompletion = Extension.create({
 
 		return [
 			new Plugin({
-				key: new PluginKey('aiAutocompletion'),
+				key: aiAutocompletionKey,
+				state: {
+					init: () => '',
+					apply: (tr, suggestion) => tr.getMeta(aiAutocompletionKey) ?? suggestion
+				},
 				props: {
+					// A decoration is patched in place, so removing it cannot break an IME composition
+					decorations: (state) => {
+						const suggestion = getFollowUpSuggestion(state);
+						if (!suggestion) return null;
+						return DecorationSet.create(state.doc, [
+							Decoration.node(0, state.doc.firstChild.nodeSize, {
+								class: 'ai-autocompletion',
+								'data-suggestion': suggestion
+							})
+						]);
+					},
 					handleKeyDown: (view, event) => {
+						if (isComposing || event.isComposing || (event.key === 'Tab' && event.shiftKey))
+							return false;
 						const { state, dispatch } = view;
 						const { selection } = state;
 						const { $head } = selection;
@@ -142,25 +185,7 @@ export const AIAutocompletion = Extension.create({
 						const node = $head.parent;
 
 						if (event.key === 'Tab') {
-							// if (!node.attrs['data-suggestion']) {
-							//   // Generate completion
-							//   if (loading) return true
-							//   loading = true
-							//   const prompt = node.textContent
-							//   this.options.generateCompletion(prompt).then(suggestion => {
-							//     if (suggestion && suggestion.trim() !== '') {
-							//       dispatch(state.tr.setNodeMarkup($head.before(), null, {
-							//         ...node.attrs,
-							//         class: 'ai-autocompletion',
-							//         'data-prompt': prompt,
-							//         'data-suggestion': suggestion,
-							//       }))
-							//     }
-							//     // If suggestion is empty or null, do nothing
-							//   }).finally(() => {
-							//     loading = false
-							//   })
-							// }
+							if (acceptFollowUpSuggestion(view)) return true;
 
 							if (node.attrs['data-suggestion']) {
 								// Accept suggestion
@@ -216,6 +241,8 @@ export const AIAutocompletion = Extension.create({
 
 							// Check if the swipe was primarily horizontal and to the right
 							if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX > 50) {
+								if (acceptFollowUpSuggestion(view)) return true;
+
 								const { state, dispatch } = view;
 								const { selection } = state;
 								const { $head } = selection;
@@ -236,34 +263,6 @@ export const AIAutocompletion = Extension.create({
 							}
 							return false;
 						},
-						// Add mousedown behavior
-						// mouseup: (view, event) => {
-						// 	const { state, dispatch } = view;
-						// 	const { selection } = state;
-						// 	const { $head } = selection;
-						// 	const node = $head.parent;
-
-						// 	// Reset debounce timer on mouse click
-						// 	clearTimeout(debounceTimer);
-
-						// 	// If a suggestion exists and the cursor moves, remove the suggestion
-						// 	if (
-						// 		node.type.name === 'paragraph' &&
-						// 		node.attrs['data-suggestion'] &&
-						// 		view.state.selection.$head.pos !== view.state.selection.$head.end()
-						// 	) {
-						// 		dispatch(
-						// 			state.tr.setNodeMarkup($head.before(), null, {
-						// 				...node.attrs,
-						// 				class: null,
-						// 				'data-prompt': null,
-						// 				'data-suggestion': null
-						// 			})
-						// 		);
-						// 	}
-
-						// 	return false;
-						// }
 						mouseup: (view, event) => {
 							const { state, dispatch } = view;
 
@@ -273,7 +272,11 @@ export const AIAutocompletion = Extension.create({
 							// Iterate over all nodes in the document
 							const tr = state.tr;
 							state.doc.descendants((node, pos) => {
-								if (node.type.name === 'paragraph' && node.attrs['data-suggestion']) {
+								if (
+									node.type.name === 'paragraph' &&
+									node.attrs['data-suggestion'] &&
+									node.attrs['data-prompt']
+								) {
 									// Remove suggestion from this paragraph
 									tr.setNodeMarkup(pos, null, {
 										...node.attrs,

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import os
+import re
 import sys
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -27,8 +28,10 @@ from open_webui.env import (
     DATABASE_URL,
     ENABLE_DB_MIGRATIONS,
     OPEN_WEBUI_DIR,
+    USE_SLIM,
 )
-from sqlalchemy import Dialect, MetaData, create_engine, event, types
+from open_webui.utils.json_codec import JSONCodec
+from sqlalchemy import Dialect, MetaData, create_engine, event, text, types
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
@@ -40,17 +43,7 @@ from typing_extensions import Self
 log = logging.getLogger(__name__)
 
 
-# ── SSL URL normalization (used by sync engine & Alembic migrations) ─
-#
-# psycopg2 (sync) needs ``sslmode=`` in the connection string (it does
-# not recognise the bare ``ssl=`` key that some ORMs emit).  The helpers
-# below strip all SSL-related query params, normalise them, and
-# reattach them in the canonical libpq form.
-#
-# The **async** engine now uses psycopg (v3), which speaks libpq
-# natively, so it needs no translation at all — the DATABASE_URL is
-# passed through as-is.
-# ─────────────────────────────────────────────────────────────────────
+# Normalize SSL query parameters for sync psycopg2 and Alembic; async psycopg uses the URL unchanged.
 
 
 def _pop_first(params: dict[str, list[str]], key: str) -> str | None:
@@ -120,25 +113,92 @@ extract_ssl_mode_from_url = extract_ssl_params_from_url
 reattach_ssl_mode_to_url = reattach_ssl_params_to_url
 
 
+_SURROGATES = re.compile('[\ud800-\udfff]')
+
+
+def strip_unstorable_json(value):
+    """Drop U+0000 and lone surrogates from every string, keys included."""
+    if isinstance(value, str):
+        return _SURROGATES.sub('', value.replace('\x00', ''))
+    if isinstance(value, dict):
+        return {strip_unstorable_json(k): strip_unstorable_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [strip_unstorable_json(v) for v in value]
+    return value
+
+
+def dumps_json_for_db(value) -> str:
+    """Serialize JSON for storage.
+
+    PostgreSQL's json type stores the ``\\u0000`` escape but every ``->``, ``->>`` and ``#>>``
+    that reaches it fails, so one such row breaks any query navigating the column; lone
+    surrogates are rejected outright. Both are stripped here, the single path every JSON
+    write takes, so no model has to remember to.
+    """
+    serialized = JSONCodec.dumps(value, ensure_ascii=False)
+    # A literally typed backslash-u0000 also matches; the re-dump then leaves it as is.
+    if '\\u0000' in serialized or (not serialized.isascii() and _SURROGATES.search(serialized)):
+        serialized = JSONCodec.dumps(strip_unstorable_json(value), ensure_ascii=False)
+    return serialized
+
+
+async def strip_nul_from_json(db: AsyncSession) -> None:
+    """Rewrite PostgreSQL json values still holding ``\\u0000`` from before ``dumps_json_for_db`` stripped it."""
+    quote = db.get_bind().dialect.identifier_preparer.quote
+    columns = await db.execute(
+        text(
+            'SELECT table_name, column_name FROM information_schema.columns '
+            "WHERE table_schema = current_schema() AND data_type = 'json'"
+        )
+    )
+    for table, column in columns.all():
+        table, column = quote(table), quote(column)
+        # json keeps its input text verbatim, so the escape is findable without parsing every row.
+        rows = await db.execute(
+            text(f'SELECT ctid::text, {column}::text FROM {table} WHERE strpos({column}::text, :escape) > 0'),
+            {'escape': '\\u0000'},
+        )
+        for ctid, raw in rows.all():
+            value = JSONCodec.loads(raw)
+            cleaned = strip_unstorable_json(value)
+            if cleaned != value:
+                await db.execute(
+                    text(f'UPDATE {table} SET {column} = CAST(:value AS json) WHERE ctid = CAST(:ctid AS tid)'),
+                    {'value': dumps_json_for_db(cleaned), 'ctid': ctid},
+                )
+    await db.commit()
+
+
 class JSONField(types.TypeDecorator):  # TEXT-backed JSON storage
     """Store arbitrary Python objects as JSON-encoded TEXT.
 
     Used instead of native JSON columns for portability across SQLite and
-    PostgreSQL.  Values are serialized with ``json.dumps`` on write and
-    deserialized with ``json.loads`` on read.
+    PostgreSQL.  Values are serialized with ``JSONCodec.dumps`` on write and
+    deserialized with ``JSONCodec.loads`` on read.
     """
 
     impl = types.UnicodeText
     cache_ok = True
 
     def process_bind_param(self, value: _T | None, dialect: Dialect) -> Any:
-        return json.dumps(value) if value is not None else None
+        return dumps_json_for_db(value) if value is not None else None
 
     def process_result_value(self, value: _T | None, dialect: Dialect) -> Any:
-        return json.loads(value) if value is not None else None
+        return JSONCodec.loads(value) if value is not None else None
 
     def copy(self, **kwargs: Any) -> Self:
         return JSONField(length=self.impl.length)
+
+
+if USE_SLIM:
+    if make_url(DATABASE_URL).get_backend_name() not in ('sqlite', 'postgresql', 'postgres'):
+        raise ValueError(
+            'Slim requires SQLite or PostgreSQL for DATABASE_URL. Use the standard image for other databases.'
+        )
+    if DATABASE_ENABLE_IAM_TOKEN_AUTH:
+        raise ValueError(
+            'AWS RDS IAM authentication requires the standard image. Slim supports PostgreSQL database credentials.'
+        )
 
 
 # Normalize SSL params from the URL once; the sync engine needs them
@@ -202,6 +262,20 @@ def enable_iam_token_auth(connectable) -> None:
         return
 
     engine = getattr(connectable, 'sync_engine', connectable)
+    url = engine.url
+    auth = _rds_iam_token_auth
+    # The token is bound to one host/port/user pair; leave other databases on their own credentials.
+    if (url.host, url.port or 5432, url.username) != (auth.host, auth.port, auth.username):
+        log.warning(
+            'AWS RDS IAM token auth not applied to %s: the token is issued for %s@%s:%s, '
+            'so this connection uses the password from its own URL',
+            url.render_as_string(hide_password=True),
+            auth.username,
+            auth.host,
+            auth.port,
+        )
+        return
+
     if not event.contains(engine, 'do_connect', _set_iam_token_password):
         event.listen(engine, 'do_connect', _set_iam_token_password)
 
@@ -232,10 +306,29 @@ def _make_async_url(url: str) -> str:
     return url
 
 
-# ============================================================
-# SYNC ENGINE (used only for: startup migrations, config loading,
+def _json_codec_kwargs(kwargs: dict) -> dict:
+    """Default an engine to JSONCodec for native ``JSON`` columns.
+
+    Unlike ``JSONField``, those serialize through the engine, which otherwise uses
+    stdlib ``json``. With ``ENABLE_ORJSON`` off JSONCodec is stdlib ``json`` anyway.
+    """
+    kwargs.setdefault('json_serializer', dumps_json_for_db)
+    kwargs.setdefault('json_deserializer', JSONCodec.loads)
+    return kwargs
+
+
+def _create_engine(*args, **kwargs):
+    """``create_engine`` with the app JSON codec wired in."""
+    return create_engine(*args, **_json_codec_kwargs(kwargs))
+
+
+def _create_async_engine(*args, **kwargs):
+    """``create_async_engine`` with the app JSON codec wired in."""
+    return create_async_engine(*args, **_json_codec_kwargs(kwargs))
+
+
+# Sync engine (used only for: startup migrations, config loading,
 #              Alembic, peewee migration, health checks)
-# ============================================================
 
 # Handle SQLCipher URLs
 if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
@@ -260,7 +353,7 @@ if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
     # in the native sqlcipher3 C library. Use NullPool by default for safety,
     # or QueuePool if DATABASE_POOL_SIZE is explicitly configured.
     if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0:
-        engine = create_engine(
+        engine = _create_engine(
             'sqlite://',
             creator=create_sqlcipher_connection,
             pool_size=DATABASE_POOL_SIZE,
@@ -272,7 +365,7 @@ if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
             echo=False,
         )
     else:
-        engine = create_engine(
+        engine = _create_engine(
             'sqlite://',
             creator=create_sqlcipher_connection,
             poolclass=NullPool,
@@ -282,10 +375,54 @@ if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
     log.info('Connected to encrypted SQLite database using SQLCipher')
 
 elif 'sqlite' in SQLALCHEMY_DATABASE_URL:
-    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={'check_same_thread': False})
+    engine = _create_engine(SQLALCHEMY_DATABASE_URL, connect_args={'check_same_thread': False})
 
     def _apply_sqlite_pragmas(dbapi_connection):
         """Apply all configured SQLite PRAGMAs to a raw DBAPI connection."""
+        # SQLite LIKE folds ASCII only; SQLAlchemy SQLite ILIKE compiles to lower(x) LIKE lower(?).
+        compiled_patterns = {}
+
+        def like(pattern, value, escape=None):
+            if pattern is None or value is None:
+                return None
+
+            pattern = str(pattern).lower()
+            escape = str(escape).lower() if escape is not None else None
+            key = (pattern, escape)
+            compiled = compiled_patterns.get(key)
+            if compiled is False:
+                return False
+            if compiled is None:
+                segments = ['']
+                escaped = False
+                for char in pattern:
+                    if escape and not escaped and char == escape:
+                        escaped = True
+                        continue
+                    if not escaped and char == '%':
+                        segments.append('')
+                    else:
+                        segments[-1] += '.' if not escaped and char == '_' else re.escape(char)
+                    escaped = False
+                if escaped:
+                    compiled = False
+                    if len(compiled_patterns) >= 512:
+                        compiled_patterns.clear()
+                    compiled_patterns[key] = compiled
+                    return False
+                # Atomic groups pin each middle segment to its first match, so '%' never backtracks.
+                regex = segments[0] + ''.join(f'(?>.*?{segment})' for segment in segments[1:-1])
+                if len(segments) > 1:
+                    regex += '.*' + segments[-1]
+                compiled = re.compile(regex, re.DOTALL)
+                if len(compiled_patterns) >= 512:
+                    compiled_patterns.clear()
+                compiled_patterns[key] = compiled
+
+            return compiled.fullmatch(str(value).lower()) is not None
+
+        dbapi_connection.create_function('like', 2, like, deterministic=True)
+        dbapi_connection.create_function('like', 3, like, deterministic=True)
         cursor = dbapi_connection.cursor()
         if DATABASE_ENABLE_SQLITE_WAL:
             cursor.execute('PRAGMA journal_mode=WAL')
@@ -314,7 +451,7 @@ elif 'sqlite' in SQLALCHEMY_DATABASE_URL:
 else:
     if isinstance(DATABASE_POOL_SIZE, int):
         if DATABASE_POOL_SIZE > 0:
-            engine = create_engine(
+            engine = _create_engine(
                 SQLALCHEMY_DATABASE_URL,
                 pool_size=DATABASE_POOL_SIZE,
                 max_overflow=DATABASE_POOL_MAX_OVERFLOW,
@@ -324,9 +461,9 @@ else:
                 poolclass=QueuePool,
             )
         else:
-            engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True, poolclass=NullPool)
+            engine = _create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True, poolclass=NullPool)
     else:
-        engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+        engine = _create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
 
 enable_iam_token_auth(engine)
 
@@ -350,9 +487,7 @@ def get_session():
 get_db = contextmanager(get_session)
 
 
-# ============================================================
-# ASYNC ENGINE (used for ALL runtime database operations)
-# ============================================================
+# Async engine (used for all runtime database operations)
 
 # psycopg (v3) speaks libpq natively — the full DATABASE_URL is passed
 # through as-is.  SSL params, ``options``, ``target_session_attrs``, etc.
@@ -370,23 +505,30 @@ if sys.platform == 'win32' and _is_postgres_url(DATABASE_URL):
 
 if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
     # Generous default — async coroutines + no session sharing = high connection demand.
+    # No pool_pre_ping: a local SQLite file cannot drop connections, and the
+    # ping costs a worker-thread hop plus a SELECT 1 on every checkout.
     _sqlite_pool_size = DATABASE_POOL_SIZE if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0 else 512
-    async_engine = create_async_engine(
+    async_engine = _create_async_engine(
         ASYNC_SQLALCHEMY_DATABASE_URL,
         connect_args={'check_same_thread': False},
         pool_size=_sqlite_pool_size,
         pool_timeout=DATABASE_POOL_TIMEOUT,
         pool_recycle=DATABASE_POOL_RECYCLE,
-        pool_pre_ping=True,
     )
 
     @event.listens_for(async_engine.sync_engine, 'connect')
     def _set_sqlite_pragmas(dbapi_connection, connection_record):
         _apply_sqlite_pragmas(dbapi_connection)
+
+    @event.listens_for(async_engine.sync_engine, 'handle_error')
+    def _keep_connection_on_cancel(context):
+        # invalidating here would close the connection inside the cancelled task, and that close is lost
+        if isinstance(context.original_exception, asyncio.CancelledError):
+            context.is_disconnect = False
 else:
     if isinstance(DATABASE_POOL_SIZE, int):
         if DATABASE_POOL_SIZE > 0:
-            async_engine = create_async_engine(
+            async_engine = _create_async_engine(
                 ASYNC_SQLALCHEMY_DATABASE_URL,
                 pool_size=DATABASE_POOL_SIZE,
                 max_overflow=DATABASE_POOL_MAX_OVERFLOW,
@@ -395,13 +537,13 @@ else:
                 pool_pre_ping=True,
             )
         else:
-            async_engine = create_async_engine(
+            async_engine = _create_async_engine(
                 ASYNC_SQLALCHEMY_DATABASE_URL,
                 pool_pre_ping=True,
                 poolclass=NullPool,
             )
     else:
-        async_engine = create_async_engine(
+        async_engine = _create_async_engine(
             ASYNC_SQLALCHEMY_DATABASE_URL,
             pool_pre_ping=True,
         )
@@ -421,20 +563,14 @@ AsyncSessionLocal = async_sessionmaker(
 async def get_async_session():
     """Async session generator for FastAPI Depends()."""
     async with AsyncSessionLocal() as db:
-        try:
-            yield db
-        finally:
-            await db.close()
+        yield db
 
 
 @asynccontextmanager
 async def get_async_db():
     """Async context manager for use outside of FastAPI dependency injection."""
     async with AsyncSessionLocal() as db:
-        try:
-            yield db
-        finally:
-            await db.close()
+        yield db
 
 
 @asynccontextmanager

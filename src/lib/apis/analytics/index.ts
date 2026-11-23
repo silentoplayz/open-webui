@@ -43,7 +43,8 @@ export const getUserAnalytics = async (
 	startDate: number | null = null,
 	endDate: number | null = null,
 	limit: number = 50,
-	groupId: string | null = null
+	groupId: string | null = null,
+	metric: 'messages' | 'tokens' = 'messages'
 ) => {
 	let error = null;
 
@@ -52,6 +53,7 @@ export const getUserAnalytics = async (
 	if (endDate) searchParams.append('end_date', endDate.toString());
 	if (limit) searchParams.append('limit', limit.toString());
 	if (groupId) searchParams.append('group_id', groupId);
+	searchParams.append('metric', metric);
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/analytics/users?${searchParams.toString()}`, {
 		method: 'GET',
@@ -166,8 +168,10 @@ export const getDailyStats = async (
 	token: string = '',
 	startDate: number | null = null,
 	endDate: number | null = null,
-	granularity: 'hourly' | 'daily' = 'daily',
-	groupId: string | null = null
+	granularity: '10m' | 'hourly' | '3h' | '6h' | 'daily' = 'daily',
+	groupId: string | null = null,
+	metric: 'messages' | 'tokens' = 'messages',
+	compare = false
 ) => {
 	let error = null;
 
@@ -175,6 +179,8 @@ export const getDailyStats = async (
 	if (startDate) searchParams.append('start_date', startDate.toString());
 	if (endDate) searchParams.append('end_date', endDate.toString());
 	searchParams.append('granularity', granularity);
+	searchParams.append('metric', metric);
+	if (compare) searchParams.append('compare', 'true');
 	if (groupId) searchParams.append('group_id', groupId);
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/analytics/daily?${searchParams.toString()}`, {
@@ -248,7 +254,8 @@ export const getModelChats = async (
 	skip: number = 0,
 	limit: number = 50,
 	orderBy: string | null = null,
-	direction: string | null = null
+	direction: string | null = null,
+	groupId: string | null = null
 ) => {
 	let error = null;
 
@@ -259,6 +266,7 @@ export const getModelChats = async (
 	if (limit) searchParams.append('limit', limit.toString());
 	if (orderBy) searchParams.append('order_by', orderBy);
 	if (direction) searchParams.append('direction', direction);
+	if (groupId) searchParams.append('group_id', groupId);
 
 	const res = await fetch(
 		`${WEBUI_API_BASE_URL}/analytics/models/${encodeURIComponent(modelId)}/chats?${searchParams.toString()}`,

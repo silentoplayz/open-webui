@@ -15,6 +15,16 @@
 
 	export let loadUrlHandler: Function = () => {};
 	export let successMessage: string = '';
+	export let transformResult = (res) => {
+		const func = { ...res, id: res.id || nameToId(res.name) };
+		const frontmatter = extractFrontmatter(res.content);
+		if (frontmatter?.title) func.name = frontmatter.title;
+		func.meta = {
+			...(func.meta ?? {}),
+			description: frontmatter?.description ?? func.name
+		};
+		return func;
+	};
 
 	let loading = false;
 	let url = '';
@@ -41,38 +51,25 @@
 
 			toast.success(successMessage);
 
-			let func = res;
-			func.id = func.id || nameToId(func.name);
-
-			const frontmatter = extractFrontmatter(res.content); // Ensure frontmatter is extracted
-
-			if (frontmatter?.title) {
-				func.name = frontmatter.title;
-			}
-
-			func.meta = {
-				...(func.meta ?? {}),
-				description: frontmatter?.description ?? func.name
-			};
-
-			onImport(func);
+			onImport(transformResult(res));
 			show = false;
 		}
+		loading = false;
 	};
 </script>
 
-<Modal size="sm" bind:show>
+<Modal ariaLabel={$i18n.t('Import')} size="sm" bind:show>
 	<div>
-		<div class=" flex justify-between dark:text-gray-300 px-5 pt-4 pb-2">
-			<div class=" text-lg font-medium self-center">{$i18n.t('Import')}</div>
+		<div class=" flex justify-between dark:text-gray-300 px-4 pt-3 pb-1">
+			<div class=" text-sm font-medium self-center">{$i18n.t('Import')}</div>
 			<button
-				class="self-center"
+				class="self-center rounded-lg py-1 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-0"
 				aria-label={$i18n.t('Close')}
 				on:click={() => {
 					show = false;
 				}}
 			>
-				<XMark className={'size-5'} />
+				<XMark className={'size-4'} />
 			</button>
 		</div>
 
@@ -86,10 +83,13 @@
 				>
 					<div class="px-1">
 						<div class="flex flex-col w-full">
-							<div class=" mb-1 text-xs text-gray-500">{$i18n.t('URL')}</div>
+							<label for="import-url" class="block mb-1 text-xs text-gray-500"
+								>{$i18n.t('URL')}</label
+							>
 
 							<div class="flex-1">
 								<input
+									id="import-url"
 									class="w-full text-sm bg-transparent disabled:text-gray-500 dark:disabled:text-gray-500 outline-hidden"
 									type="url"
 									bind:value={url}
@@ -102,11 +102,9 @@
 						</div>
 					</div>
 
-					<div class="flex justify-end pt-3 text-sm font-medium">
+					<div class="flex justify-end pt-3 text-sm font-normal">
 						<button
-							class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex items-center gap-2 whitespace-nowrap {loading
-								? ' cursor-not-allowed'
-								: ''}"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white disabled:cursor-not-allowed"
 							type="submit"
 							disabled={loading}
 						>
@@ -114,7 +112,7 @@
 
 							{#if loading}
 								<span class="shrink-0">
-									<Spinner />
+									<Spinner className="size-3" />
 								</span>
 							{/if}
 						</button>

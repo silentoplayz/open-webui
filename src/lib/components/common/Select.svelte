@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { flyAndScale } from '$lib/utils/transitions';
 	import { tick } from 'svelte';
+	import { mobile } from '$lib/stores';
+	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 
 	/** Currently selected value */
 	export let value = '';
@@ -21,18 +23,20 @@
 	export let labelClass = '';
 
 	/** CSS classes for the dropdown content container */
-	export let contentClass =
-		'rounded-2xl min-w-[170px] p-1 border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-850 dark:text-white shadow-lg';
+	export let contentClass = 'min-w-[10.625rem]';
 
 	/** Max height for the dropdown content */
 	export let maxHeight = '18rem';
 
 	/** CSS classes for each item button */
 	export let itemClass =
-		'flex w-full gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl';
+		'flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100';
 
 	/** Alignment of the dropdown: 'start' | 'end' */
 	export let align = 'start';
+
+	/** Side to open on: 'bottom' | 'top' */
+	export let side = 'bottom';
 
 	/** Callback when dropdown closes */
 	export let onClose: () => void = () => {};
@@ -62,23 +66,61 @@
 
 		contentEl.style.position = 'fixed';
 		contentEl.style.zIndex = '9999';
-		contentEl.style.top = `${rect.bottom + 4}px`;
 		contentEl.style.minWidth = `${rect.width}px`;
 
+		const contentHeight = contentEl.offsetHeight || 0;
+		const spaceBelow = window.innerHeight - rect.bottom - 4;
+		const spaceAbove = rect.top - 4;
+
+		let openAbove = side === 'top';
+		if (side === 'bottom' && spaceBelow < contentHeight && spaceAbove > spaceBelow) {
+			openAbove = true;
+		} else if (side === 'top' && spaceAbove < contentHeight && spaceBelow > spaceAbove) {
+			openAbove = false;
+		}
+
+		if (openAbove) {
+			contentEl.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+			contentEl.style.top = 'auto';
+		} else {
+			contentEl.style.top = `${rect.bottom + 4}px`;
+			contentEl.style.bottom = 'auto';
+		}
+
+		const contentWidth = contentEl.offsetWidth || 0;
+
 		if (align === 'end') {
-			contentEl.style.right = `${window.innerWidth - rect.right}px`;
+			let right = window.innerWidth - rect.right;
+			if (right + contentWidth > window.innerWidth) {
+				right = window.innerWidth - contentWidth - 16;
+			}
+			contentEl.style.right = `${Math.max(16, right)}px`;
 			contentEl.style.left = 'auto';
 		} else {
-			contentEl.style.left = `${rect.left}px`;
+			let left = rect.left;
+			if (left + contentWidth + 16 > window.innerWidth) {
+				left = window.innerWidth - contentWidth - 16;
+			}
+			contentEl.style.left = `${Math.max(16, left)}px`;
 			contentEl.style.right = 'auto';
 		}
 	}
 
-	async function toggleOpen() {
+	async function toggleOpen(focusContent = false) {
 		open = !open;
 		if (open) {
 			await tick();
 			positionContent();
+			if (focusContent) {
+				contentEl?.querySelector<HTMLElement>('button:not([disabled]), a[href], input')?.focus();
+			}
+		}
+	}
+
+	function handleTriggerKeydown(event) {
+		if (event.target === triggerEl && (event.key === 'Enter' || event.key === ' ')) {
+			event.preventDefault();
+			toggleOpen(true);
 		}
 	}
 
@@ -92,20 +134,25 @@
 
 	function handleKeydown(event) {
 		if (event.key === 'Escape' && open) {
+			const restoreFocus = contentEl?.contains(document.activeElement);
 			open = false;
 			onClose();
+			if (restoreFocus) triggerEl?.focus();
 		}
 	}
 
 	export function selectItem(item) {
+		const restoreFocus = contentEl?.contains(document.activeElement);
 		value = item.value;
 		open = false;
 		onChange(value);
+		if (restoreFocus) triggerEl?.focus();
 	}
 </script>
 
 <svelte:window
 	on:click={handleWindowClick}
+	on:dragstart|capture={handleWindowClick}
 	on:keydown={handleKeydown}
 	on:scroll|capture={positionContent}
 	on:resize={positionContent}
@@ -113,10 +160,11 @@
 
 <button
 	bind:this={triggerEl}
-	class={triggerClass}
-	aria-label={placeholder}
+	class="focus-ring {triggerClass}"
 	type="button"
-	on:click={toggleOpen}
+	aria-expanded={open}
+	on:click={() => toggleOpen(!$mobile)}
+	on:keydown={handleTriggerKeydown}
 >
 	<slot name="trigger" {selectedLabel} {open}>
 		<span class={labelClass}>
@@ -127,16 +175,21 @@
 
 {#if open}
 	<div use:portal bind:this={contentEl} transition:flyAndScale>
-		<div class={contentClass} style:max-height={maxHeight} style:overflow-y="auto">
+		<DropdownMenu className={contentClass} style={`max-height: ${maxHeight}; overflow-y: auto;`}>
 			<slot {open} {selectItem}>
 				{#each items as item}
-					<button class={itemClass} type="button" on:click={() => selectItem(item)}>
+					<button
+						class="focus-ring {itemClass}"
+						type="button"
+						aria-pressed={value === item.value}
+						on:click={() => selectItem(item)}
+					>
 						<slot name="item" {item} selected={value === item.value}>
 							{item.label}
 						</slot>
 					</button>
 				{/each}
 			</slot>
-		</div>
+		</DropdownMenu>
 	</div>
 {/if}

@@ -1,32 +1,28 @@
 <script lang="ts">
 	import { v4 as uuidv4 } from 'uuid';
-	import {
-		chats,
-		config,
-		settings,
-		user as _user,
-		mobile,
-		currentChatPage,
-		temporaryChatEnabled
-	} from '$lib/stores';
+	import { config, settings, user as _user, mobile } from '$lib/stores';
+	import { refreshChatList } from '$lib/stores/chatList';
 	import { tick, getContext, onMount, onDestroy, createEventDispatcher } from 'svelte';
 	const dispatch = createEventDispatcher();
 
 	import { toast } from 'svelte-sonner';
-	import { deleteChatMessageById, getChatList, updateChatById } from '$lib/apis/chats';
-	import { copyToClipboard, extractCurlyBraceWords } from '$lib/utils';
+	import { deleteChatMessageById, updateChatById } from '$lib/apis/chats';
+	import { copyToClipboard, extractCurlyBraceWords, getDeepestChildId } from '$lib/utils';
+	import { getOutputText } from './Messages/structuredOutput';
 
 	import Message from './Messages/Message.svelte';
 	import Loader from '../common/Loader.svelte';
 	import Spinner from '../common/Spinner.svelte';
 
 	import ChatPlaceholder from './ChatPlaceholder.svelte';
+	import { getChatContext } from './context';
 
 	const i18n = getContext('i18n');
 
-	export let className = 'h-full flex pt-8';
+	export let className = 'h-full flex pt-18';
 
 	export let chatId = '';
+	const { temporary } = getChatContext();
 	export let user = $_user;
 
 	export let prompt;
@@ -47,27 +43,39 @@
 	export let showMessage: Function = () => {};
 	export let submitMessage: Function = () => {};
 	export let addMessages: Function = () => {};
+	export let onToolCallResolved: Function = () => {};
+	export let forkHandler: Function | null = null;
 
 	export let readOnly = false;
+	export let writeAccess = false;
+	export let allowDelete = true;
+	export let allowToolApproval: boolean = false;
+	export let compactPreview = false;
 	export let editCodeBlock = true;
 
 	export let topPadding = false;
 	export let bottomPadding = false;
 	export let autoScroll;
+	export let messagesContainerId = 'messages-container';
+	export let branchPointMessageId: string | null = null;
 
 	export let onSelect = (e) => {};
+	export let onInsertToNote: ((content: string) => void) | null = null;
+	export let onOpenArtifacts: ((code?: string) => void) | null = null;
 
 	export let messagesCount: number | null = 8;
 	let messagesLoading = false;
+
+	const getMessagesContainer = () => document.getElementById(messagesContainerId);
 
 	onDestroy(() => {
 		cancelAnimationFrame(pendingRebuild);
 	});
 
 	const loadMoreMessages = async () => {
-		// scroll slightly down to disable continuous loading
-		const element = document.getElementById('messages-container');
-		element.scrollTop = element.scrollTop + 100;
+		const element = getMessagesContainer();
+		const firstMessage = element?.querySelector('.message-listitem');
+		const previousTop = firstMessage?.getBoundingClientRect().top ?? 0;
 
 		messagesLoading = true;
 		messagesCount += 8;
@@ -75,6 +83,10 @@
 		buildMessages();
 
 		await tick();
+
+		if (element && firstMessage) {
+			element.scrollTop += firstMessage.getBoundingClientRect().top - previousTop;
+		}
 
 		messagesLoading = false;
 	};
@@ -88,7 +100,8 @@
 		let message = history.messages[history.currentId];
 		const visitedMessageIds = new Set();
 
-		while (message && (messagesCount !== null ? _messages.length <= messagesCount : true)) {
+		while (message && (messagesCount !== null ? _messages.length < messagesCount : true)) {
+			if (message.id === branchPointMessageId) break;
 			if (visitedMessageIds.has(message.id)) {
 				console.warn('Circular dependency detected in message history', message.id);
 				break;
@@ -138,34 +151,55 @@
 		})();
 	}
 
-	const scrollToBottom = () => {
-		const element = document.getElementById('messages-container');
+	export const scrollToBottom = () => {
+		const element = getMessagesContainer();
 		if (element) {
 			element.scrollTop = element.scrollHeight;
 
-			// Follow-up scroll to account for content-visibility: auto re-layouts
+			// Re-scroll across two frames as content-visibility resolves message heights.
 			requestAnimationFrame(() => {
 				if (element) {
 					element.scrollTop = element.scrollHeight;
+					requestAnimationFrame(() => {
+						element.scrollTop = element.scrollHeight;
+					});
 				}
 			});
 		}
+	};
+
+	export const scrollToMessage = async (id: string) => {
+		messagesCount = null;
+		buildMessages();
+		await tick();
+		const element = getMessagesContainer()?.querySelector<HTMLElement>(
+			`#${CSS.escape(`message-${id}`)}`
+		);
+		element?.scrollIntoView({ block: 'center' });
+		element?.animate([{ backgroundColor: '#a5a5c544' }, { backgroundColor: 'transparent' }], {
+			duration: 2200
+		});
 	};
 
 	export const scrollToTop = async () => {
 		messagesCount = null;
 		buildMessages();
 		await tick();
-		if (messages.length > 0) {
-			const firstMessageEl = document.getElementById(`message-${messages[0].id}`);
-			if (firstMessageEl) {
-				firstMessageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-			}
-		}
+
+		const element = getMessagesContainer();
+		if (!element) return;
+
+		element.scrollTo({ top: 0, behavior: 'smooth' });
+		requestAnimationFrame(() => {
+			element.scrollTo({ top: 0, behavior: 'smooth' });
+			requestAnimationFrame(() => {
+				element.scrollTo({ top: 0, behavior: 'smooth' });
+			});
+		});
 	};
 
 	const updateChat = async () => {
-		if (!$temporaryChatEnabled) {
+		if (!$temporary) {
 			history = history;
 			await tick();
 			const res = await updateChatById(localStorage.token, chatId, {
@@ -183,8 +217,7 @@
 				history = history;
 			}
 
-			currentChatPage.set(1);
-			await chats.set(await getChatList(localStorage.token, $currentChatPage));
+			await refreshChatList(localStorage.token);
 		}
 	};
 
@@ -206,22 +239,17 @@
 
 		// If we're navigating to a different message
 		if (message.id !== messageId) {
-			// Drill down to the deepest child of that branch
-			let messageChildrenIds = history.messages[messageId].childrenIds;
-			while (messageChildrenIds.length !== 0) {
-				messageId = messageChildrenIds.at(-1);
-				messageChildrenIds = history.messages[messageId].childrenIds;
-			}
-
-			history.currentId = messageId;
+			history.currentId = getDeepestChildId(history, messageId);
 		}
 
 		await tick();
 
 		// Optional auto-scroll
 		if ($settings?.scrollOnBranchChange ?? true) {
-			const element = document.getElementById('messages-container');
-			autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
+			const element = getMessagesContainer();
+			autoScroll = element
+				? element.scrollHeight - element.scrollTop <= element.clientHeight + 50
+				: false;
 
 			setTimeout(() => {
 				scrollToBottom();
@@ -230,45 +258,42 @@
 	};
 
 	const showPreviousMessage = async (message) => {
+		const refocus = document.activeElement?.classList.contains('previous-message-button');
+		let messageId = message.id;
+
 		if (message.parentId !== null) {
-			let messageId =
+			messageId =
 				history.messages[message.parentId].childrenIds[
 					Math.max(history.messages[message.parentId].childrenIds.indexOf(message.id) - 1, 0)
 				];
 
 			if (message.id !== messageId) {
-				let messageChildrenIds = history.messages[messageId].childrenIds;
-
-				while (messageChildrenIds.length !== 0) {
-					messageId = messageChildrenIds.at(-1);
-					messageChildrenIds = history.messages[messageId].childrenIds;
-				}
-
-				history.currentId = messageId;
+				history.currentId = getDeepestChildId(history, messageId);
 			}
 		} else {
 			let childrenIds = Object.values(history.messages)
 				.filter((message) => message.parentId === null)
 				.map((message) => message.id);
-			let messageId = childrenIds[Math.max(childrenIds.indexOf(message.id) - 1, 0)];
+			messageId = childrenIds[Math.max(childrenIds.indexOf(message.id) - 1, 0)];
 
 			if (message.id !== messageId) {
-				let messageChildrenIds = history.messages[messageId].childrenIds;
-
-				while (messageChildrenIds.length !== 0) {
-					messageId = messageChildrenIds.at(-1);
-					messageChildrenIds = history.messages[messageId].childrenIds;
-				}
-
-				history.currentId = messageId;
+				history.currentId = getDeepestChildId(history, messageId);
 			}
 		}
 
 		await tick();
 
+		if (refocus) {
+			document
+				.querySelector<HTMLElement>(`#message-${messageId} .previous-message-button`)
+				?.focus();
+		}
+
 		if ($settings?.scrollOnBranchChange ?? true) {
-			const element = document.getElementById('messages-container');
-			autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
+			const element = getMessagesContainer();
+			autoScroll = element
+				? element.scrollHeight - element.scrollTop <= element.clientHeight + 50
+				: false;
 
 			setTimeout(() => {
 				scrollToBottom();
@@ -277,8 +302,11 @@
 	};
 
 	const showNextMessage = async (message) => {
+		const refocus = document.activeElement?.classList.contains('next-message-button');
+		let messageId = message.id;
+
 		if (message.parentId !== null) {
-			let messageId =
+			messageId =
 				history.messages[message.parentId].childrenIds[
 					Math.min(
 						history.messages[message.parentId].childrenIds.indexOf(message.id) + 1,
@@ -287,39 +315,31 @@
 				];
 
 			if (message.id !== messageId) {
-				let messageChildrenIds = history.messages[messageId].childrenIds;
-
-				while (messageChildrenIds.length !== 0) {
-					messageId = messageChildrenIds.at(-1);
-					messageChildrenIds = history.messages[messageId].childrenIds;
-				}
-
-				history.currentId = messageId;
+				history.currentId = getDeepestChildId(history, messageId);
 			}
 		} else {
 			let childrenIds = Object.values(history.messages)
 				.filter((message) => message.parentId === null)
 				.map((message) => message.id);
-			let messageId =
+			messageId =
 				childrenIds[Math.min(childrenIds.indexOf(message.id) + 1, childrenIds.length - 1)];
 
 			if (message.id !== messageId) {
-				let messageChildrenIds = history.messages[messageId].childrenIds;
-
-				while (messageChildrenIds.length !== 0) {
-					messageId = messageChildrenIds.at(-1);
-					messageChildrenIds = history.messages[messageId].childrenIds;
-				}
-
-				history.currentId = messageId;
+				history.currentId = getDeepestChildId(history, messageId);
 			}
 		}
 
 		await tick();
 
+		if (refocus) {
+			document.querySelector<HTMLElement>(`#message-${messageId} .next-message-button`)?.focus();
+		}
+
 		if ($settings?.scrollOnBranchChange ?? true) {
-			const element = document.getElementById('messages-container');
-			autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
+			const element = getMessagesContainer();
+			autoScroll = element
+				? element.scrollHeight - element.scrollTop <= element.clientHeight + 50
+				: false;
 
 			setTimeout(() => {
 				scrollToBottom();
@@ -352,6 +372,8 @@
 					parentId: history.messages[messageId].parentId,
 					childrenIds: [],
 					role: 'user',
+					user_id: $_user?.id,
+					user: { id: $_user?.id, name: $_user?.name },
 					content: userPrompt,
 					...(files && { files: files }),
 					models: selectedModels,
@@ -391,7 +413,9 @@
 					parentId: parentId,
 					childrenIds: [],
 					files: undefined,
-					content: output !== undefined ? '' : content,
+					annotation: undefined,
+					feedbackId: undefined,
+					content: output !== undefined ? getOutputText(output) : content,
 					...(output !== undefined ? { output } : {}),
 					timestamp: Math.floor(Date.now() / 1000) // Unix epoch
 				};
@@ -416,7 +440,7 @@
 				}
 				if (output !== undefined) {
 					history.messages[messageId].output = output;
-					history.messages[messageId].content = '';
+					history.messages[messageId].content = getOutputText(output);
 				}
 				await updateChat();
 			}
@@ -466,49 +490,41 @@
 			delete history.messages[id];
 		});
 
-		let nextMessageId = parentMessageId;
-		let nextChildrenIds =
-			nextMessageId === null
-				? Object.keys(history.messages).filter((id) => history.messages[id].parentId === null)
-				: (history.messages[nextMessageId]?.childrenIds ?? []);
-		while (nextChildrenIds.length > 0) {
-			nextMessageId = nextChildrenIds.at(-1);
-			nextChildrenIds = history.messages[nextMessageId]?.childrenIds ?? [];
-		}
-		history.currentId = nextMessageId;
+		history.currentId = getDeepestChildId(history, parentMessageId);
 		history = history;
 
-		if (!$temporaryChatEnabled) {
+		if (!$temporary) {
 			const res = await deleteChatMessageById(localStorage.token, chatId, messageId);
 			if (res?.chat?.history) {
 				history = res.chat.history;
 			}
 
-			currentChatPage.set(1);
-			await chats.set(await getChatList(localStorage.token, $currentChatPage));
+			await refreshChatList(localStorage.token);
 		}
 	};
 
 	const triggerScroll = () => {
 		if (autoScroll) {
-			const element = document.getElementById('messages-container');
-			autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
-			setTimeout(() => {
-				scrollToBottom();
-			}, 100);
+			const element = getMessagesContainer();
+			if (element) {
+				autoScroll = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
+				setTimeout(() => {
+					scrollToBottom();
+				}, 100);
+			}
 		}
 	};
 </script>
 
 <div class={className}>
-	{#if Object.keys(history?.messages ?? {}).length == 0}
+	{#if Object.keys(history?.messages ?? {}).length == 0 || (branchPointMessageId && history?.currentId === branchPointMessageId)}
 		<ChatPlaceholder modelIds={selectedModels} {atSelectedModel} {onSelect} />
 	{:else}
 		<div class="w-full pt-2">
 			{#key chatId}
 				<section class="w-full" aria-labelledby="chat-conversation">
 					<h2 class="sr-only" id="chat-conversation">{$i18n.t('Chat Conversation')}</h2>
-					{#if messages.at(0)?.parentId !== null}
+					{#if messages.at(0)?.parentId !== null && messages.at(0)?.parentId !== branchPointMessageId}
 						<Loader
 							on:visible={(e) => {
 								console.log('visible');
@@ -523,37 +539,47 @@
 							</div>
 						</Loader>
 					{/if}
-					<ul role="log" aria-live="polite" aria-relevant="additions" aria-atomic="false">
-						{#each messages as message, messageIdx (message.id)}
-							<Message
-								{chatId}
-								bind:history
-								{selectedModels}
-								messageId={message.id}
-								idx={messageIdx}
-								{user}
-								{setInputText}
-								{gotoMessage}
-								{showPreviousMessage}
-								{showNextMessage}
-								{updateChat}
-								{editMessage}
-								{deleteMessage}
-								{rateMessage}
-								{actionMessage}
-								{saveMessage}
-								{submitMessage}
-								{regenerateResponse}
-								{continueResponse}
-								{mergeResponses}
-								{addMessages}
-								{triggerScroll}
-								{readOnly}
-								{editCodeBlock}
-								{topPadding}
-							/>
-						{/each}
-					</ul>
+					<div role="log" aria-live="polite" aria-relevant="additions" aria-atomic="false">
+						<ul>
+							{#each messages as message, messageIdx (message.id)}
+								<Message
+									{chatId}
+									bind:history
+									selectedModels={atSelectedModel ? [atSelectedModel.id] : selectedModels}
+									messageId={message.id}
+									idx={messageIdx}
+									{user}
+									{setInputText}
+									{gotoMessage}
+									{showPreviousMessage}
+									{showNextMessage}
+									{updateChat}
+									{editMessage}
+									{deleteMessage}
+									{rateMessage}
+									{actionMessage}
+									{saveMessage}
+									{submitMessage}
+									{regenerateResponse}
+									{continueResponse}
+									{mergeResponses}
+									{addMessages}
+									{onToolCallResolved}
+									{forkHandler}
+									{allowDelete}
+									{allowToolApproval}
+									{triggerScroll}
+									{readOnly}
+									{compactPreview}
+									{editCodeBlock}
+									{topPadding}
+									{onInsertToNote}
+									{onOpenArtifacts}
+									{writeAccess}
+								/>
+							{/each}
+						</ul>
+					</div>
 				</section>
 				<div class="pb-18" />
 				{#if bottomPadding}

@@ -1,5 +1,22 @@
 import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 import type { Banner } from '$lib/types';
+import type { Visibility } from '$lib/utils/ui-visibility';
+
+export const setInterfaceVisibility = async (
+	token: string,
+	visibility: Visibility
+): Promise<Visibility> => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/interface/visibility`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({ visibility })
+	});
+	if (!res.ok) throw (await res.json()).detail;
+	return (await res.json()).visibility;
+};
 
 export const importConfig = async (token: string, config: object) => {
 	let error = null;
@@ -210,173 +227,6 @@ export const setTerminalServerConnections = async (token: string, connections: o
 		},
 		body: JSON.stringify({
 			...connections
-		})
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-/**
- * Detect whether a terminal server URL points to an Orchestrator or a direct
- * Open Terminal instance.
- *
- * - GET {url}/api/v1/policies → 200 → "orchestrator"
- * - GET {url}/api/config      → 200 → "terminal"
- * - Neither                         → null
- */
-export const detectTerminalServerType = async (
-	url: string,
-	key: string
-): Promise<'orchestrator' | 'terminal' | null> => {
-	const baseUrl = url.replace(/\/$/, '');
-	const headers: Record<string, string> = {};
-	if (key) {
-		headers['Authorization'] = `Bearer ${key}`;
-	}
-
-	// Orchestrators expose a policies API; plain terminals don't.
-	try {
-		const res = await fetch(`${baseUrl}/api/v1/policies`, { headers });
-		if (res.ok) return 'orchestrator';
-	} catch {
-		// ignore
-	}
-
-	// Fall back to open-terminal config endpoint.
-	try {
-		const res = await fetch(`${baseUrl}/api/config`, { headers });
-		if (res.ok) return 'terminal';
-	} catch {
-		// ignore
-	}
-
-	return null;
-};
-
-/**
- * Create or update a policy on the orchestrator.
- * Proxied through the Open WebUI backend to keep API keys server-side.
- */
-export const putOrchestratorPolicy = async (
-	token: string,
-	url: string,
-	key: string,
-	policyId: string,
-	policyData: object,
-	authType: string = 'bearer'
-): Promise<object | null> => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/terminal_servers/policy`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({
-			url: url.replace(/\/$/, ''),
-			key,
-			auth_type: authType,
-			policy_id: policyId,
-			policy_data: policyData
-		})
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const putOrchestratorLifecycle = async (
-	token: string,
-	url: string,
-	key: string,
-	policyId: string,
-	lifecycleData: object,
-	authType: string = 'bearer'
-): Promise<object | null> => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/terminal_servers/lifecycle`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({
-			url: url.replace(/\/$/, ''),
-			key,
-			auth_type: authType,
-			policy_id: policyId,
-			lifecycle_data: lifecycleData
-		})
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const refreshOrchestratorTerminals = async (
-	token: string,
-	url: string,
-	key: string,
-	body: {
-		user_id?: string;
-		policy_id?: string;
-		only_idle?: boolean;
-		reset?: boolean;
-	},
-	authType: string = 'bearer'
-): Promise<object | null> => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/terminal_servers/refresh`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({
-			url: url.replace(/\/$/, ''),
-			key,
-			auth_type: authType,
-			...body
 		})
 	})
 		.then(async (res) => {
@@ -661,7 +511,36 @@ export const setModelsConfig = async (token: string, config: object) => {
 	return res;
 };
 
-export const setDefaultPromptSuggestions = async (token: string, promptSuggestions: string) => {
+export const getSubagentsConfig = async (token: string) => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/subagents`, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		}
+	});
+	if (!res.ok) throw await res.json();
+	return res.json();
+};
+
+export const setSubagentsConfig = async (token: string, config: object) => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/subagents`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify(config)
+	});
+	if (!res.ok) throw await res.json();
+	return res.json();
+};
+
+export const setDefaultPromptSuggestions = async (
+	token: string,
+	promptSuggestions: any[] | null,
+	promptSuggestionsI18n: Record<string, any> = {}
+) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/suggestions`, {
@@ -671,7 +550,8 @@ export const setDefaultPromptSuggestions = async (token: string, promptSuggestio
 			Authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			suggestions: promptSuggestions
+			suggestions: promptSuggestions,
+			i18n: promptSuggestionsI18n
 		})
 	})
 		.then(async (res) => {

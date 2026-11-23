@@ -4,7 +4,6 @@
 
 	import Modal from '$lib/components/common/Modal.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
-	import XMark from '$lib/components/icons/XMark.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 
 	import type { CalendarModel, CalendarEventModel, CalendarEventForm } from '$lib/apis/calendar';
@@ -23,12 +22,19 @@
 	export let defaultCalendarId: string = '';
 	export let defaultStartAt: number | null = null;
 
+	function close() {
+		show = false;
+		dispatch('close');
+	}
+
 	let title = '';
 	let description = '';
 	let calendarId = '';
 	let startDate = '';
 	let startTime = '';
 	let endDate = '';
+	let endDayOffset = 0;
+	let overnight = false;
 	let endTime = '';
 	let allDay = false;
 	let location = '';
@@ -76,6 +82,10 @@
 		return new Date(`${dateStr}T${timeStr || '00:00'}`).getTime() * NS;
 	}
 
+	function endsPastMidnight(): boolean {
+		return !allDay && endTime < startTime;
+	}
+
 	function reset() {
 		if (event) {
 			title = event.title;
@@ -101,10 +111,10 @@
 				endTime = nsToTimeStr(endNs);
 			} else {
 				const now = new Date();
-				startDate = now.toISOString().slice(0, 10);
+				startDate = nsToDateStr(now.getTime() * NS);
 				startTime = now.toTimeString().slice(0, 5);
 				const later = new Date(now.getTime() + 60 * 60 * 1000);
-				endDate = later.toISOString().slice(0, 10);
+				endDate = nsToDateStr(later.getTime() * NS);
 				endTime = later.toTimeString().slice(0, 5);
 			}
 			allDay = false;
@@ -112,6 +122,13 @@
 			alertMinutes = 10;
 			repeatFrequency = '';
 		}
+		endDayOffset = endDate
+			? Math.round(
+					(dateTimeToNs(endDate, '12:00') - dateTimeToNs(startDate, '12:00')) /
+						(24 * 60 * 60 * 1000 * NS)
+				)
+			: 0;
+		overnight = endDayOffset === 1 && endsPastMidnight();
 	}
 
 	$: if (show) reset();
@@ -122,27 +139,43 @@
 			return;
 		}
 
+		if (!startDate) {
+			toast.error($i18n.t('Date is required'));
+			return;
+		}
+
 		loading = true;
 		try {
 			const startNs = dateTimeToNs(startDate, allDay ? '00:00' : startTime);
-			const endNs = endDate ? dateTimeToNs(endDate, allDay ? '23:59' : endTime) : undefined;
+			const endDays = endsPastMidnight() ? Math.max(endDayOffset, 1) : overnight ? 0 : endDayOffset;
+			const shiftedEndDate = endDate
+				? nsToDateStr(dateTimeToNs(startDate, '12:00') + endDays * 24 * 60 * 60 * 1000 * NS)
+				: '';
+			let endNs = shiftedEndDate
+				? dateTimeToNs(shiftedEndDate, allDay ? '23:59' : endTime)
+				: undefined;
+			if (endNs !== undefined && endNs < startNs) {
+				const duration =
+					event?.end_at && event.end_at > event.start_at ? event.end_at - event.start_at : 0;
+				endNs = startNs + duration;
+			}
 
 			if (event && !event.meta?.automation_id) {
 				const result = await updateCalendarEvent(localStorage.token, event.id, {
 					calendar_id: calendarId,
 					title: title.trim(),
-					description: description.trim() || undefined,
+					description: description.trim() || null,
 					start_at: startNs,
 					end_at: endNs,
 					all_day: allDay,
-					rrule: getRepeatRrule(),
-					location: location.trim() || undefined,
+					rrule: getRepeatRrule() ?? null,
+					location: location.trim() || null,
 					meta: { alert_minutes: alertMinutes }
 				});
 				if (result) {
 					toast.success($i18n.t('Event updated'));
 					dispatch('save', result);
-					show = false;
+					close();
 				}
 			} else {
 				const form: CalendarEventForm = {
@@ -160,7 +193,7 @@
 				if (result) {
 					toast.success($i18n.t('Event created'));
 					dispatch('save', result);
-					show = false;
+					close();
 				}
 			}
 		} catch (err) {
@@ -177,7 +210,7 @@
 			await deleteCalendarEvent(localStorage.token, event.id);
 			toast.success($i18n.t('Event deleted'));
 			dispatch('delete', event);
-			show = false;
+			close();
 		} catch (err) {
 			toast.error(`${err}`);
 		} finally {
@@ -186,31 +219,26 @@
 	};
 </script>
 
-<Modal size="md" bind:show>
+<Modal ariaLabel={title || $i18n.t('Event')} size="md" bind:show onRequestClose={close}>
 	<div>
-		<!-- Header -->
-		<div class="flex justify-between dark:text-gray-100 px-5 pt-4 pb-2">
+		<div class="dark:text-gray-100 px-4 pt-3 pb-1">
 			<input
-				class="w-full text-lg bg-transparent outline-hidden font-primary placeholder:text-gray-300 dark:placeholder:text-gray-700"
+				class="w-full text-base bg-transparent outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700"
 				type="text"
 				bind:value={title}
 				placeholder={$i18n.t('Event title')}
+				aria-label={$i18n.t('Event title')}
 			/>
-			<button
-				class="self-center shrink-0 ml-2"
-				aria-label={$i18n.t('Close')}
-				on:click={() => (show = false)}
-			>
-				<XMark className="size-5" />
-			</button>
 		</div>
 
-		<!-- Details -->
-		<div class="px-5 pb-2 flex flex-col gap-3">
+		<div class="px-4 pb-2 flex flex-col gap-2.5">
 			<!-- Calendar -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Calendar')}</div>
+				<div id="event-calendar-label" class="mb-1 text-xs text-gray-500">
+					{$i18n.t('Calendar')}
+				</div>
 				<select
+					aria-labelledby="event-calendar-label"
 					class="w-full text-sm bg-transparent outline-hidden cursor-pointer"
 					bind:value={calendarId}
 				>
@@ -224,11 +252,26 @@
 			<div>
 				<div class="mb-1 text-xs text-gray-500">{$i18n.t('When')}</div>
 				<div class="flex items-center gap-2 text-sm flex-wrap">
-					<input type="date" class="bg-transparent outline-hidden" bind:value={startDate} />
+					<input
+						type="date"
+						class="bg-transparent outline-hidden dark:scheme-dark"
+						bind:value={startDate}
+						aria-label={$i18n.t('Start date')}
+					/>
 					{#if !allDay}
-						<input type="time" class="bg-transparent outline-hidden" bind:value={startTime} />
+						<input
+							type="time"
+							class="bg-transparent outline-hidden dark:scheme-dark"
+							bind:value={startTime}
+							aria-label={$i18n.t('Start time')}
+						/>
 						<span class="text-gray-300 dark:text-gray-600">–</span>
-						<input type="time" class="bg-transparent outline-hidden" bind:value={endTime} />
+						<input
+							type="time"
+							class="bg-transparent outline-hidden dark:scheme-dark"
+							bind:value={endTime}
+							aria-label={$i18n.t('End time')}
+						/>
 					{/if}
 					<label class="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 ml-auto">
 						<input type="checkbox" class="accent-blue-500" bind:checked={allDay} />
@@ -239,8 +282,11 @@
 
 			<!-- Location -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Location')}</div>
+				<div id="event-location-label" class="mb-1 text-xs text-gray-500">
+					{$i18n.t('Location')}
+				</div>
 				<input
+					aria-labelledby="event-location-label"
 					class="w-full text-sm bg-transparent outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700"
 					placeholder={$i18n.t('Add location')}
 					bind:value={location}
@@ -249,8 +295,11 @@
 
 			<!-- Reminder -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Reminder')}</div>
+				<div id="event-reminder-label" class="mb-1 text-xs text-gray-500">
+					{$i18n.t('Reminder')}
+				</div>
 				<select
+					aria-labelledby="event-reminder-label"
 					class="w-full text-sm bg-transparent outline-hidden cursor-pointer"
 					bind:value={alertMinutes}
 				>
@@ -266,8 +315,9 @@
 
 			<!-- Repeat -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Repeat')}</div>
+				<div id="event-repeat-label" class="mb-1 text-xs text-gray-500">{$i18n.t('Repeat')}</div>
 				<select
+					aria-labelledby="event-repeat-label"
 					class="w-full text-sm bg-transparent outline-hidden cursor-pointer"
 					bind:value={repeatFrequency}
 				>
@@ -282,8 +332,11 @@
 
 			<!-- Description -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Description')}</div>
+				<div id="event-description-label" class="mb-1 text-xs text-gray-500">
+					{$i18n.t('Description')}
+				</div>
 				<textarea
+					aria-labelledby="event-description-label"
 					class="w-full text-sm bg-transparent outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700 resize-none min-h-[4rem]"
 					placeholder={$i18n.t('Add description')}
 					bind:value={description}
@@ -292,12 +345,11 @@
 			</div>
 		</div>
 
-		<!-- Bottom toolbar -->
-		<div class="flex items-center justify-between px-4 pb-3.5 pt-1 gap-2">
+		<div class="flex items-center justify-between px-4 pb-3 pt-1 gap-2">
 			<div class="flex items-center gap-0.5 flex-1 min-w-0">
 				{#if event && !event.meta?.automation_id}
 					<button
-						class="px-3 py-1 text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
+						class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 						type="button"
 						on:click={() => (showDeleteConfirmDialog = true)}
 						disabled={loading}
@@ -309,23 +361,21 @@
 
 			<div class="flex items-center gap-2 shrink-0">
 				<button
-					class="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition"
+					class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 					type="button"
-					on:click={() => (show = false)}
+					on:click={close}
 				>
 					{$i18n.t('Cancel')}
 				</button>
 				<button
-					class="px-3.5 py-1.5 text-sm bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex items-center gap-2 {loading
-						? 'cursor-not-allowed'
-						: ''}"
+					class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white disabled:cursor-not-allowed"
 					on:click={submitHandler}
 					type="button"
 					disabled={loading}
 				>
 					{event && !event.meta?.automation_id ? $i18n.t('Save') : $i18n.t('Create')}
 					{#if loading}
-						<span class="shrink-0"><Spinner /></span>
+						<span class="shrink-0"><Spinner className="size-3" /></span>
 					{/if}
 				</button>
 			</div>

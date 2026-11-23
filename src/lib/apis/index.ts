@@ -1,31 +1,34 @@
+import { get } from 'svelte/store';
+import { selectedTerminalId, selectedFolder, chatId } from '$lib/stores';
 import { WEBUI_BASE_URL } from '$lib/constants';
-import { convertOpenApiToToolPayload } from '$lib/utils';
-import { getOpenAIModelsDirect } from './openai';
 
-const TOOL_SERVER_FETCH_TIMEOUT = 10000;
-
-// Valid HTTP methods per OpenAPI 3.x – used to skip extension keys (x-*)
-// and non-operation path-item fields (summary, description, servers, parameters).
-const OPENAPI_HTTP_METHODS = new Set([
-	'get',
-	'put',
-	'post',
-	'delete',
-	'options',
-	'head',
-	'patch',
-	'trace'
-]);
-
-// Every request sent from here is a petition. May it reach
-// the one for whom it was intended, and return answered.
+// Let every request reach its destination,
+// and let those who wait receive an answer worthy of their patience.
 export const getModels = async (
 	token: string = '',
-	connections: object | null = null,
 	base: boolean = false,
-	refresh: boolean = false
+	refresh: boolean = false,
+	context?: { terminalId: string | null; chatId?: string | null; cwd?: string | null }
 ) => {
 	const searchParams = new URLSearchParams();
+	if (context === undefined) {
+		const terminalId = get(selectedTerminalId);
+		const currentChatId = get(chatId);
+		const folder = get(selectedFolder);
+		context = {
+			terminalId,
+			chatId: currentChatId,
+			cwd:
+				!currentChatId && folder?.data?.terminal_id === terminalId
+					? folder?.data?.working_directory
+					: null
+		};
+	}
+	if (!base && context.terminalId) {
+		searchParams.set('terminal_id', context.terminalId);
+		if (context.chatId) searchParams.set('chat_id', context.chatId);
+		if (context.cwd) searchParams.set('cwd', context.cwd);
+	}
 	if (refresh) {
 		searchParams.append('refresh', 'true');
 	}
@@ -56,120 +59,7 @@ export const getModels = async (
 		throw error;
 	}
 
-	let models = res?.data ?? [];
-
-	if (connections && !base) {
-		let localModels = [];
-
-		if (connections) {
-			const OPENAI_API_BASE_URLS = connections.OPENAI_API_BASE_URLS;
-			const OPENAI_API_KEYS = connections.OPENAI_API_KEYS;
-			const OPENAI_API_CONFIGS = connections.OPENAI_API_CONFIGS;
-
-			const requests = [];
-			for (const idx in OPENAI_API_BASE_URLS) {
-				const url = OPENAI_API_BASE_URLS[idx];
-
-				if (idx.toString() in OPENAI_API_CONFIGS) {
-					const apiConfig = OPENAI_API_CONFIGS[idx.toString()] ?? {};
-
-					const enable = apiConfig?.enable ?? true;
-					const modelIds = apiConfig?.model_ids ?? [];
-
-					if (enable) {
-						if (modelIds.length > 0) {
-							const modelList = {
-								object: 'list',
-								data: modelIds.map((modelId) => ({
-									id: modelId,
-									name: modelId,
-									owned_by: 'openai',
-									openai: { id: modelId },
-									urlIdx: idx
-								}))
-							};
-
-							requests.push(
-								(async () => {
-									return modelList;
-								})()
-							);
-						} else {
-							requests.push(
-								(async () => {
-									return await getOpenAIModelsDirect(url, OPENAI_API_KEYS[idx])
-										.then((res) => {
-											return res;
-										})
-										.catch((err) => {
-											return {
-												object: 'list',
-												data: [],
-												urlIdx: idx
-											};
-										});
-								})()
-							);
-						}
-					} else {
-						requests.push(
-							(async () => {
-								return {
-									object: 'list',
-									data: [],
-									urlIdx: idx
-								};
-							})()
-						);
-					}
-				}
-			}
-
-			const responses = await Promise.all(requests);
-
-			for (const idx in responses) {
-				const response = responses[idx];
-				const apiConfig = OPENAI_API_CONFIGS[idx.toString()] ?? {};
-
-				let models = Array.isArray(response) ? response : (response?.data ?? []);
-				models = models.map((model) => ({ ...model, openai: { id: model.id }, urlIdx: idx }));
-
-				const prefixId = apiConfig.prefix_id;
-				if (prefixId) {
-					for (const model of models) {
-						model.id = `${prefixId}.${model.id}`;
-					}
-				}
-
-				const tags = apiConfig.tags;
-				if (tags) {
-					for (const model of models) {
-						model.tags = tags;
-					}
-				}
-
-				localModels = localModels.concat(models);
-			}
-		}
-
-		models = models.concat(
-			localModels.map((model) => ({
-				...model,
-				name: model?.name ?? model?.id,
-				direct: true
-			}))
-		);
-
-		// Remove duplicates
-		const modelsMap = {};
-		for (const model of models) {
-			modelsMap[model.id] = model;
-		}
-
-		models = Object.values(modelsMap);
-	}
-
-	return models;
+	return res?.data ?? [];
 };
 
 export const unloadModel = async (token: string, model: string) => {
@@ -212,7 +102,6 @@ type ChatCompletedForm = {
 	session_id: string | undefined;
 	id: string;
 	filter_ids?: string[];
-	model_item?: unknown;
 };
 
 export const chatCompleted = async (token: string, body: ChatCompletedForm) => {
@@ -351,10 +240,11 @@ export const stopTasksByChatId = async (token: string, chat_id: string) => {
 	return res;
 };
 
-export const getTaskIdsByChatId = async (token: string, chat_id: string) => {
+export const getTaskIdsByChatId = async (token: string, chat_id: string, signal?: AbortSignal) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_BASE_URL}/api/tasks/chat/${encodeURIComponent(chat_id)}`, {
+		signal,
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -367,6 +257,7 @@ export const getTaskIdsByChatId = async (token: string, chat_id: string) => {
 			return res.json();
 		})
 		.catch((err) => {
+			if (signal?.aborted) return null;
 			console.error(err);
 			if ('detail' in err) {
 				error = err.detail;
@@ -383,309 +274,14 @@ export const getTaskIdsByChatId = async (token: string, chat_id: string) => {
 	return res;
 };
 
-export const getToolServerData = async (token: string, url: string) => {
-	let error = null;
-
-	const res = await fetch(`${url}`, {
-		signal: AbortSignal.timeout(TOOL_SERVER_FETCH_TIMEOUT),
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
-		}
-	})
-		.then(async (res) => {
-			// Check if URL ends with .yaml or .yml to determine format
-			if (url.toLowerCase().endsWith('.yaml') || url.toLowerCase().endsWith('.yml')) {
-				if (!res.ok) throw await res.text();
-				const [text, { parse }] = await Promise.all([res.text(), import('yaml')]);
-				return parse(text);
-			} else {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			}
-		})
-		.catch((err) => {
-			console.error(err);
-			if (err?.name === 'TimeoutError') {
-				error = `Connection to ${url} timed out`;
-			} else if ('detail' in err) {
-				error = err.detail;
-			} else {
-				error = err;
-			}
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	console.log(res);
-	return res;
-};
-
-export const getToolServersData = async (servers: object[]) => {
-	return (
-		await Promise.all(
-			servers
-				.filter((server) => server?.config?.enable)
-				.map(async (server) => {
-					let error = null;
-
-					let toolServerToken = null;
-
-					const auth_type = server?.auth_type ?? 'bearer';
-					if (auth_type === 'bearer') {
-						toolServerToken = server?.key;
-					} else if (auth_type === 'none') {
-						// No authentication
-					} else if (auth_type === 'session') {
-						toolServerToken = localStorage.token;
-					}
-
-					let res = null;
-					const specType = server?.spec_type ?? 'url';
-
-					if (specType === 'url') {
-						res = await getToolServerData(
-							toolServerToken,
-							(server?.path ?? '').includes('://')
-								? server?.path
-								: `${server?.url}${(server?.path ?? '').startsWith('/') ? '' : '/'}${server?.path}`
-						).catch((err) => {
-							error = err;
-							return null;
-						});
-					} else if ((specType === 'json' && server?.spec) ?? null) {
-						try {
-							res = JSON.parse(server?.spec);
-						} catch (e) {
-							error = 'Failed to parse JSON spec';
-						}
-					}
-
-					if (res) {
-						if (!res.paths) {
-							return {
-								error: 'Invalid OpenAPI spec',
-								url: server?.url
-							};
-						}
-
-						const { openapi, info, specs } = {
-							openapi: res,
-							info: res.info,
-							specs: convertOpenApiToToolPayload(res)
-						};
-
-						const result: Record<string, any> = {
-							url: server?.url,
-							openapi: openapi,
-							info: info,
-							specs: specs
-						};
-
-						// Fetch system prompt if the server supports it
-						try {
-							const baseUrl = (server?.url ?? '').replace(/\/$/, '');
-							const configRes = await fetch(`${baseUrl}/api/config`, {
-								signal: AbortSignal.timeout(TOOL_SERVER_FETCH_TIMEOUT)
-							});
-							if (configRes.ok) {
-								const config = await configRes.json();
-								if (config?.features?.system) {
-									const headers: Record<string, string> = {};
-									if (toolServerToken) {
-										headers['Authorization'] = `Bearer ${toolServerToken}`;
-									}
-									const systemRes = await fetch(`${baseUrl}/system`, {
-										signal: AbortSignal.timeout(TOOL_SERVER_FETCH_TIMEOUT),
-										headers
-									});
-									if (systemRes.ok) {
-										const systemData = await systemRes.json();
-										if (systemData?.prompt) {
-											result.system_prompt = systemData.prompt;
-										}
-									}
-								}
-							}
-						} catch (e) {
-							// Server doesn't support /system — that's fine
-						}
-
-						return result;
-					} else if (error) {
-						return {
-							error,
-							url: server?.url
-						};
-					} else {
-						return null;
-					}
-				})
-		)
-	).filter((server) => server);
-};
-
-export const executeToolServer = async (
-	token: string,
-	url: string,
-	name: string,
-	params: Record<string, any>,
-	serverData: { openapi: any; info: any; specs: any },
-	sessionId?: string
-) => {
-	let error = null;
-
-	try {
-		// Find the matching operationId in the OpenAPI spec (only valid HTTP methods)
-		const matchingRoute = Object.entries(serverData.openapi.paths).find(([_, methods]) =>
-			Object.entries(methods as any).some(
-				([method, operation]: any) =>
-					OPENAPI_HTTP_METHODS.has(method) &&
-					operation &&
-					typeof operation === 'object' &&
-					operation.operationId === name
-			)
-		);
-
-		if (!matchingRoute) {
-			throw new Error(`No matching route found for operationId: ${name}`);
-		}
-
-		const [routePath, methods] = matchingRoute;
-
-		const methodEntry = Object.entries(methods as any).find(
-			([method, operation]: any) =>
-				OPENAPI_HTTP_METHODS.has(method) &&
-				operation &&
-				typeof operation === 'object' &&
-				operation.operationId === name
-		);
-
-		if (!methodEntry) {
-			throw new Error(`No matching method found for operationId: ${name}`);
-		}
-
-		const [httpMethod, operation]: [string, any] = methodEntry;
-
-		// Merge path-level and operation-level parameters.
-		// Operation-level params override path-level params with the same (name, in).
-		const pathLevelParams: any[] = Array.isArray((methods as any).parameters)
-			? (methods as any).parameters
-			: [];
-		const opParams: any[] = Array.isArray(operation.parameters) ? operation.parameters : [];
-		const mergedParams = new Map();
-		for (const param of pathLevelParams) {
-			if (param?.name) mergedParams.set(`${param.name}:${param.in ?? ''}`, param);
-		}
-		for (const param of opParams) {
-			if (param?.name) mergedParams.set(`${param.name}:${param.in ?? ''}`, param);
-		}
-
-		// Split parameters by type
-		const pathParams: Record<string, any> = {};
-		const queryParams: Record<string, any> = {};
-		let bodyParams: any = {};
-
-		for (const param of mergedParams.values()) {
-			const paramName = param?.name;
-			if (!paramName) continue;
-			const paramIn = param?.in;
-			if (params.hasOwnProperty(paramName)) {
-				if (paramIn === 'path') {
-					pathParams[paramName] = params[paramName];
-				} else if (paramIn === 'query') {
-					queryParams[paramName] = params[paramName];
-				}
-			}
-		}
-
-		let finalUrl = `${url}${routePath}`;
-
-		// Replace path parameters (`{param}`)
-		Object.entries(pathParams).forEach(([key, value]) => {
-			finalUrl = finalUrl.replace(new RegExp(`{${key}}`, 'g'), encodeURIComponent(value));
-		});
-
-		// Append query parameters to URL if any
-		if (Object.keys(queryParams).length > 0) {
-			const queryString = new URLSearchParams(
-				Object.entries(queryParams).map(([k, v]) => [k, String(v)])
-			).toString();
-			finalUrl += `?${queryString}`;
-		}
-
-		// Handle requestBody composite
-		if (operation.requestBody && operation.requestBody.content) {
-			const contentType = Object.keys(operation.requestBody.content)[0];
-			if (params !== undefined) {
-				bodyParams = params;
-			} else {
-				// Optional: Fallback or explicit error if body is expected but not provided
-				throw new Error(`Request body expected for operation '${name}' but none found.`);
-			}
-		}
-
-		// Prepare headers and request options
-		const headers: Record<string, string> = {
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
-		};
-		if (sessionId) headers['X-Session-Id'] = sessionId;
-
-		const requestOptions: RequestInit = {
-			method: httpMethod.toUpperCase(),
-			headers
-		};
-
-		if (
-			['post', 'put', 'patch', 'delete'].includes(httpMethod.toLowerCase()) &&
-			operation.requestBody
-		) {
-			requestOptions.body = JSON.stringify(bodyParams);
-		}
-
-		const res = await fetch(finalUrl, requestOptions);
-		if (!res.ok) {
-			const resText = await res.text();
-			throw new Error(`HTTP error! Status: ${res.status}. Message: ${resText}`);
-		}
-
-		// make a clone of res and extract headers
-		const responseHeaders = {};
-		res.headers.forEach((value, key) => {
-			responseHeaders[key] = value;
-		});
-
-		let responseData;
-		const contentType = res.headers.get('Content-Type')?.split(';')[0]?.trim() ?? '';
-
-		try {
-			responseData = await res.clone().json();
-		} catch {
-			if (contentType.startsWith('text/') || !contentType) {
-				responseData = await res.text();
-			} else {
-				const buf = await res.arrayBuffer();
-				const bytes = new Uint8Array(buf);
-				let binary = '';
-				for (let i = 0; i < bytes.length; i++) {
-					binary += String.fromCharCode(bytes[i]);
-				}
-				const b64 = btoa(binary);
-				responseData = `data:${contentType};base64,${b64}`;
-			}
-		}
-		return [responseData, responseHeaders];
-	} catch (err: any) {
-		error = err.message;
-		console.error('API Request Error:', error);
-		return [{ error }, null];
-	}
+export const resumeTemporaryChat = async (token: string, chatId: string, sessionId: string) => {
+	const res = await fetch(`${WEBUI_BASE_URL}/api/tasks/chat/${encodeURIComponent(chatId)}/resume`, {
+		method: 'POST',
+		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		body: JSON.stringify({ session_id: sessionId })
+	});
+	if (!res.ok) throw await res.json();
+	return res.json();
 };
 
 export const getTaskConfig = async (token: string = '') => {
@@ -824,7 +420,7 @@ export const generateTitle = async (
 export const generateTags = async (
 	token: string = '',
 	model: string,
-	messages: string,
+	messages: object[],
 	chat_id?: string
 ) => {
 	let error = null;
@@ -930,7 +526,7 @@ export const generateEmoji = async (
 		throw error;
 	}
 
-	const response = res?.choices[0]?.message?.content.replace(/["']/g, '') ?? null;
+	const response = res?.choices[0]?.message?.content?.replace(/["']/g, '') ?? null;
 
 	if (response) {
 		if (/\p{Extended_Pictographic}/u.test(response)) {
@@ -1056,7 +652,7 @@ export const generateAutoCompletion = async (
 		throw error;
 	}
 
-	const response = res?.choices[0]?.message?.content ?? '';
+	const response = res?.choices?.[0]?.message?.content ?? '';
 
 	try {
 		const jsonStartIndex = response.indexOf('{');
@@ -1439,14 +1035,15 @@ export const getUsage = async (token: string = '') => {
 	return res;
 };
 
-export const getBackendConfig = async () => {
+export const getBackendConfig = async (token: string = '') => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_BASE_URL}/api/config`, {
 		method: 'GET',
 		credentials: 'include',
 		headers: {
-			'Content-Type': 'application/json'
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
 		}
 	})
 		.then(async (res) => {
@@ -1749,10 +1346,25 @@ export interface ModelConfig {
 }
 
 export interface ModelMeta {
+	voice_avatar?: import('$lib/utils/voice-avatar').VoiceAvatarConfig | null;
+	voice?: { voice?: string };
 	toolIds: never[];
 	description?: string;
+	i18n?: Record<string, Record<string, any>>;
+	hidden?: boolean;
 	capabilities?: object;
 	profile_image_url?: string;
+	background_image_url?: string | null;
 }
 
-export interface ModelParams {}
+export interface ModelControl {
+	display?: 'menu' | 'slider';
+	label: string;
+	description?: string;
+	default?: string | null;
+	options: Record<string, { label: string; params?: Record<string, any> }>;
+}
+
+export interface ModelParams {
+	model_controls?: Record<string, ModelControl>;
+}

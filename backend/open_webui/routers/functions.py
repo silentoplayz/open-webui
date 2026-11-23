@@ -10,9 +10,10 @@ import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from open_webui.config import CACHE_DIR
 from open_webui.constants import ERROR_MESSAGES
-from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT
-from open_webui.events import EVENTS, publish_event
+from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT, ENABLE_FUNCTIONS
+from open_webui.events import EVENTS, build_event, dispatch_event_functions, publish_event, schedule_webhook_dispatch
 from open_webui.internal.db import get_async_session
+from open_webui.models.function_history import FunctionHistories, function_diff
 from open_webui.models.functions import (
     FunctionForm,
     FunctionModel,
@@ -23,11 +24,13 @@ from open_webui.models.functions import (
 )
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.plugin import (
-    get_functions_cache,
+    get_function_contents_cache,
     get_function_module_from_cache,
+    get_functions_cache,
     load_function_module_by_id,
     replace_imports,
     resolve_valves_schema_options,
+    set_function_module_in_cache,
 )
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,26 +40,28 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-############################
-# GetFunctions
-# Our daily functions give us, and forgive us
-# our deprecated methods, as we refactor those who depend on us.
-############################
+# Get Functions
+# Let the work begun here be faithful to its promise,
+# and let it serve those who call upon it, quietly and well.
 
 
 @router.get('/', response_model=list[FunctionResponse])
 async def get_functions(user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)):
+    if not ENABLE_FUNCTIONS:
+        return []
+
     return await Functions.get_functions(db=db)
 
 
 @router.get('/list', response_model=list[FunctionUserResponse])
 async def get_function_list(user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)):
+    if not ENABLE_FUNCTIONS:
+        return []
+
     return await Functions.get_function_list(db=db)
 
 
-############################
-# ExportFunctions
-############################
+# Export Functions
 
 
 @router.get('/export', response_model=list[FunctionModel | FunctionWithValvesModel])
@@ -65,12 +70,13 @@ async def get_functions(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    if not ENABLE_FUNCTIONS:
+        return []
+
     return await Functions.get_functions(include_valves=include_valves, db=db)
 
 
-############################
-# LoadFunctionFromLink
-############################
+# Load Function From Link
 
 
 class LoadUrlForm(BaseModel):
@@ -141,9 +147,7 @@ async def load_function_from_url(request: Request, form_data: LoadUrlForm, user=
         )
 
 
-############################
-# SyncFunctions
-############################
+# Sync Functions
 
 
 class SyncFunctionsForm(BaseModel):
@@ -158,22 +162,27 @@ async def sync_functions(
     db: AsyncSession = Depends(get_async_session),
 ):
     try:
+        modules = {}
+        source_modules = {}
+        previous_ids = {entry.id for entry in await Functions.get_functions(db=db)}
         for function in form_data.functions:
             function.content = replace_imports(function.content)
-            function_module, function_type, frontmatter = await load_function_module_by_id(
-                function.id,
-                content=function.content,
+            module, function.type, frontmatter, source_module = await load_function_module_by_id(
+                function.id, content=function.content
             )
-
-            if hasattr(function_module, 'Valves') and function.valves:
-                Valves = function_module.Valves
-                try:
-                    Valves(**{k: v for k, v in function.valves.items() if v is not None})
-                except Exception as e:
-                    log.exception(f'Error validating valves for function {function.id}: {e}')
-                    raise e
-
-        return await Functions.sync_functions(user.id, form_data.functions, db=db)
+            function.meta.manifest = frontmatter
+            function.meta.toggle = function.type == 'filter' and bool(getattr(module, 'toggle', False))
+            modules[function.id] = module
+            source_modules[function.id] = source_module
+        result = await Functions.sync_functions(user.id, form_data.functions, db=db, modules=modules)
+        for function in result:
+            set_function_module_in_cache(
+                request, function.id, function.content, modules[function.id], source_modules[function.id]
+            )
+        for id in previous_ids - {entry.id for entry in result}:
+            get_functions_cache(request).pop(id, None)
+            get_function_contents_cache(request).pop(id, None)
+        return result
     except Exception as e:
         log.exception(f'Failed to load a function: {e}')
         raise HTTPException(
@@ -182,9 +191,7 @@ async def sync_functions(
         )
 
 
-############################
-# CreateNewFunction
-############################
+# Create New Function
 
 
 @router.post('/create', response_model=FunctionResponse | None)
@@ -206,24 +213,22 @@ async def create_new_function(
     if function is None:
         try:
             form_data.content = replace_imports(form_data.content)
-            function_module, function_type, frontmatter = await load_function_module_by_id(
+            function_module, function_type, frontmatter, source_module = await load_function_module_by_id(
                 form_data.id,
                 content=form_data.content,
             )
             form_data.meta.manifest = frontmatter
+            form_data.meta.toggle = function_type == 'filter' and bool(getattr(function_module, 'toggle', False))
 
-            FUNCTIONS = get_functions_cache(request)
-            FUNCTIONS[form_data.id] = function_module
-
-            function = await Functions.insert_new_function(user.id, function_type, form_data, db=db)
+            function = await Functions.insert_new_function(
+                user.id, function_type, form_data, db=db, module=function_module
+            )
 
             function_cache_dir = CACHE_DIR / 'functions' / form_data.id
             function_cache_dir.mkdir(parents=True, exist_ok=True)
 
-            if function_type == 'filter' and getattr(function_module, 'toggle', None):
-                await Functions.update_function_metadata_by_id(form_data.id, {'toggle': True}, db=db)
-
             if function:
+                set_function_module_in_cache(request, function.id, function.content, function_module, source_module)
                 await publish_event(
                     request,
                     EVENTS.FUNCTION_CREATED,
@@ -252,9 +257,7 @@ async def create_new_function(
         )
 
 
-############################
-# GetFunctionById
-############################
+# Get Function By Id
 
 
 @router.get('/id/{id}', response_model=FunctionModel | None)
@@ -270,9 +273,7 @@ async def get_function_by_id(id: str, user=Depends(get_admin_user), db: AsyncSes
         )
 
 
-############################
-# ToggleFunctionById
-############################
+# Toggle Function By Id
 
 
 @router.post('/id/{id}/toggle', response_model=FunctionModel | None)
@@ -284,6 +285,21 @@ async def toggle_function_by_id(
 ):
     function = await Functions.get_function_by_id(id, db=db)
     if function:
+        lifecycle_event = build_event(
+            request,
+            EVENTS.FUNCTION_DISABLE_STARTED if function.is_active else EVENTS.FUNCTION_ENABLE_STARTED,
+            actor=user,
+            subject_id=function.id,
+            subject_type='function',
+            data={'type': function.type, 'name': function.name},
+        )
+        await dispatch_event_functions(
+            request,
+            lifecycle_event,
+            extra_function_ids=[function.id] if not function.is_active else None,
+        )
+        schedule_webhook_dispatch(request.app, lifecycle_event)
+
         function = await Functions.update_function_by_id(id, {'is_active': not function.is_active}, db=db)
 
         if function:
@@ -308,9 +324,7 @@ async def toggle_function_by_id(
         )
 
 
-############################
-# ToggleGlobalById
-############################
+# Toggle Global By Id
 
 
 @router.post('/id/{id}/toggle/global', response_model=FunctionModel | None)
@@ -345,9 +359,7 @@ async def toggle_global_by_id(
         )
 
 
-############################
-# UpdateFunctionById
-############################
+# Update Function By Id
 
 
 @router.post('/id/{id}/update', response_model=FunctionModel | None)
@@ -358,23 +370,28 @@ async def update_function_by_id(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    return await _update_function(request, id, form_data, user, db)
+
+
+async def _update_function(request, id, form_data, user, db, version_id=None):
     try:
-        form_data.content = replace_imports(form_data.content)
-        function_module, function_type, frontmatter = await load_function_module_by_id(id, content=form_data.content)
+        if version_id is None:
+            form_data.content = replace_imports(form_data.content)
+        function_module, function_type, frontmatter, source_module = await load_function_module_by_id(
+            id, content=form_data.content
+        )
         form_data.meta.manifest = frontmatter
 
-        FUNCTIONS = get_functions_cache(request)
-        FUNCTIONS[id] = function_module
+        form_data.meta.toggle = function_type == 'filter' and bool(getattr(function_module, 'toggle', False))
 
         updated = {**form_data.model_dump(exclude={'id'}), 'type': function_type}
-        log.debug(updated)
 
-        function = await Functions.update_function_by_id(id, updated, db=db)
-
-        if function_type == 'filter' and getattr(function_module, 'toggle', None):
-            await Functions.update_function_metadata_by_id(id, {'toggle': True}, db=db)
+        function = await Functions.update_function_by_id(
+            id, updated, db=db, user_id=user.id, version_id=version_id, module=function_module
+        )
 
         if function:
+            set_function_module_in_cache(request, function.id, function.content, function_module, source_module)
             await publish_event(
                 request,
                 EVENTS.FUNCTION_UPDATED,
@@ -394,13 +411,11 @@ async def update_function_by_id(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ERROR_MESSAGES.DEFAULT(e, 'Error updating function'),
+            detail=str(e),
         )
 
 
-############################
-# DeleteFunctionById
-############################
+# Delete Function By Id
 
 
 @router.delete('/id/{id}/delete', response_model=bool)
@@ -415,6 +430,8 @@ async def delete_function_by_id(
     if result:
         FUNCTIONS = get_functions_cache(request)
         FUNCTIONS.pop(id, None)
+        FUNCTION_CONTENTS = get_function_contents_cache(request)
+        FUNCTION_CONTENTS.pop(id, None)
         await publish_event(
             request,
             EVENTS.FUNCTION_DELETED,
@@ -425,9 +442,7 @@ async def delete_function_by_id(
     return result
 
 
-############################
-# GetFunctionValves
-############################
+# Get Function Valves
 
 
 @router.get('/id/{id}/valves', response_model=dict | None)
@@ -451,9 +466,7 @@ async def get_function_valves_by_id(
         )
 
 
-############################
-# GetFunctionValvesSpec
-############################
+# Get Function Valves Spec
 
 
 @router.get('/id/{id}/valves/spec', response_model=dict | None)
@@ -481,9 +494,7 @@ async def get_function_valves_spec_by_id(
         )
 
 
-############################
-# UpdateFunctionValves
-############################
+# Update Function Valves
 
 
 @router.post('/id/{id}/valves/update', response_model=dict | None)
@@ -533,9 +544,7 @@ async def update_function_valves_by_id(
         )
 
 
-############################
-# FunctionUserValves
-############################
+# Function User Valves
 
 
 @router.get('/id/{id}/valves/user', response_model=dict | None)
@@ -568,6 +577,9 @@ async def get_function_user_valves_spec_by_id(
 ):
     function = await Functions.get_function_by_id(id, db=db)
     if function:
+        if not function.is_active:
+            return None
+
         function_module, function_type, frontmatter = await get_function_module_from_cache(request, id)
 
         if hasattr(function_module, 'UserValves'):
@@ -595,6 +607,12 @@ async def update_function_user_valves_by_id(
     function = await Functions.get_function_by_id(id, db=db)
 
     if function:
+        if not function.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Function is not active',
+            )
+
         function_module, function_type, frontmatter = await get_function_module_from_cache(request, id)
 
         if hasattr(function_module, 'UserValves'):
@@ -629,3 +647,74 @@ async def update_function_user_valves_by_id(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
+
+
+async def require_function_history_access(id, user, db):
+    resource = await Functions.get_function_by_id(id, db=db)
+    if not resource:
+        raise HTTPException(404, 'Not found')
+    return resource
+
+
+async def require_function_history_entry(id, history_id, db):
+    entry = await FunctionHistories.get_history_by_id(id, history_id, db=db)
+    if not entry:
+        raise HTTPException(404, 'Version not found')
+    return entry
+
+
+@router.get('/id/{id}/history')
+async def get_function_history(
+    id: str, page: int = 1, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
+):
+    await require_function_history_access(id, user, db)
+    return await FunctionHistories.get_history_by_function_id(id, page, db=db)
+
+
+@router.get('/id/{id}/history/diff')
+async def get_function_history_diff(
+    id: str, from_id: str, to_id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
+):
+    await require_function_history_access(id, user, db)
+    before = await require_function_history_entry(id, from_id, db)
+    after = await require_function_history_entry(id, to_id, db)
+    return function_diff(before, after)
+
+
+@router.get('/id/{id}/history/{history_id}')
+async def get_function_history_entry(
+    id: str, history_id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
+):
+    await require_function_history_access(id, user, db)
+    return await require_function_history_entry(id, history_id, db)
+
+
+@router.delete('/id/{id}/history/{history_id}')
+async def delete_function_history_entry(
+    id: str, history_id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
+):
+    await require_function_history_access(id, user, db)
+    if not await FunctionHistories.delete_history_entry(id, history_id, db=db):
+        raise HTTPException(404, 'Version not found')
+    return True
+
+
+class FunctionVersionForm(BaseModel):
+    version_id: str
+
+
+@router.post('/id/{id}/update/version', response_model=FunctionModel)
+async def set_function_production(
+    request: Request,
+    id: str,
+    form_data: FunctionVersionForm,
+    user=Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    await require_function_history_access(id, user, db)
+    entry = await require_function_history_entry(id, form_data.version_id, db)
+    try:
+        saved = FunctionForm(id=id, **entry.snapshot)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    return await _update_function(request, id, saved, user, db, version_id=entry.id)

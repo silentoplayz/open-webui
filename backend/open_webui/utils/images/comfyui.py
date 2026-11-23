@@ -1,4 +1,3 @@
-import json
 import logging
 import random
 import urllib.parse
@@ -6,6 +5,7 @@ from typing import Optional
 
 import aiohttp
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
+from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.session_pool import get_session
 from pydantic import BaseModel
 
@@ -17,7 +17,7 @@ default_headers = {'User-Agent': 'Mozilla/5.0'}
 async def queue_prompt(prompt, client_id, base_url, api_key):
     log.info('queue_prompt')
     p = {'prompt': prompt, 'client_id': client_id}
-    log.debug(f'queue_prompt data: {p}')
+    log.debug('queue_prompt data: %s', p)
     try:
         session = await get_session()
         async with session.post(
@@ -76,7 +76,7 @@ async def _ws_get_images(ws, workflow, client_id, base_url, api_key):
 
     async for msg in ws:
         if msg.type == aiohttp.WSMsgType.TEXT:
-            message = json.loads(msg.data)
+            message = JSONCodec.loads(msg.data)
             if message['type'] == 'executing':
                 data = message['data']
                 if data['node'] is None and data['prompt_id'] == prompt_id:
@@ -87,10 +87,20 @@ async def _ws_get_images(ws, workflow, client_id, base_url, api_key):
         # binary messages (previews) are silently skipped
 
     history = (await get_history(prompt_id, base_url, api_key))[prompt_id]
+    status = history.get('status', {})
+    if status.get('status_str') == 'error':
+        error = next((data for kind, data in status.get('messages', []) if kind == 'execution_error'), {})
+        raise Exception(
+            f'ComfyUI {error.get("node_type", "workflow")} failed: {error.get("exception_message", "").strip()}'
+        )
+
     for node_id in history['outputs']:
         node_output = history['outputs'][node_id]
         if node_id in workflow and workflow[node_id].get('class_type') in [
             'SaveImage',
+            'SaveImageAdvanced',
+            'SaveAnimatedWEBP',
+            'SaveAnimatedPNG',
             'PreviewImage',
         ]:
             if 'images' in node_output:
@@ -188,7 +198,7 @@ def _apply_workflow_nodes(workflow, nodes, model, payload):
 
 async def comfyui_create_image(model: str, payload: ComfyUICreateImageForm, client_id, base_url, api_key):
     ws_url = base_url.replace('http://', 'ws://').replace('https://', 'wss://')
-    workflow = json.loads(payload.workflow.workflow)
+    workflow = JSONCodec.loads(payload.workflow.workflow)
     _apply_workflow_nodes(workflow, payload.workflow.nodes, model, payload)
 
     headers = {'Authorization': f'Bearer {api_key}'}
@@ -202,7 +212,7 @@ async def comfyui_create_image(model: str, payload: ComfyUICreateImageForm, clie
         ) as ws:
             log.info('WebSocket connection established.')
             log.info('Sending workflow to WebSocket server.')
-            log.debug(f'Workflow: {workflow}')
+            log.debug('Workflow: %s', workflow)
             images = await _ws_get_images(ws, workflow, client_id, base_url, api_key)
     except aiohttp.WSServerHandshakeError as e:
         log.exception(f'Failed to connect to WebSocket server: {e}')
@@ -229,7 +239,7 @@ class ComfyUIEditImageForm(BaseModel):
 
 async def comfyui_edit_image(model: str, payload: ComfyUIEditImageForm, client_id, base_url, api_key):
     ws_url = base_url.replace('http://', 'ws://').replace('https://', 'wss://')
-    workflow = json.loads(payload.workflow.workflow)
+    workflow = JSONCodec.loads(payload.workflow.workflow)
     _apply_workflow_nodes(workflow, payload.workflow.nodes, model, payload)
 
     headers = {'Authorization': f'Bearer {api_key}'}
@@ -243,7 +253,7 @@ async def comfyui_edit_image(model: str, payload: ComfyUIEditImageForm, client_i
         ) as ws:
             log.info('WebSocket connection established.')
             log.info('Sending workflow to WebSocket server.')
-            log.debug(f'Workflow: {workflow}')
+            log.debug('Workflow: %s', workflow)
             images = await _ws_get_images(ws, workflow, client_id, base_url, api_key)
     except aiohttp.WSServerHandshakeError as e:
         log.exception(f'Failed to connect to WebSocket server: {e}')

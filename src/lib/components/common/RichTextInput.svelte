@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
-	import equal from 'fast-deep-equal';
+	import { toast } from 'svelte-sonner';
+	import { copyToClipboard } from '$lib/utils';
+	import { equalEditorJSON } from '$lib/utils/editorJson';
+	import { mobile, voiceCall, skills, terminalSkills } from '$lib/stores';
 
 	marked.use({
 		breaks: true,
@@ -37,11 +40,7 @@
 	});
 	turndownService.escape = (string) => string;
 
-	// Produce single newlines between paragraphs instead of double.
-	// TipTap wraps every line in <p> tags; the default Turndown rule emits
-	// \n\n around each paragraph which then required a destructive
-	// replaceAll('\n\n','\n') that also wiped blank lines inside code blocks.
-	// This rule eliminates that hack so <pre><code> content is untouched.
+	// Emit one newline per paragraph; global newline collapsing would damage code-block spacing.
 	turndownService.addRule('singleNewlineParagraphs', {
 		filter: 'p',
 		replacement: function (content) {
@@ -52,7 +51,7 @@
 	// Use turndown-plugin-gfm for proper GFM table support
 	turndownService.use(gfm);
 
-	// Add custom table header rule before using GFM plugin
+	// Keep header text intact; the table rule will handle the scaffolding.
 	turndownService.addRule('tableHeaders', {
 		filter: 'th',
 		replacement: function (content, node) {
@@ -60,30 +59,31 @@
 		}
 	});
 
-	// Add custom table rule to handle headers properly
+	// Rebuild tables as Markdown; the columns still need to stay in their lanes.
 	turndownService.addRule('tables', {
 		filter: 'table',
 		replacement: function (content, node) {
 			// Extract rows
-			const rows = Array.from(node.querySelectorAll('tr'));
+			const rows = Array.from(node.rows);
 			if (rows.length === 0) return content;
 
 			let markdown = '\n';
 
 			rows.forEach((row, rowIndex) => {
-				const cells = Array.from(row.querySelectorAll('th, td'));
+				const cells = Array.from(row.cells);
 				const cellContents = cells.map((cell) => {
 					// Get the text content and clean it up
 					let cellContent = turndownService.turndown(cell.innerHTML).trim();
-					// Remove extra paragraph tags that might be added
+					// Trim edge newlines; a table cell does not need its own front lawn.
 					cellContent = cellContent.replace(/^\n+|\n+$/g, '');
+					cellContent = cellContent.replace(/\n/g, '<br>');
 					return cellContent;
 				});
 
 				// Add the row
 				markdown += '| ' + cellContents.join(' | ') + ' |\n';
 
-				// Add separator after first row (which should be headers)
+				// Give the first row its Markdown header underline. Tiny table bureaucracy.
 				if (rowIndex === 0) {
 					const separator = cells.map(() => '---').join(' | ');
 					markdown += '| ' + separator + ' |\n';
@@ -94,6 +94,12 @@
 		}
 	});
 
+	// Registered after use(gfm) to override its checkbox rule; taskListItems owns the marker.
+	turndownService.addRule('taskItemCheckbox', {
+		filter: (node) => node.nodeName === 'INPUT' && node.getAttribute('type') === 'checkbox',
+		replacement: () => ''
+	});
+
 	turndownService.addRule('taskListItems', {
 		filter: (node) =>
 			node.nodeName === 'LI' &&
@@ -101,60 +107,137 @@
 				node.getAttribute('data-checked') === 'false'),
 		replacement: function (content, node) {
 			const checked = node.getAttribute('data-checked') === 'true';
-			content = content.replace(/^\s+/, '');
+			// Trim TipTap's block wrapper; 4-space continuation keeps sublists and fences nested.
+			content = content.trim().replace(/\n(?=.)/g, '\n    ');
 			return `- [${checked ? 'x' : ' '}] ${content}\n`;
 		}
 	});
 
-	// Convert TipTap mention spans -> <@id>
+	// Convert TipTap mention spans -> serialized mention tags.
 	turndownService.addRule('mentions', {
 		filter: (node) => node.nodeName === 'SPAN' && node.getAttribute('data-type') === 'mention',
 		replacement: (_content, node: HTMLElement) => {
 			const id = node.getAttribute('data-id') || '';
 			// TipTap stores the trigger char in data-mention-suggestion-char (usually "@")
 			const ch = node.getAttribute('data-mention-suggestion-char') || '@';
-			// Emit <@id> style, e.g. <@llama3.2:latest>
-			return `<${ch}${id}>`;
+			const mentionChar = ch === '/' ? '$' : ch;
+			return `<${mentionChar}${id}>`;
 		}
 	});
 
-	import { onMount, onDestroy, tick, getContext } from 'svelte';
+	turndownService.addRule('underline', {
+		filter: 'u',
+		replacement: (content) => `<u>${content}</u>`
+	});
+
+	import { onMount, onDestroy, tick, getContext, getAllContexts } from 'svelte';
 	import { createEventDispatcher } from 'svelte';
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
+	const componentContext = getAllContexts();
 	const eventDispatch = createEventDispatcher();
 
-	import { Fragment, DOMParser } from 'prosemirror-model';
+	import {
+		Fragment,
+		DOMParser,
+		DOMSerializer,
+		Slice,
+		type Node,
+		type Schema
+	} from 'prosemirror-model';
 	import { EditorState, Plugin, PluginKey, TextSelection, Selection } from 'prosemirror-state';
 	import { Decoration, DecorationSet } from 'prosemirror-view';
 	import { Editor, Extension, markInputRule, mergeAttributes } from '@tiptap/core';
 
-	import { AIAutocompletion } from './RichTextInput/AutoCompletion.js';
+	import { AIAutocompletion, setFollowUpSuggestion } from './RichTextInput/AutoCompletion.js';
 
 	import StarterKit from '@tiptap/starter-kit';
 
 	// Bubble and Floating menus are currently fixed to v2 due to styling issues in v3
 	// TODO: Update to v3 when styling issues are resolved
 	import BubbleMenu from '@tiptap/extension-bubble-menu';
-	import FloatingMenu from '@tiptap/extension-floating-menu';
+	import FloatingMenu, { FloatingMenuView } from '@tiptap/extension-floating-menu';
+
+	class MountedFloatingMenuView extends FloatingMenuView {
+		updatePosition() {
+			// Tiptap leaves a pending resize timer alive after destroying a menu.
+			// Switching note tabs can destroy its view before that timer runs.
+			if (this.editor.isDestroyed || this.view.isDestroyed) return;
+			super.updatePosition();
+		}
+	}
+
+	const MountedFloatingMenu = FloatingMenu.extend({
+		addProseMirrorPlugins() {
+			const element = this.options.element;
+			if (!element) return [];
+			return [
+				new Plugin({
+					key:
+						typeof this.options.pluginKey === 'string'
+							? new PluginKey(this.options.pluginKey)
+							: this.options.pluginKey,
+					view: (view) =>
+						new MountedFloatingMenuView({ ...this.options, element, editor: this.editor, view })
+				})
+			];
+		}
+	});
 
 	import { TableKit } from '@tiptap/extension-table';
 	import { ListKit } from '@tiptap/extension-list';
 	import { Placeholder, CharacterCount } from '@tiptap/extensions';
 
 	import Image from './RichTextInput/Image/index.js';
+	import FileAttachment from './RichTextInput/FileAttachment';
 	// import TiptapImage from '@tiptap/extension-image';
 
 	import FileHandler from '@tiptap/extension-file-handler';
 	import Typography from '@tiptap/extension-typography';
 	import Highlight from '@tiptap/extension-highlight';
 	import Code from '@tiptap/extension-code';
+	import Italic from '@tiptap/extension-italic';
 	import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 
-	// WORKAROUND: TipTap's default Code mark input rule regex captures the
-	// character before the opening backtick, causing it to be deleted.
-	// This uses a lookbehind assertion instead so the preceding character is
-	// matched for position but not captured/deleted.
+	const CopyableCodeBlock = CodeBlockLowlight.extend({
+		addNodeView() {
+			return ({ node, editor, getPos }) => {
+				const dom = document.createElement('div');
+				dom.className = 'relative my-6';
+				const { dom: pre, contentDOM } = DOMSerializer.renderSpec(
+					document,
+					DOMSerializer.fromSchema(editor.schema).nodes[node.type.name](node)
+				);
+				(pre as HTMLElement).classList.add('hljs');
+				(pre as HTMLElement).style.margin = '0';
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.contentEditable = 'false';
+				button.className =
+					'not-prose absolute end-2 top-2 rounded-lg px-2.5 py-1 text-xs font-normal text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-850';
+				button.textContent = $i18n.t('Copy');
+				button.onclick = async () => {
+					const pos = getPos();
+					if (typeof pos !== 'number') return;
+					const code = editor.state.doc.nodeAt(pos);
+					if (!code) return;
+					if (await copyToClipboard(code.textContent)) {
+						toast.success($i18n.t('Copied to clipboard'));
+					} else {
+						toast.error($i18n.t('Could not copy to clipboard. Please try again.'));
+					}
+				};
+				dom.append(button, pre);
+				return {
+					dom,
+					contentDOM: contentDOM as HTMLElement,
+					stopEvent: (event) => button.contains(event.target as globalThis.Node)
+				};
+			};
+		}
+	});
+
+	// Use lookbehind so the backtick rule does not capture and delete the preceding character.
 	// Upstream fix: https://github.com/ueberdosis/tiptap/pull/7124
 	const backtickInputRegex = /(?<=\s|^)`([^`]+)`(?!`)$/;
 	const FixedCode = Code.extend({
@@ -165,6 +248,16 @@
 					type: this.type
 				})
 			];
+		}
+	});
+
+	// Prompt inputs need literal asterisks preserved, while toolbar-applied italic should still work.
+	const PromptItalic = Italic.extend({
+		addInputRules() {
+			return [];
+		},
+		addPasteRules() {
+			return [];
 		}
 	});
 
@@ -193,6 +286,7 @@
 	);
 
 	export let editor: Editor | null = null;
+	$: eventDispatch('editor', editor);
 
 	export let socket = null;
 	export let user = null;
@@ -201,26 +295,29 @@
 	export let documentId = '';
 
 	export let className = 'input-prose min-h-fit h-full';
-	export let placeholder = $i18n.t('Type here...');
-	let _placeholder = placeholder;
+	export let placeholder: string | undefined = undefined;
+	let _placeholder = '';
 
-	$: if (placeholder !== _placeholder) {
-		setPlaceholder();
+	$: if ((placeholder ?? $i18n.t('Type here...')) !== _placeholder) {
+		setPlaceholder(placeholder ?? $i18n.t('Type here...'));
 	}
 
-	const setPlaceholder = () => {
-		_placeholder = placeholder;
+	const setPlaceholder = (value: string) => {
+		_placeholder = value;
 		if (editor) {
 			editor?.view.dispatch(editor.state.tr);
 		}
 	};
 
 	export let richText = true;
+	export let autoFormat = true;
 	export let dragHandle = false;
 	export let link = false;
 	export let image = false;
+	export let allowExternalImages = false;
 	export let fileHandler = false;
-	export let suggestions = null;
+	export let attachments = false;
+	export let suggestions: Partial<import('@tiptap/suggestion').SuggestionOptions>[] | null = null;
 
 	export let onFileDrop = (currentEditor, files, pos) => {
 		files.forEach((file) => {
@@ -269,6 +366,35 @@
 		});
 	};
 
+	const getMentionText = ({ node, suggestion }) => {
+		const id = node.attrs.id ?? '';
+		const label = node.attrs.label ?? id;
+		const ch = node.attrs.mentionSuggestionChar ?? suggestion?.char ?? '@';
+		const char = ch === '/' ? '$' : ch;
+		return `${char}${label}`;
+	};
+
+	// Plain-text mode still preserves mention identities from the clipboard's HTML.
+	const plainMentionPaste = (slice: Slice, schema: Schema): Fragment | null => {
+		const nodes: Node[] = [];
+		let hasMention = false;
+		let firstBlock = true;
+		slice.content.descendants((node) => {
+			if (node.isTextblock) {
+				if (!firstBlock) nodes.push(schema.nodes.hardBreak.create());
+				firstBlock = false;
+			}
+			if (node.type.name === 'mention') {
+				hasMention = true;
+				nodes.push(node.mark([]));
+				return false;
+			}
+			if (node.isText) nodes.push(schema.text(node.text!));
+			else if (node.type.name === 'hardBreak') nodes.push(node.mark([]));
+		});
+		return hasMention ? Fragment.fromArray(nodes) : null;
+	};
+
 	export let onSelectionUpdate = (e) => {};
 
 	export let id = '';
@@ -278,31 +404,89 @@
 	export let json = false;
 	export let raw = false;
 	export let editable = true;
+	export let extensions: import('@tiptap/core').AnyExtension[] = [];
 	export let collaboration = false;
 
 	export let showFormattingToolbar = true;
+	/** Adds a comment action to the selection toolbar. */
+	export let onComment: (() => void) | null = null;
 
 	export let preserveBreaks = false;
 	export let generateAutoCompletion: Function = async () => null;
 	export let autocomplete = false;
+	export let followUpSuggestion = '';
+
+	$: if (editor && !editor.isDestroyed) {
+		setFollowUpSuggestion(editor.view, followUpSuggestion);
+	}
+
 	export let messageInput = false;
 	export let shiftEnter = false;
 	export let largeTextAsFile = false;
 	export let insertPromptAsRichText = false;
 	export let floatingMenuPlacement = 'bottom-start';
 
+	// Avoid opening the mobile keyboard or stealing focus from the call overlay.
+	$: suppressAutoFocus = messageInput && ($mobile || $voiceCall);
+
 	let content = null;
 	let htmlValue = '';
 	let jsonValue = '';
 	let mdValue = '';
 
+	const serializeContent = (richText: boolean) => {
+		if (!editor) return;
+
+		htmlValue = editor.getHTML();
+		jsonValue = editor.getJSON();
+
+		if (richText) {
+			mdValue = turndownService
+				.turndown(
+					htmlValue
+						.replace(/<p><\/p>/g, '<br/>')
+						.replace(/ {2,}/g, (m) => m.replace(/ /g, '\u00a0'))
+				)
+				.replace(/\u00a0/g, ' ');
+		} else {
+			mdValue = turndownService
+				.turndown(
+					htmlValue
+						// Replace empty paragraphs with line breaks
+						.replace(/<p><\/p>/g, '<br/>')
+						// Replace multiple spaces with non-breaking spaces
+						.replace(/ {2,}/g, (m) => m.replace(/ /g, '\u00a0'))
+						// Replace tabs with non-breaking spaces (preserve indentation)
+						.replace(/\t/g, '\u00a0\u00a0\u00a0\u00a0') // 1 tab = 4 spaces
+				)
+				// Convert non-breaking spaces back to regular spaces for markdown
+				.replace(/\u00a0/g, ' ');
+		}
+	};
+
+	$: serializeContent(richText);
+
 	let provider: SocketIOCollaborationProvider | null = null;
+	export let cursorTarget = null;
+	$: if (cursorTarget && editor) {
+		const target = cursorTarget;
+		cursorTarget = null;
+		if (provider) provider.revealCursor(target);
+		else
+			editor.commands.focus(Math.min(target.cursor_position ?? 0, editor.state.doc.content.size));
+	}
+	export const flush = async () => {
+		await tick();
+		await provider?.flush();
+	};
 
 	let floatingMenuElement: Element | null = null;
 	let bubbleMenuElement: Element | null = null;
+	let formattingDismissed = false;
 	let element: Element | null = null;
 
 	let pendingUpdate = null;
+	let destroyed = false;
 
 	const options = {
 		throwOnError: false
@@ -314,7 +498,7 @@
 		});
 	}
 
-	$: if (value === null && html !== null && editor) {
+	$: if (value === null && html !== null && editor && !provider) {
 		editor.commands.setContent(html);
 	}
 
@@ -380,20 +564,20 @@
 					.trim()
 			);
 
-			// Create a temporary div to parse HTML
+			// Give the sanitized HTML a temporary home while the parser unpacks it.
 			const tempDiv = document.createElement('div');
 			tempDiv.innerHTML = htmlContent;
 
 			// Convert HTML to ProseMirror nodes
 			const fragment = DOMParser.fromSchema(state.schema).parse(tempDiv);
 
-			// Extract just the content, not the wrapper paragraphs
+			// Unpack the fragment; paragraph wrappers come off in the loop below.
 			const content = fragment.content;
 			let nodesToInsert = [];
 
 			content.forEach((node) => {
 				if (node.type.name === 'paragraph') {
-					// If it's a paragraph, extract its content
+					// Keep the paragraph contents; leave the packing material behind.
 					nodesToInsert.push(...node.content.content);
 				} else {
 					nodesToInsert.push(node);
@@ -401,12 +585,12 @@
 			});
 
 			tr = tr.replaceWith(start, end, nodesToInsert);
-			// Calculate new position
+			// Park the caret after the inserted nodes, not back at the loading dock.
 			const newPos = start + nodesToInsert.reduce((sum, node) => sum + node.nodeSize, 0);
 			tr = tr.setSelection(Selection.near(tr.doc.resolve(newPos)));
 		} else {
 			if (text.includes('\n')) {
-				// Split the text into lines and create a <p> node for each line
+				// Keep the first line inline and wrap subsequent lines in paragraphs.
 				const lines = text.split('\n');
 				const nodes = lines.map(
 					(line, index) =>
@@ -415,17 +599,17 @@
 							: state.schema.nodes.paragraph.create({}, line ? state.schema.text(line) : undefined) // Subsequent lines are paragraphs
 				);
 
-				// Build and dispatch the transaction to replace the word at cursor
+				// Replace the current word in the pending transaction; dispatch after setting the selection.
 				tr = tr.replaceWith(start, end, nodes);
 
 				let newSelectionPos;
 
-				// +1 because the insert happens at start, so last para starts at (start + sum of all previous nodes' sizes)
+				// Sum node sizes from the insertion point to locate the end of the inserted content.
 				let lastPos = start;
 				for (let i = 0; i < nodes.length; i++) {
 					lastPos += nodes[i].nodeSize;
 				}
-				// Place cursor inside the last paragraph at its end
+				// Use that boundary to find the nearest valid text selection below.
 				newSelectionPos = lastPos;
 
 				tr = tr.setSelection(TextSelection.near(tr.doc.resolve(newSelectionPos)));
@@ -454,9 +638,6 @@
 		if (text === '') {
 			editor.commands.clearContent();
 		} else {
-			// Regex to find serialized mention tags: <@id>, <#id>, <$id|label>
-			const mentionReG = /<([@#$])([\w.\-:/]+)(?:\|([^>]*))?>/g;
-
 			// Convert each line to a <p>, replacing mention tags with proper
 			// TipTap mention spans that the editor's DOMParser will recognise.
 			const lines = text.split('\n');
@@ -469,10 +650,25 @@
 					const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 					// Now replace the escaped mention patterns back into real spans
 					const withMentions = escaped.replace(
-						/&lt;([@#$])([\w.\-:/]+)(?:\|([^&]*?))?&gt;/g,
-						(_, ch, id, label) => {
-							const display = label?.length ? label : id;
-							return `<span class="mention" data-type="mention" data-id="${id}" data-label="${display}" data-mention-suggestion-char="${ch}">${ch}${display}</span>`;
+						/&lt;([@#$])([^|&\s]+)(?:\|([^&]*?))?&gt;|&lt;\/([\w.\-:/]+)\|([^&]*?)&gt;/g,
+						(match, ch, id, label, slashSkillId, slashSkillLabel) => {
+							const mentionChar = ch || '$';
+							const mentionId = id || slashSkillId;
+							if (
+								mentionChar === '$' &&
+								![...($skills ?? []), ...($terminalSkills ?? [])].some(
+									(skill) => skill.id === mentionId && skill.is_active
+								)
+							) {
+								return match;
+							}
+							const display = (label || slashSkillLabel)?.length
+								? label || slashSkillLabel
+								: mentionId;
+							const dataId = (label || slashSkillLabel)?.length
+								? `${mentionId}|${display}`
+								: mentionId;
+							return `<span class="mention" data-type="mention" data-id="${dataId}" data-label="${display}" data-mention-suggestion-char="${mentionChar}">${mentionChar}${display}</span>`;
 						}
 					);
 					return `<p>${withMentions}</p>`;
@@ -485,7 +681,9 @@
 		selectNextTemplate(editor.view.state, editor.view.dispatch);
 
 		// Ensure the editor is still valid before trying to focus
-		focus();
+		if (!suppressAutoFocus) {
+			focus();
+		}
 	};
 
 	export const insertContent = (content) => {
@@ -556,17 +754,21 @@
 		}
 	};
 
-	export const focus = () => {
+	export const focus = (options: FocusOptions = {}) => {
 		if (editor && editor.view) {
-			// Check if the editor is destroyed
+			// Retired editors do not take focus requests.
 			if (editor.isDestroyed) {
 				return;
 			}
 
 			try {
-				editor.view.focus();
-				// Scroll to the current selection
-				editor.view.dispatch(editor.view.state.tr.scrollIntoView());
+				if (options.preventScroll && editor.view.dom instanceof HTMLElement) {
+					editor.view.dom.focus(options);
+				} else {
+					editor.view.focus();
+					// Bring the selection into view; the caret should not play hide-and-seek.
+					editor.view.dispatch(editor.view.state.tr.scrollIntoView());
+				}
 			} catch (e) {
 				// sometimes focusing throws an error, ignore
 				console.warn('Error focusing editor', e);
@@ -640,8 +842,9 @@
 		if (value !== '') {
 			// After updating the state, try to find and select the next template
 			setTimeout(() => {
+				if (destroyed || !editor || editor.isDestroyed) return;
 				const templateFound = selectNextTemplate(editor.view.state, editor.view.dispatch);
-				if (!templateFound) {
+				if (!templateFound && !suppressAutoFocus) {
 					editor.commands.focus('end');
 				}
 			}, 0);
@@ -657,9 +860,9 @@
 					props: {
 						decorations: (state) => {
 							const { selection } = state;
-							const { focused } = this.editor;
+							const { isFocused } = this.editor;
 
-							if (focused || selection.empty) {
+							if (isFocused || selection.empty) {
 								return null;
 							}
 
@@ -676,6 +879,7 @@
 	});
 
 	import { listDragHandlePlugin } from './RichTextInput/listDragHandlePlugin.js';
+	import BlockHandle from './RichTextInput/BlockHandle.svelte';
 
 	const ListItemDragHandle = Extension.create({
 		name: 'listItemDragHandle',
@@ -687,6 +891,23 @@
 				})
 			];
 		}
+	});
+
+	onMount(() => {
+		// Read-only viewers join for presence without starting the editing provider.
+		if (!collaboration || editable || !documentId || !socket || !user) return;
+		const presenceSocket = socket;
+		const presenceDocumentId = documentId;
+		const join = () =>
+			presenceSocket.emit('ydoc:document:join', { document_id: presenceDocumentId });
+		presenceSocket.on('connect', join);
+		if (presenceSocket.connected) join();
+		return () => {
+			presenceSocket.off('connect', join);
+			if (presenceSocket.connected) {
+				presenceSocket.emit('ydoc:document:leave', { document_id: presenceDocumentId });
+			}
+		};
 	});
 
 	onMount(async () => {
@@ -729,16 +950,20 @@
 			}
 		}
 
-		if (collaboration && documentId && socket && user) {
+		if (collaboration && editable && documentId && socket && user) {
 			const { SocketIOCollaborationProvider } = await import('./RichTextInput/Collaboration');
+			if (destroyed) return;
 			provider = new SocketIOCollaborationProvider(documentId, socket, user, content);
 		}
+		if (destroyed) return;
 		editor = new Editor({
 			element: element,
 			extensions: [
+				...extensions,
 				StarterKit.configure({
-					link: link,
+					link: link ? { autolink: autoFormat, linkOnPaste: autoFormat } : false,
 					code: false, // Disabled in favor of FixedCode (see workaround above)
+					...(messageInput ? { italic: false } : {}),
 					// When rich text is on, ListKit + CodeBlockLowlight provide these.
 					// Disable StarterKit's equivalents to avoid duplicate extension names.
 					...(richText
@@ -757,14 +982,19 @@
 					...(richText ? {} : { strike: false })
 				}),
 				FixedCode,
+				...(messageInput ? [PromptItalic] : []),
 				...(dragHandle ? [ListItemDragHandle] : []),
 				Placeholder.configure({ placeholder: () => _placeholder, showOnlyWhenEditable: false }),
-				SelectionDecoration,
+				...(messageInput ? [] : [SelectionDecoration]),
 
 				...(richText
 					? [
-							CodeBlockLowlight.configure({
-								lowlight
+							CopyableCodeBlock.configure({
+								// Auto-detecting the language freezes long documents.
+								lowlight: {
+									...lowlight,
+									highlightAuto: (code: string) => lowlight.highlight('plaintext', code)
+								}
 							}),
 							Typography,
 							TableKit.configure({
@@ -781,13 +1011,22 @@
 					? [
 							Mention.configure({
 								HTMLAttributes: { class: 'mention' },
+								renderText: getMentionText,
+								renderHTML: ({ options, node, suggestion }) => [
+									'span',
+									options.HTMLAttributes,
+									getMentionText({ node, suggestion })
+								],
 								suggestions: suggestions
 							})
 						]
 					: []),
 
 				CharacterCount.configure({}),
-				...(image ? [Image] : []),
+				...(image
+					? [Image.configure({ allowBase64: attachments, allowExternal: allowExternalImages })]
+					: []),
+				...(attachments ? [FileAttachment.configure({ context: componentContext })] : []),
 				...(fileHandler
 					? [
 							FileHandler.configure({
@@ -796,11 +1035,11 @@
 							})
 						]
 					: []),
-				...(autocomplete
+				...(autocomplete || messageInput
 					? [
 							AIAutocompletion.configure({
 								generateCompletion: async (text) => {
-									if (text.trim().length === 0) {
+									if (!autocomplete || text.trim().length === 0) {
 										return null;
 									}
 
@@ -833,7 +1072,7 @@
 									return view.hasFocus() && from !== to;
 								}
 							}),
-							FloatingMenu.configure({
+							MountedFloatingMenu.configure({
 								element: floatingMenuElement,
 								appendTo: () => document.body,
 								options: {
@@ -865,9 +1104,10 @@
 					: []),
 				...(collaboration && provider ? [provider.getEditorExtension()] : [])
 			],
-			content: collaboration ? undefined : content,
-			autofocus: messageInput ? true : false,
-			onTransaction: () => {
+			content: provider ? undefined : content,
+			editable,
+			autofocus: messageInput && !$mobile && !$voiceCall,
+			onTransaction: ({ transaction }) => {
 				if (!editor) return;
 
 				// Defer Svelte reactivity trigger to rAF so we don't interleave
@@ -881,30 +1121,9 @@
 					});
 				}
 
-				htmlValue = editor.getHTML();
-				jsonValue = editor.getJSON();
-
-				if (richText) {
-					mdValue = turndownService
-						.turndown(
-							htmlValue
-								.replace(/<p><\/p>/g, '<br/>')
-								.replace(/ {2,}/g, (m) => m.replace(/ /g, '\u00a0'))
-						)
-						.replace(/\u00a0/g, ' ');
-				} else {
-					mdValue = turndownService
-						.turndown(
-							htmlValue
-								// Replace empty paragraphs with line breaks
-								.replace(/<p><\/p>/g, '<br/>')
-								// Replace multiple spaces with non-breaking spaces
-								.replace(/ {2,}/g, (m) => m.replace(/ /g, '\u00a0'))
-								// Replace tabs with non-breaking spaces (preserve indentation)
-								.replace(/\t/g, '\u00a0\u00a0\u00a0\u00a0') // 1 tab = 4 spaces
-						)
-						// Convert non-breaking spaces back to regular spaces for markdown
-						.replace(/\u00a0/g, ' ');
+				// Compare the final document to include changes from appended transactions.
+				if (jsonValue === '' || transaction.before !== editor.state.doc) {
+					serializeContent(richText);
 				}
 
 				onChange({
@@ -912,6 +1131,7 @@
 					json: jsonValue,
 					md: mdValue
 				});
+				if (transaction.getMeta('paste')) eventDispatch('pasted');
 
 				if (json) {
 					value = jsonValue;
@@ -919,12 +1139,8 @@
 					if (raw) {
 						value = htmlValue;
 					} else {
-						if (!preserveBreaks) {
-							mdValue = mdValue.replace(/<br\/>/g, '');
-						}
-
-						if (value !== mdValue) {
-							value = mdValue;
+						if (value !== (preserveBreaks ? mdValue : mdValue.replace(/<br\/>/g, ''))) {
+							value = preserveBreaks ? mdValue : mdValue.replace(/<br\/>/g, '');
 
 							// check if the node is paragraph as well
 							if (editor.isActive('paragraph')) {
@@ -937,7 +1153,32 @@
 				}
 			},
 			editorProps: {
-				attributes: { id },
+				// the tiptap placeholder never becomes the field's accessible name;
+				// function form so a placeholder change is picked up after mount
+				attributes: () => ({
+					id,
+					role: 'textbox',
+					'aria-multiline': 'true',
+					'aria-label': _placeholder
+				}),
+				transformPasted: (slice) => {
+					const stripMentionLinks = (fragment: Fragment): Fragment => {
+						const nodes: Node[] = [];
+						fragment.forEach((node) => {
+							nodes.push(
+								node.type.name === 'mention'
+									? node.mark(
+											node.marks.filter((mark) => !['link', 'underline'].includes(mark.type.name))
+										)
+									: node.isLeaf
+										? node
+										: node.copy(stripMentionLinks(node.content))
+							);
+						});
+						return Fragment.fromArray(nodes);
+					};
+					return new Slice(stripMentionLinks(slice.content), slice.openStart, slice.openEnd);
+				},
 				handleDrop: (view, event) => {
 					// Intercept sidebar chat item drops to prevent ProseMirror
 					// from inserting the raw JSON as text. The actual handling
@@ -956,10 +1197,10 @@
 					}
 					return false;
 				},
-				handlePaste: (view, event) => {
-					// Force plain-text pasting when richText === false
-					if (!richText) {
-						// swallow HTML completely
+				handlePaste: (view, event, slice) => {
+					// Paste literal text when automatic formatting is disabled.
+					if (!richText || !autoFormat) {
+						// Discard formatting while retaining explicit mention identities.
 						event.preventDefault();
 						const { state, dispatch } = view;
 
@@ -967,6 +1208,22 @@
 							/\r\n/g,
 							'\n'
 						);
+
+						if (state.selection.$from.parent.type.spec.code) {
+							dispatch(state.tr.insertText(plainText).scrollIntoView());
+							return true;
+						}
+
+						const mentions = plainMentionPaste(slice, state.schema);
+						if (mentions) {
+							dispatch(
+								state.tr
+									.replaceWith(state.selection.from, state.selection.to, mentions)
+									.setMeta('paste', true)
+									.scrollIntoView()
+							);
+							return true;
+						}
 
 						const lines = plainText.split('\n');
 						const nodes = [];
@@ -981,7 +1238,12 @@
 						});
 
 						const fragment = Fragment.fromArray(nodes);
-						dispatch(state.tr.replaceSelectionWith(fragment, false).scrollIntoView());
+						dispatch(
+							state.tr
+								.replaceWith(state.selection.from, state.selection.to, fragment)
+								.setMeta('paste', true)
+								.scrollIntoView()
+						);
 
 						return true; // handled
 					}
@@ -1165,7 +1427,7 @@
 									});
 
 									const fragment = Fragment.fromArray(nodes);
-									const tr = state.tr.replaceWith(from, to, fragment);
+									const tr = state.tr.replaceWith(from, to, fragment).setMeta('paste', true);
 									dispatch(tr.scrollIntoView());
 									event.preventDefault();
 									return true;
@@ -1220,7 +1482,10 @@
 					editor.storage.files = files;
 				}
 			},
-			onSelectionUpdate: onSelectionUpdate,
+			onSelectionUpdate: (event) => {
+				formattingDismissed = false;
+				onSelectionUpdate(event);
+			},
 			onBlur: () => {
 				// Force-hide floating menus when editor loses focus.
 				// shouldShow alone isn't enough because it only runs on transactions.
@@ -1233,8 +1498,8 @@
 					floatingMenuElement.style.opacity = '0';
 				}
 			},
-			enableInputRules: richText,
-			enablePasteRules: richText
+			enableInputRules: richText && autoFormat,
+			enablePasteRules: richText && autoFormat
 		});
 
 		provider?.setEditor(editor, () => ({ md: mdValue, html: htmlValue, json: jsonValue }));
@@ -1245,6 +1510,7 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		if (pendingUpdate) {
 			cancelAnimationFrame(pendingUpdate);
 		}
@@ -1255,6 +1521,7 @@
 
 		if (editor) {
 			editor.destroy();
+			editor = null;
 		}
 	});
 
@@ -1265,7 +1532,9 @@
 	const onValueChange = () => {
 		if (!editor) return;
 
-		const jsonValue = editor.getJSON();
+		if (value !== '' && value === jsonValue) return;
+
+		const editorJsonValue = editor.getJSON();
 		const htmlValue = editor.getHTML();
 		let mdValue = turndownService
 			.turndown(
@@ -1284,7 +1553,7 @@
 		}
 
 		if (json) {
-			if (!equal(value, jsonValue)) {
+			if (!equalEditorJSON(value, editorJsonValue)) {
 				editor.commands.setContent(value);
 				selectTemplate();
 			}
@@ -1311,18 +1580,28 @@
 	};
 </script>
 
+<svelte:window
+	on:scroll|capture={(event) => {
+		const target = event.target;
+		if (element && target instanceof Node && (target.contains(element) || element.contains(target)))
+			formattingDismissed = true;
+	}}
+/>
+
 {#if richText && showFormattingToolbar}
 	<div
 		bind:this={bubbleMenuElement}
+		hidden={formattingDismissed}
 		id="bubble-menu"
 		class="p-0"
 		style="visibility: hidden; opacity: 0; position: absolute; z-index: 9999;"
 	>
-		<FormattingButtons {editor} />
+		<FormattingButtons {editor} {onComment} />
 	</div>
 
 	<div
 		bind:this={floatingMenuElement}
+		hidden={formattingDismissed}
 		id="floating-menu"
 		class="p-0"
 		style="visibility: hidden; opacity: 0; position: absolute; z-index: 9999;"
@@ -1336,3 +1615,7 @@
 	dir="auto"
 	class="relative w-full min-w-full {className} {!editable ? 'cursor-not-allowed' : ''}"
 />
+
+{#if dragHandle && editor && editable}
+	<BlockHandle {editor} />
+{/if}

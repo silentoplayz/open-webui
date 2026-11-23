@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Any, Optional
 
 from open_webui.config import DEFAULT_RAG_TEMPLATE
-from open_webui.utils.misc import get_last_user_message, get_messages_content
+from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.misc import get_content_from_message, get_last_user_message, get_messages_content
 
 log = logging.getLogger(__name__)
 
@@ -14,9 +15,18 @@ log = logging.getLogger(__name__)
 # Let the right tool be given for the work at hand,
 # not the one that flatters, but the one that serves.
 def get_task_model_id(default_model_id: str, task_model: str, task_model_external: str, models) -> str:
-    # Set the task model
+    if default_model_id.startswith('agent:'):
+        # Agent sessions cannot serve ordinary completion requests for background tasks.
+        return next(
+            (
+                model
+                for model in (task_model_external, task_model)
+                if model and model in models and not model.startswith('agent:')
+            ),
+            default_model_id,
+        )
     task_model_id = default_model_id
-    # Check if the user has a custom task model and use that model
+    # Use an available task model override for the local or external connection.
     if models.get(task_model_id, {}).get('connection_type') == 'local':
         if task_model and task_model in models:
             task_model_id = task_model
@@ -64,7 +74,7 @@ async def prompt_template(template: str, user: Optional[Any] = None) -> str:
                     try:
                         from open_webui.models.groups import Groups
 
-                        user_groups = await Groups.get_groups_by_member_id(user_id)
+                        user_groups = await Groups.get_groups_by_member_id(user_id, include_inherited=True)
                         groups = ', '.join(g.name for g in user_groups)
                     except Exception:
                         pass
@@ -72,6 +82,7 @@ async def prompt_template(template: str, user: Optional[Any] = None) -> str:
             USER_VARIABLES = {
                 'name': str(user.get('name')),
                 'email': str(user.get('email')),
+                'role': str(user.get('role')),
                 'location': str(user_info.get('location')),
                 'bio': str(user.get('bio')),
                 'gender': str(user.get('gender')),
@@ -83,7 +94,7 @@ async def prompt_template(template: str, user: Optional[Any] = None) -> str:
     # Get the current date
     current_date = datetime.now()
 
-    # Format the date to YYYY-MM-DD
+    # YYYY-MM-DD: one date format, fewer international incidents.
     formatted_date = current_date.strftime('%Y-%m-%d')
     formatted_time = current_date.strftime('%I:%M:%S %p')
     formatted_weekday = current_date.strftime('%A')
@@ -95,6 +106,7 @@ async def prompt_template(template: str, user: Optional[Any] = None) -> str:
 
     template = template.replace('{{USER_NAME}}', USER_VARIABLES.get('name', 'Unknown'))
     template = template.replace('{{USER_EMAIL}}', USER_VARIABLES.get('email', 'Unknown'))
+    template = template.replace('{{USER_ROLE}}', USER_VARIABLES.get('role', 'Unknown'))
     template = template.replace('{{USER_BIO}}', USER_VARIABLES.get('bio', 'Unknown'))
     template = template.replace('{{USER_GENDER}}', USER_VARIABLES.get('gender', 'Unknown'))
     template = template.replace('{{USER_BIRTH_DATE}}', USER_VARIABLES.get('birth_date', 'Unknown'))
@@ -311,13 +323,57 @@ async def title_generation_template(template: str, messages: list[dict], user: O
     return template
 
 
-async def follow_up_generation_template(template: str, messages: list[dict], user: Optional[Any] = None) -> str:
+async def follow_up_generation_template(
+    template: str, messages: list[dict], user: Optional[Any] = None, *, use_default: bool = False
+) -> str:
+    if use_default:
+        start = max(0, len(messages) - 4)
+        first_user = next((i for i, message in enumerate(messages) if message.get('role') == 'user'), None)
+        messages = ([messages[first_user]] if first_user is not None and first_user < start else []) + messages[start:]
+
+    normalized = []
+    for message in messages:
+        content = message.get('content')
+        if isinstance(content, list):
+            content = '\n'.join(
+                item['text']
+                for item in content
+                if isinstance(item, dict) and item.get('type') == 'text' and isinstance(item.get('text'), str)
+            )
+        else:
+            content = get_content_from_message(message) or ''
+        if use_default and len(content) > 1000:
+            # truncate_content adds three characters for the omission marker.
+            content = truncate_content(content, 997)
+        normalized.append({**message, 'content': content})
+    messages = normalized
+
     prompt = get_last_user_message(messages)
     template = replace_prompt_variable(template, prompt)
     template = replace_messages_variable(template, messages)
 
     template = await prompt_template(template, user)
     return template
+
+
+def parse_follow_ups(content: str, max_count: int = 5) -> list[str]:
+    if not isinstance(content, str):
+        return []
+    content = content[content.find('{') : content.rfind('}') + 1]
+    try:
+        data = JSONCodec.loads(content)
+    except (ValueError, TypeError):
+        return []
+    suggestions = data.get('follow_ups') if isinstance(data, dict) else None
+    if not isinstance(suggestions, list) or any(not isinstance(item, str) for item in suggestions):
+        return []
+
+    result = []
+    for item in suggestions:
+        item = item.strip()
+        if item and len(item) <= 400 and item not in result:
+            result.append(item)
+    return result[:max_count]
 
 
 async def tags_generation_template(template: str, messages: list[dict], user: Optional[Any] = None) -> str:

@@ -6,12 +6,13 @@
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 
-	import { createCalendar } from '$lib/apis/calendar';
+	import { createCalendar, updateCalendar, type CalendarModel } from '$lib/apis/calendar';
 
 	const i18n = getContext('i18n');
 	const dispatch = createEventDispatcher();
 
 	export let show = false;
+	export let calendar: CalendarModel | null = null;
 
 	let name = '';
 	let color = '#3b82f6';
@@ -29,8 +30,8 @@
 	];
 
 	function reset() {
-		name = '';
-		color = '#3b82f6';
+		name = calendar?.name ?? '';
+		color = calendar?.color || '#3b82f6';
 		loading = false;
 	}
 
@@ -44,12 +45,12 @@
 
 		loading = true;
 		try {
-			const result = await createCalendar(localStorage.token, {
-				name: name.trim(),
-				color
-			});
+			const form = { name: name.trim(), color };
+			const result = calendar
+				? await updateCalendar(localStorage.token, calendar.id, form)
+				: await createCalendar(localStorage.token, form);
 			if (result) {
-				toast.success($i18n.t('Calendar created'));
+				toast.success(calendar ? $i18n.t('Saved') : $i18n.t('Calendar created'));
 				dispatch('created', result);
 				show = false;
 			}
@@ -61,27 +62,29 @@
 	};
 </script>
 
-<Modal size="sm" bind:show>
+<Modal ariaLabel={calendar ? $i18n.t('Edit') : $i18n.t('New Calendar')} size="sm" bind:show>
 	<div>
 		<!-- Header -->
-		<div class="flex justify-between items-center dark:text-gray-100 px-5 pt-4 pb-2">
-			<h3 class="text-base font-medium">{$i18n.t('New Calendar')}</h3>
+		<div class="flex justify-between items-center dark:text-gray-100 px-4 pt-3 pb-1">
+			<h3 class="text-base font-normal">{calendar ? $i18n.t('Edit') : $i18n.t('New Calendar')}</h3>
 			<button
 				class="self-center shrink-0 ml-2"
 				aria-label={$i18n.t('Close')}
 				on:click={() => (show = false)}
 			>
-				<XMark className="size-5" />
+				<XMark className="size-4" />
 			</button>
 		</div>
 
 		<!-- Form -->
-		<div class="px-5 pb-2 flex flex-col gap-3">
+		<div class="px-4 pb-2 flex flex-col gap-3">
 			<!-- Name -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Name')}</div>
+				<label for="calendar-name" class="block mb-1 text-xs text-gray-500">{$i18n.t('Name')}</label
+				>
 				<input
-					class="w-full text-sm bg-transparent outline-hidden font-primary placeholder:text-gray-300 dark:placeholder:text-gray-700"
+					id="calendar-name"
+					class="w-full text-sm bg-transparent outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700"
 					type="text"
 					bind:value={name}
 					placeholder={$i18n.t('Calendar name')}
@@ -115,7 +118,12 @@
 						style="background-color: {color};"
 						title={$i18n.t('Custom color')}
 					>
-						<input type="color" bind:value={color} class="opacity-0 w-0 h-0 absolute" />
+						<input
+							type="color"
+							bind:value={color}
+							aria-label={$i18n.t('Custom color')}
+							class="opacity-0 w-0 h-0 absolute"
+						/>
 					</label>
 				</div>
 			</div>
@@ -124,23 +132,21 @@
 		<!-- Bottom toolbar -->
 		<div class="flex items-center justify-end px-4 pb-3.5 pt-2 gap-2">
 			<button
-				class="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition"
+				class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 				type="button"
 				on:click={() => (show = false)}
 			>
 				{$i18n.t('Cancel')}
 			</button>
 			<button
-				class="px-3.5 py-1.5 text-sm bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex items-center gap-2 {loading
-					? 'cursor-not-allowed'
-					: ''}"
+				class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white disabled:cursor-not-allowed"
 				on:click={submitHandler}
 				type="button"
 				disabled={loading}
 			>
-				{$i18n.t('Create')}
+				{calendar ? $i18n.t('Save') : $i18n.t('Create')}
 				{#if loading}
-					<span class="shrink-0"><Spinner /></span>
+					<span class="shrink-0"><Spinner className="size-3" /></span>
 				{/if}
 			</button>
 		</div>

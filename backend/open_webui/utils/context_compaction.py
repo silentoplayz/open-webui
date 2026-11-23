@@ -1,16 +1,26 @@
 from __future__ import annotations
 
-import json
+import copy
 import logging
+import re
+from dataclasses import dataclass
+from itertools import takewhile
 from typing import Any
 
 from fastapi.responses import JSONResponse
-
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
-from open_webui.utils.misc import get_content_from_message, get_last_user_message, get_message_list
+from open_webui.utils.chat_id import is_saved_chat_id
+from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.misc import (
+    convert_output_to_messages,
+    get_content_from_message,
+    get_last_user_message,
+    get_message_list,
+    is_empty_reply,
+)
+from open_webui.utils.payload import apply_params_to_form_data
 from open_webui.utils.task import (
-    get_task_model_id,
     prompt_template,
     prompt_variables_template,
     replace_messages_variable,
@@ -18,6 +28,8 @@ from open_webui.utils.task import (
 )
 
 log = logging.getLogger(__name__)
+
+BASE64_DATA_URI_RE = re.compile(r'data:[\w/+.;=%-]*;base64,[A-Za-z0-9+/=]*')
 
 DEFAULT_CONTEXT_COMPACTION_PROMPT = """### Task:
 Summarize the conversation history that will be compacted out of the active chat context.
@@ -39,81 +51,76 @@ Summarize the conversation history that will be compacted out of the active chat
 {{RECENT_MESSAGES}}"""
 
 
-async def compact_messages_for_request(
+@dataclass(frozen=True)
+class MessageSplit:
+    """A request's messages divided at the compaction boundary."""
+
+    system_messages: list[dict]
+    summary: str | None
+    compacted: list[dict]
+    messages: list[dict]
+
+
+async def split_messages(messages: list[dict], metadata: dict, system_prompt: str = '') -> MessageSplit:
+    """Divide messages at the compaction boundary; under the threshold nothing is compacted."""
+    config = await _load_config()
+    if not config['enable']:
+        return MessageSplit([], None, [], messages)
+
+    system_messages = [messages[0]] if messages and messages[0].get('role') == 'system' else []
+    messages = messages[1:] if system_messages else messages
+
+    messages, summary = _apply_latest_summary_checkpoint(messages)
+    system_prompt = system_prompt or (get_content_from_message(system_messages[0]) if system_messages else '')
+    token_threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], metadata)
+    if token_threshold <= 0 or _estimate_request_tokens(messages, system_prompt, summary) <= token_threshold:
+        return MessageSplit(system_messages, summary, [], messages)
+
+    # A tool loop's messages carry the turn's summary only in the system message.
+    summary = summary or metadata.get('context_summary')
+    boundary = _find_compaction_boundary(messages, config['retention_percentage'])
+    if not messages[:boundary] or not messages[boundary:]:
+        return MessageSplit(system_messages, summary, [], messages)
+    return MessageSplit(system_messages, summary, messages[:boundary], messages[boundary:])
+
+
+async def compact_messages(
     request,
+    form_data: dict | None,
     user,
-    messages: list[dict],
+    split: MessageSplit,
     metadata: dict,
     model_id: str,
     models: dict,
-    system_prompt: str = '',
-) -> tuple[list[dict], str | None, bool]:
-    config = await _load_config()
-    if not config['enable']:
-        return messages, None, False
+    bypass_system_prompt: bool = False,
+) -> tuple[list[dict], str | None, list[dict]]:
+    """Fold the split's compacted messages into its summary."""
+    if not split.compacted:
+        return [*split.system_messages, *split.messages], split.summary, []
 
-    messages, previous_summary = _apply_latest_summary_checkpoint(messages)
-    token_threshold = _resolve_token_threshold(config['token_threshold'], metadata)
-    if not _exceeds_token_threshold(messages, system_prompt, previous_summary, token_threshold) or len(messages) <= 3:
-        return messages, previous_summary, False
-
-    boundary = _find_compaction_boundary(messages)
-    compacted_messages = messages[:boundary]
-    recent_messages = messages[boundary:]
-    if not compacted_messages or not recent_messages:
-        return messages, previous_summary, False
-
-    event_emitter = None
-    if metadata.get('chat_id') and metadata.get('message_id'):
-        from open_webui.socket.main import get_event_emitter
-
-        event_emitter = await get_event_emitter(metadata)
-
-    if event_emitter:
-        await event_emitter(
-            {
-                'type': 'context_compaction',
-                'data': {
-                    'action': 'context_compaction',
-                    'description': 'Compacting context',
-                    'done': False,
-                },
-            }
-        )
-
-    try:
-        summary = await _generate_summary(
-            request,
-            user,
-            model_id,
-            models,
-            compacted_messages,
-            recent_messages,
-            previous_summary,
-            config['prompt_template'],
-        )
-    except Exception:
-        if event_emitter:
-            await event_emitter(
-                {
-                    'type': 'context_compaction',
-                    'data': {
-                        'action': 'context_compaction',
-                        'description': 'Context compaction failed',
-                        'done': True,
-                        'error': True,
-                    },
-                }
-            )
-        raise
+    new_summary = await _generate_summary(
+        request,
+        form_data,
+        user,
+        model_id,
+        models,
+        split.compacted,
+        split.messages,
+        split.summary,
+        (await _load_config())['prompt_template'],
+        bypass_system_prompt,
+    )
 
     chat_id = metadata.get('chat_id')
-    checkpoint_message_id = metadata.get('user_message_id') or metadata.get('message_id')
-    if chat_id and checkpoint_message_id and not chat_id.startswith(('local:', 'channel:')):
+    checkpoint = split.messages[0]
+    checkpoint_message_id = checkpoint.get('id') or metadata.get('user_message_id') or metadata.get('message_id')
+    # Only whole-turn user boundaries correspond to persisted chat checkpoints.
+    if checkpoint.get('role') == 'user' and is_saved_chat_id(chat_id) and checkpoint_message_id:
         await Chats.upsert_message_to_chat_by_id_and_message_id(
             chat_id,
             checkpoint_message_id,
-            {'contextSummary': summary},
+            {'contextSummary': new_summary},
+            touch=False,
         )
 
     log.info(
@@ -121,24 +128,34 @@ async def compact_messages_for_request(
         chat_id,
         checkpoint_message_id,
         metadata.get('message_id'),
-        len(compacted_messages),
-        len(recent_messages),
-        len(summary),
+        len(split.compacted),
+        len(split.messages),
+        len(new_summary),
     )
 
-    if event_emitter:
+    if chat_id and metadata.get('message_id') and checkpoint.get('role') == 'user':
+        from open_webui.socket.main import get_event_emitter
+
+        event_emitter = await get_event_emitter(metadata)
         await event_emitter(
             {
                 'type': 'context_compaction',
-                'data': {
-                    'action': 'context_compaction',
-                    'description': 'Context compacted',
-                    'done': True,
-                },
+                'data': {'checkpoint_message_id': checkpoint.get('id'), 'context_summary': new_summary},
             }
         )
 
-    return recent_messages, summary, True
+    return [*split.system_messages, *split.messages], new_summary, split.compacted
+
+
+async def apply_summary_checkpoint(messages: list[dict]) -> tuple[list[dict], str | None]:
+    if not (await _load_config())['enable']:
+        return messages, None
+
+    system_messages = [messages[0]] if messages and messages[0].get('role') == 'system' else []
+    messages = messages[1:] if system_messages else messages
+
+    messages, summary = _apply_latest_summary_checkpoint(messages)
+    return [*system_messages, *messages], summary
 
 
 async def compact_chat_branch(request, user, chat: Any, model_id: str, models: dict) -> dict:
@@ -146,8 +163,13 @@ async def compact_chat_branch(request, user, chat: Any, model_id: str, models: d
     if not config['enable']:
         return {'ok': True, 'compacted': False, 'reason': 'disabled'}
 
-    history = (chat.chat or {}).get('history') or {}
-    current_id = history.get('currentId')
+    chat_data = chat.chat or {}
+    history = chat_data.get('history') or {}
+    current_id = getattr(chat, 'current_message_id', None) or history.get('currentId')
+    if not current_id:
+        current_id = chat_data.get('currentId') or chat_data.get('branchPointMessageId')
+    if not current_id and isinstance(chat_data.get('messages'), list) and chat_data['messages']:
+        current_id = chat_data['messages'][-1].get('id')
     if not current_id:
         return {'ok': True, 'compacted': False, 'reason': 'empty'}
 
@@ -155,30 +177,38 @@ async def compact_chat_branch(request, user, chat: Any, model_id: str, models: d
     if not messages_map:
         messages_map = history.get('messages') or {}
 
-    messages, previous_summary = _apply_latest_summary_checkpoint(get_message_list(messages_map, current_id))
-    if len(messages) <= 2:
+    # A summary on an empty reply would be left out of the next request along with the reply.
+    while current_id and is_empty_reply(messages_map.get(current_id) or {}):
+        current_id = messages_map[current_id].get('parentId')
+    if not current_id:
+        return {'ok': True, 'compacted': False, 'reason': 'empty'}
+
+    history, summary = _apply_latest_summary_checkpoint(get_message_list(messages_map, current_id))
+    compacted, messages = history[:-1], history[-1:]
+    if not compacted:
         return {'ok': True, 'compacted': False, 'reason': 'too_short'}
 
-    compacted_messages = messages[:-1]
-    recent_messages = messages[-1:]
-    summary = await _generate_summary(
+    new_summary = await _generate_summary(
         request,
+        None,
         user,
         model_id,
         models,
-        compacted_messages,
-        recent_messages,
-        previous_summary,
+        compacted,
+        messages,
+        summary,
         config['prompt_template'],
     )
-    await Chats.upsert_message_to_chat_by_id_and_message_id(chat.id, current_id, {'contextSummary': summary})
+    await Chats.upsert_message_to_chat_by_id_and_message_id(
+        chat.id, current_id, {'contextSummary': new_summary}, touch=False
+    )
 
     return {
         'ok': True,
         'compacted': True,
-        'dropped_messages': len(compacted_messages),
-        'kept_messages': len(recent_messages),
-        'summary_chars': len(summary),
+        'dropped_messages': len(compacted),
+        'kept_messages': len(messages),
+        'summary_chars': len(new_summary),
     }
 
 
@@ -186,11 +216,16 @@ async def _load_config() -> dict:
     values = await Config.get_many(
         'chat.context_compaction.enable',
         'chat.context_compaction.token_threshold',
+        'chat.context_compaction.token_cap',
+        'chat.context_compaction.retention_percentage',
         'chat.context_compaction.prompt_template',
     )
+    token_threshold = _parse_positive_int(values.get('chat.context_compaction.token_threshold')) or 80000
     return {
         'enable': bool(values.get('chat.context_compaction.enable', False)),
-        'token_threshold': int(values.get('chat.context_compaction.token_threshold', 80000) or 80000),
+        'token_threshold': token_threshold,
+        'token_cap': _parse_positive_int(values.get('chat.context_compaction.token_cap')) or token_threshold,
+        'retention_percentage': _clamp_retention_percentage(values.get('chat.context_compaction.retention_percentage')),
         'prompt_template': values.get('chat.context_compaction.prompt_template', '') or '',
     }
 
@@ -203,116 +238,305 @@ def _parse_positive_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def _resolve_token_threshold(global_threshold: int, metadata: dict) -> int:
+def _clamp_retention_percentage(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 40
+    return min(50, max(10, parsed))
+
+
+def _resolve_token_threshold(global_threshold: int, global_cap: int, metadata: dict) -> int:
     configured_threshold = _parse_positive_int((metadata.get('params') or {}).get('compact_token_threshold'))
-    if configured_threshold is None:
-        return global_threshold
-    return min(configured_threshold, global_threshold)
+    return min(configured_threshold or global_threshold, global_cap)
+
+
+def _usage_token_count(usage: dict) -> int:
+    prompt_tokens = int(usage.get('prompt_tokens') or usage.get('prompt_eval_count') or 0)
+    if not prompt_tokens and (usage.get('prompt_n') is not None or usage.get('cache_n') is not None):
+        prompt_tokens = int(usage.get('prompt_n') or 0) + int(usage.get('cache_n') or 0)
+    if not prompt_tokens:
+        prompt_tokens = int(usage.get('input_tokens') or 0)
+
+    completion_tokens = int(
+        usage.get('completion_tokens')
+        or usage.get('output_tokens')
+        or usage.get('eval_count')
+        or usage.get('predicted_n')
+        or 0
+    )
+    return prompt_tokens + completion_tokens
+
+
+async def get_chat_context_usage(chat: Any, model_id: str | None = None) -> dict | None:
+    chat_data = chat.chat or {}
+    history = chat_data.get('history') or {}
+    current_id = getattr(chat, 'current_message_id', None) or history.get('currentId')
+    if not current_id:
+        current_id = chat_data.get('currentId') or chat_data.get('branchPointMessageId')
+    if not current_id and isinstance(chat_data.get('messages'), list) and chat_data['messages']:
+        current_id = chat_data['messages'][-1].get('id')
+    if not current_id:
+        return None
+
+    messages_map = await Chats.get_messages_map_by_chat_id(chat.id)
+    messages = get_message_list(messages_map or history.get('messages') or {}, current_id)
+    if not messages:
+        return None
+
+    config = await _load_config()
+    if not config['enable']:
+        return None
+
+    params = ((chat.chat or {}).get('params') or {}).copy()
+    if model_id:
+        params['model'] = model_id
+    threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], {'params': params})
+    messages, summary = _apply_latest_summary_checkpoint(messages)
+    return _build_context_usage(_estimate_request_tokens(messages, '', summary), threshold)
+
+
+def _build_context_usage(tokens: int, threshold: int) -> dict:
+    return {
+        'tokens': tokens,
+        'estimated_tokens': tokens,
+        'threshold': threshold,
+        'percent': round((tokens / threshold) * 100) if threshold > 0 else 0,
+        'source': 'estimated',
+    }
+
+
+def _get_context_summary_from_message(message: dict) -> str | None:
+    value = message.get('contextSummary') or message.get('context_summary')
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _apply_latest_summary_checkpoint(messages: list[dict]) -> tuple[list[dict], str | None]:
-    summary = None
-    summary_idx = None
-
-    for idx, message in enumerate(messages):
-        value = message.get('contextSummary') or message.get('context_summary')
-        if isinstance(value, str) and value.strip():
-            summary = value
-            summary_idx = idx
-
-    if summary_idx is None:
-        return messages, None
-    return messages[summary_idx:], summary
-
-
-def _exceeds_token_threshold(messages: list[dict], system_prompt: str, summary: str | None, threshold: int) -> bool:
-    if threshold <= 0:
-        return False
-
     for idx in range(len(messages) - 1, -1, -1):
-        usage = messages[idx].get('usage') or (messages[idx].get('info') or {}).get('usage')
-        if isinstance(usage, dict) and usage.get('input_tokens'):
-            total = int(usage.get('input_tokens') or 0) + int(usage.get('output_tokens') or 0)
-            return total + _estimate_messages_tokens(messages[idx + 1 :]) > threshold
+        message = messages[idx]
+        if value := _get_context_summary_from_message(message):
+            # Rerun without the summary so a tool-loop reply keeps its mid-turn trim.
+            if message.get('output'):
+                [trimmed_message], _ = _apply_latest_summary_checkpoint(
+                    [{**message, 'contextSummary': None, 'context_summary': None}]
+                )
+                message = {**message, 'output': trimmed_message['output']}
+            return [message, *messages[idx + 1 :]], value
 
-    estimated = _estimate_tokens(system_prompt) + _estimate_tokens(summary or '') + _estimate_messages_tokens(messages)
-    return estimated > threshold
-
-
-def _find_compaction_boundary(messages: list[dict]) -> int:
-    keep_count = max(2, len(messages) * 2 // 5)
-    split = max(1, len(messages) - keep_count)
-
-    while split < len(messages) - 1:
-        previous = messages[split - 1] if split > 0 else {}
-        current = messages[split]
-        if current.get('role') == 'tool' or previous.get('tool_calls') or previous.get('output'):
-            split += 1
+        marker = next(
+            (
+                item
+                for item in reversed(message.get('output') or [])
+                if item.get('type') == 'open_webui:context_compaction' and item.get('summary')
+            ),
+            None,
+        )
+        if not marker:
             continue
-        break
 
-    return min(split, len(messages) - 2)
+        # A tool-loop checkpoint can retain output from an earlier reply.
+        for cut_idx in range(idx, -1, -1):
+            output = messages[cut_idx].get('output') or []
+            start = next(
+                (
+                    position
+                    for position, item in enumerate(output)
+                    if item.get('type') == 'function_call' and item.get('call_id') == marker['call_id']
+                ),
+                None,
+            )
+            if start is None:
+                # A summary saved inside the retained rounds was written after this marker.
+                if cut_idx < idx and _get_context_summary_from_message(messages[cut_idx]):
+                    break
+            else:
+                while start and output[start - 1].get('type') != 'function_call_output':
+                    start -= 1
+                return [
+                    *messages[max(0, cut_idx - 1) : cut_idx],
+                    {
+                        **messages[cut_idx],
+                        'output': [
+                            item for item in output[start:] if item.get('type') != 'open_webui:context_compaction'
+                        ],
+                    },
+                    *messages[cut_idx + 1 :],
+                ], marker['summary']
+
+    return messages, None
+
+
+def _estimate_request_tokens(messages: list[dict], system_prompt: str, summary: str | None) -> int:
+    """Tokens a request with these messages takes, counted from the latest reply that reports its usage."""
+    for idx in range(len(messages) - 1, -1, -1):
+        if tokens := _reported_tokens(messages[idx]):
+            return tokens + _estimate_messages_tokens(messages[idx + 1 :])
+    return _estimate_tokens(system_prompt) + _estimate_tokens(summary or '') + _estimate_messages_tokens(messages)
+
+
+def _reported_tokens(message: dict) -> int:
+    """Tokens the provider reported for this reply, or 0 when it reported none."""
+    usage = message.get('usage') or (message.get('info') or {}).get('usage')
+    if not isinstance(usage, dict) or not (tokens := _usage_token_count(usage)):
+        return 0
+    # Tool results that end the reply came back after the report, e.g. ones too long for the model to answer.
+    outputs = takewhile(lambda item: item.get('type') == 'function_call_output', reversed(message.get('output') or []))
+    return tokens + sum(_estimate_tokens(item) for item in outputs)
+
+
+def _find_compaction_boundary(messages: list[dict], retention_percentage: int = 40) -> int:
+    retention_percentage = _clamp_retention_percentage(retention_percentage)
+    keep_count = max(2, len(messages) * retention_percentage // 100)
+    target = max(1, len(messages) - keep_count)
+    if any(message.get('role') == 'tool' for message in messages):
+        # Keep each call/result batch and its following image messages together.
+        boundaries = [
+            idx
+            for idx, message in enumerate(messages)
+            if message.get('role') == 'assistant' and message.get('tool_calls')
+        ][1:]
+    else:
+        boundaries = [idx for idx, message in enumerate(messages) if message.get('role') == 'user'][1:]
+        # The first later user turn stays a valid boundary even inside the retained share.
+        target = max(target, min(boundaries, default=0))
+    return next((idx for idx in reversed(boundaries) if idx <= target), 0)
 
 
 async def _generate_summary(
     request,
+    form_data: dict | None,
     user,
     model_id: str,
     models: dict,
-    compacted_messages: list[dict],
-    recent_messages: list[dict],
-    previous_summary: str | None,
+    compacted: list[dict],
+    messages: list[dict],
+    summary: str | None,
     summary_prompt_template: str,
+    bypass_system_prompt: bool = False,
 ) -> str:
     from open_webui.utils.chat import generate_chat_completion
+    from open_webui.utils.models import add_tether_model
 
-    task_model_id = get_task_model_id(
-        model_id,
-        await Config.get('task.model.default'),
-        await Config.get('task.model.external'),
-        models,
+    models = await add_tether_model(request, user, model_id, models)
+
+    task_config = await Config.get_many(
+        'task.model.params',
+        'chat.context_compaction.model',
     )
-    if task_model_id not in models:
-        task_model_id = model_id
+    context_compaction_model = task_config.get('chat.context_compaction.model')
+    task_model_id = context_compaction_model if context_compaction_model in models else model_id
     if task_model_id not in models:
         raise ValueError('No available model for context compaction')
 
     summary_prompt_template = summary_prompt_template.strip() or DEFAULT_CONTEXT_COMPACTION_PROMPT
-    all_messages = [*compacted_messages, *recent_messages]
-    prompt = replace_prompt_variable(summary_prompt_template, get_last_user_message(all_messages) or '')
-    prompt = replace_messages_variable(prompt, all_messages)
-    prompt = replace_messages_variable(prompt, compacted_messages, 'COMPACTED_MESSAGES')
-    prompt = replace_messages_variable(prompt, recent_messages, 'RECENT_MESSAGES')
-    prompt = prompt_variables_template(prompt, {'{{PREVIOUS_SUMMARY}}': previous_summary or ''})
-    prompt = await prompt_template(prompt, user)
+    boundary_prefix = _message_prefix(messages[0])
+    has_unique_prefix = (
+        boundary_prefix and sum(_message_prefix(message) == boundary_prefix for message in [*compacted, *messages]) == 1
+    )
+    # The text-only prompt formatter otherwise omits tool names and arguments.
+    compacted, messages = list(compacted), list(messages)
+    for group in (compacted, messages):
+        for idx, message in enumerate(group):
+            # Saved replies keep their tool calls as output items.
+            tool_calls = message.get('tool_calls') or [
+                call for m in convert_output_to_messages(message.get('output')) for call in m.get('tool_calls', [])
+            ]
+            if tool_calls:
+                group[idx] = {
+                    **message,
+                    'content': f'{get_content_from_message(message) or ""}\n[TOOL CALLS] {JSONCodec.dumps(tool_calls)}',
+                }
 
-    max_tokens = models[task_model_id].get('info', {}).get('params', {}).get('max_tokens', 1000)
+    async def render_prompt(template: str) -> str:
+        all_messages = [*compacted, *messages]
+        prompt = replace_prompt_variable(template, get_last_user_message(all_messages) or '')
+        prompt = replace_messages_variable(prompt, all_messages)
+        prompt = replace_messages_variable(prompt, compacted, 'COMPACTED_MESSAGES')
+        prompt = replace_messages_variable(prompt, messages, 'RECENT_MESSAGES')
+        prompt = prompt_variables_template(prompt, {'{{PREVIOUS_SUMMARY}}': summary or ''})
+        return await prompt_template(prompt, user)
+
+    task_model_params = task_config.get('task.model.params') or {}
+    if not isinstance(task_model_params, dict):
+        task_model_params = {}
+    task_model_params = {key: value for key, value in task_model_params.items() if value is not None and value != ''}
+
+    metadata = {
+        **(request.state.metadata if hasattr(request.state, 'metadata') else {}),
+        'task': 'context_compaction',
+    }
+
+    # Replaying the chat request unchanged lets the provider read the history from its prompt cache.
+    # A repeated or transformed boundary cannot safely identify the history to discard.
+    if (
+        form_data
+        and task_model_id == model_id
+        and has_unique_prefix
+        and sum(_message_prefix(message) == boundary_prefix for message in form_data['messages']) == 1
+    ):
+        prompt = await render_prompt(
+            prompt_variables_template(
+                summary_prompt_template,
+                {
+                    '{{COMPACTED_MESSAGES}}': (
+                        'Every non-system message above before (excluding) the message beginning with '
+                        f'"{boundary_prefix}".'
+                    ),
+                    '{{RECENT_MESSAGES}}': (
+                        f'The message above beginning with "{boundary_prefix}" and every message after it.'
+                    ),
+                },
+            )
+        )
+        payload = {
+            'model': task_model_id,
+            'messages': [*copy.deepcopy(form_data['messages']), {'role': 'user', 'content': prompt}],
+            'stream': False,
+            'metadata': metadata,
+        }
+        if form_data.get('tools'):
+            payload['tools'] = copy.deepcopy(form_data['tools'])
+        try:
+            response = await generate_chat_completion(
+                request,
+                form_data=apply_params_to_form_data(payload, models[task_model_id], task_model_params),
+                user=user,
+                bypass_system_prompt=bypass_system_prompt,
+            )
+        except Exception:
+            response = None
+        text = _response_text(response).strip()
+        if text:
+            return text
+
+    prompt = await render_prompt(summary_prompt_template)
     payload = {
         'model': task_model_id,
         'messages': [{'role': 'user', 'content': prompt}],
         'stream': False,
-        **(
-            {'max_tokens': max_tokens}
-            if models[task_model_id].get('owned_by') == 'ollama'
-            else {'max_completion_tokens': max_tokens}
-        ),
-        'metadata': {
-            **(request.state.metadata if hasattr(request.state, 'metadata') else {}),
-            'task': 'context_compaction',
-        },
+        'metadata': metadata,
     }
 
+    payload = apply_params_to_form_data(payload, models[task_model_id], task_model_params)
     response = await generate_chat_completion(request, form_data=payload, user=user)
-    summary = _response_text(response).strip()
-    if summary:
-        return summary
+    text = _response_text(response).strip()
+    if text:
+        return text
 
-    parts = [previous_summary] if previous_summary else []
-    for message in compacted_messages:
+    parts = [summary] if summary else []
+    for message in compacted:
         content = get_content_from_message(message)
         if content:
             parts.append(f'- {message.get("role", "unknown")}: {content[:500]}')
     return '\n'.join(parts)[:4000]
+
+
+def _message_prefix(message: dict) -> str:
+    content = get_content_from_message(message) or ' '.join(
+        f'{tool_call["function"]["name"]}({tool_call["function"]["arguments"]})'
+        for tool_call in message.get('tool_calls') or []
+    )
+    return content.strip()[:200]
 
 
 def _response_text(response: Any) -> str:
@@ -321,7 +545,7 @@ def _response_text(response: Any) -> str:
 
     if isinstance(response, JSONResponse):
         try:
-            response = json.loads(response.body.decode('utf-8', 'replace'))
+            response = JSONCodec.loads(response.body.decode('utf-8', 'replace'))
         except Exception:
             return ''
 
@@ -331,6 +555,8 @@ def _response_text(response: Any) -> str:
     choices = response.get('choices') or []
     if choices:
         message = choices[0].get('message') or {}
+        if message.get('tool_calls'):
+            return ''
         return message.get('content') or message.get('reasoning_content') or ''
 
     parts = []
@@ -359,7 +585,10 @@ def _estimate_messages_tokens(messages: list[dict]) -> int:
 
         total += _estimate_tokens(message.get('output'))
         total += _estimate_tokens(message.get('tool_calls'))
-        total += _estimate_tokens(message.get('files'))
+        files = message.get('files')
+        if files:
+            # Inline data is not part of the file tags sent to the model.
+            total += _estimate_tokens(BASE64_DATA_URI_RE.sub('', JSONCodec.dumps(files, ensure_ascii=False)))
     return total
 
 
@@ -369,7 +598,7 @@ def _estimate_tokens(value: Any) -> int:
 
     if not isinstance(value, str):
         try:
-            value = json.dumps(value, ensure_ascii=False)
+            value = JSONCodec.dumps(value, ensure_ascii=False)
         except Exception:
             value = str(value)
 

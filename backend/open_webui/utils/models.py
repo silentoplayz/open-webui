@@ -3,13 +3,13 @@ import copy
 import logging
 import sys
 
-from aiocache import cached
 from fastapi import Request
 from open_webui.config import (
     BYPASS_ADMIN_ACCESS_CONTROL,
     DEFAULT_ARENA_MODEL,
 )
-from open_webui.env import BYPASS_MODEL_ACCESS_CONTROL, GLOBAL_LOG_LEVEL
+from open_webui.env import BYPASS_MODEL_ACCESS_CONTROL, ENABLE_FUNCTIONS, GLOBAL_LOG_LEVEL, REDIS_KEY_PREFIX
+from open_webui.events import EVENTS, publish_event
 from open_webui.functions import get_function_models
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.config import Config
@@ -20,13 +20,41 @@ from open_webui.models.users import UserModel
 from open_webui.routers import ollama, openai
 from open_webui.socket.utils import RedisDict
 from open_webui.utils.access_control import has_access, has_base_model_access
+from open_webui.utils.chat_variables import get_chat_variables_schema
+from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.plugin import (
-    get_functions_cache,
     get_function_module_from_cache,
+    get_functions_cache,
 )
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
+
+BASE_MODELS_CACHE_KEY = f'{REDIS_KEY_PREFIX}:models:base'
+
+
+def public_model_params(params):
+    controls = params.get('model_controls', {})
+    public = (
+        {
+            'model_controls': {
+                key: {
+                    **{
+                        field: control[field]
+                        for field in ('label', 'description', 'default', 'display')
+                        if field in control
+                    },
+                    'options': {key: {'label': option['label']} for key, option in control['options'].items()},
+                }
+                for key, control in controls.items()
+            }
+        }
+        if controls
+        else {}
+    )
+    if 'compact_token_threshold' in params:
+        public['compact_token_threshold'] = params['compact_token_threshold']
+    return public
 
 
 async def fetch_ollama_models(request: Request, user: UserModel = None):
@@ -63,22 +91,71 @@ async def get_all_base_models(request: Request, user: UserModel = None):
     return function_models + openai_models + ollama_models
 
 
+async def publish_model_availability_events(request: Request, base_models: list[dict]):
+    available_models = {model['id']: model.get('name') for model in base_models}
+    previous_models = request.app.state.BASE_MODELS_SNAPSHOT
+    request.app.state.BASE_MODELS_SNAPSHOT = available_models
+    if previous_models is None:
+        return
+
+    for model_id in sorted(available_models.keys() - previous_models.keys()):
+        await publish_event(
+            request,
+            EVENTS.MODEL_AVAILABLE,
+            subject_id=model_id,
+            subject_type='model',
+            source='system',
+            data={'name': available_models[model_id]},
+        )
+    for model_id in sorted(previous_models.keys() - available_models.keys()):
+        await publish_event(
+            request,
+            EVENTS.MODEL_UNAVAILABLE,
+            subject_id=model_id,
+            subject_type='model',
+            source='system',
+            data={'name': previous_models[model_id]},
+        )
+
+
 async def get_all_models(request, refresh: bool = False, user: UserModel = None):
     config = await Config.get_many(
         'models.base_models_cache',
         'evaluation.arena.enable',
         'evaluation.arena.models',
+        'models.default_metadata',
+        'models.default_params',
     )
-    if (
-        request.app.state.MODELS
-        and request.app.state.BASE_MODELS
-        and (config.get('models.base_models_cache') and not refresh)
-    ):
+    if refresh:
+        await openai.get_all_models.cache.clear()
+        await ollama.get_all_models.cache.clear()
+        redis = getattr(request.app.state, 'redis', None)
+        if redis is not None:
+            await redis.delete(BASE_MODELS_CACHE_KEY)
+        request.app.state.BASE_MODELS = []
+
+    redis = getattr(request.app.state, 'redis', None)
+    use_cache = config.get('models.base_models_cache') and not refresh
+    base_models = None
+
+    if use_cache and redis is not None:
+        cached_base_models = await redis.get(BASE_MODELS_CACHE_KEY)
+        if cached_base_models:
+            base_models = JSONCodec.loads(cached_base_models)
+            request.app.state.BASE_MODELS = base_models
+        else:
+            await openai.get_all_models.cache.clear()
+            await ollama.get_all_models.cache.clear()
+    elif use_cache and request.app.state.MODELS and request.app.state.BASE_MODELS:
         base_models = request.app.state.BASE_MODELS
-    else:
+
+    if base_models is None:
         base_models = await get_all_base_models(request, user=user)
+        await publish_model_availability_events(request, base_models)
         if base_models:
             request.app.state.BASE_MODELS = base_models
+            if config.get('models.base_models_cache') and redis is not None:
+                await redis.set(BASE_MODELS_CACHE_KEY, JSONCodec.dumps(base_models))
         else:
             base_models = request.app.state.BASE_MODELS
 
@@ -125,11 +202,21 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
             ]
         models = models + arena_models
 
-    global_action_ids = {function.id for function in await Functions.get_global_action_functions()}
-    enabled_action_ids = {function.id for function in await Functions.get_functions_by_type('action', active_only=True)}
+    # One query per type: the global sets are subsets of the active sets, so
+    # deriving them from the same rows halves the function-table queries.
+    if ENABLE_FUNCTIONS:
+        active_actions = await Functions.get_active_function_ids_by_type('action')
+        global_action_ids = {function_id for function_id, is_global in active_actions if is_global}
+        enabled_action_ids = {function_id for function_id, _ in active_actions}
 
-    global_filter_ids = {function.id for function in await Functions.get_global_filter_functions()}
-    enabled_filter_ids = {function.id for function in await Functions.get_functions_by_type('filter', active_only=True)}
+        active_filters = await Functions.get_active_function_ids_by_type('filter')
+        global_filter_ids = {function_id for function_id, is_global in active_filters if is_global}
+        enabled_filter_ids = {function_id for function_id, _ in active_filters}
+    else:
+        global_action_ids = set()
+        enabled_action_ids = set()
+        global_filter_ids = set()
+        enabled_filter_ids = set()
 
     custom_models = await Models.get_all_models()
 
@@ -149,24 +236,39 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
             if model:
                 if custom_model.is_active:
+                    arena_meta = model['info']['meta'] if model.get('arena') else None
                     model['name'] = custom_model.name
-                    model['info'] = custom_model.model_dump()
+                    model['info'] = custom_model.model_dump(exclude={'meta': {'profile_image_url'}})
+                    if arena_meta:
+                        # Evaluation config owns arena access grants and model_ids
+                        model['info']['meta'].update(
+                            {
+                                key: arena_meta[key]
+                                for key in ('access_grants', 'model_ids', 'filter_mode')
+                                if key in arena_meta
+                            }
+                        )
+                    schema = get_chat_variables_schema(custom_model.params.model_dump().get('system'))
+                    if schema:
+                        model['info'].setdefault('meta', {})['chat_variables_schema'] = schema
+                    elif isinstance(model['info'].get('meta'), dict):
+                        model['info']['meta'].pop('chat_variables_schema', None)
 
                     action_ids = []
                     filter_ids = []
 
                     if 'info' in model:
                         if 'meta' in model['info']:
-                            action_ids.extend(model['info']['meta'].get('actionIds', []))
-                            filter_ids.extend(model['info']['meta'].get('filterIds', []))
+                            if ENABLE_FUNCTIONS:
+                                action_ids.extend(model['info']['meta'].get('actionIds', []))
+                                filter_ids.extend(model['info']['meta'].get('filterIds', []))
 
-                        if 'params' in model['info']:
-                            del model['info']['params']
+                        model['info']['params'] = public_model_params(model['info'].get('params', {}))
 
                     model['action_ids'] = action_ids
                     model['filter_ids'] = filter_ids
                 else:
-                    models.remove(model)
+                    models = [m for m in models if m is not model]
 
         elif custom_model.is_active:
             if custom_model.id in existing_ids:
@@ -198,10 +300,13 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
                 **({'loaded': base_model.get('loaded')} if base_model and base_model.get('loaded') is not None else {}),
             }
 
-            info = custom_model.model_dump()
-            if 'params' in info:
-                # Remove params to avoid exposing sensitive info
-                del info['params']
+            info = custom_model.model_dump(exclude={'meta': {'profile_image_url'}})
+            schema = get_chat_variables_schema(custom_model.params.model_dump().get('system'))
+            if schema:
+                info.setdefault('meta', {})['chat_variables_schema'] = schema
+            elif isinstance(info.get('meta'), dict):
+                info['meta'].pop('chat_variables_schema', None)
+            info['params'] = public_model_params(info.get('params', {}))
 
             model['info'] = info
 
@@ -211,10 +316,10 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
             if custom_model.meta:
                 meta = custom_model.meta.model_dump()
 
-                if 'actionIds' in meta:
+                if ENABLE_FUNCTIONS and 'actionIds' in meta:
                     action_ids.extend(meta['actionIds'])
 
-                if 'filterIds' in meta:
+                if ENABLE_FUNCTIONS and 'filterIds' in meta:
                     filter_ids.extend(meta['filterIds'])
 
             model['action_ids'] = action_ids
@@ -277,22 +382,16 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
     functions_by_id = {f.id: f for f in await Functions.get_functions_by_ids(list(all_function_ids))}
 
-    # Pre-warm the function module cache once per unique function ID.
-    # This ensures each function's DB freshness check runs exactly once,
-    # not once per (model × function) pair.
-    # Only attempt to load functions that actually exist in the local DB;
-    # imported/custom model configs may reference tools or filters the user
-    # hasn't installed, and trying to load those would cause persistent
-    # "Failed to load function module" log spam on every model refresh.
+    # Warm each installed function once, avoiding per-model freshness checks and errors for missing functions.
     for function_id, function in functions_by_id.items():
         try:
             await get_function_module_from_cache(request, function_id, function=function)
         except Exception as e:
-            log.debug(f'Failed to load function module for {function_id}: {e}')
+            log.debug('Failed to load function module for %s: %s', function_id, e)
 
     # Apply global model defaults to all models
     # Per-model overrides take precedence over global defaults
-    default_metadata = await Config.get('models.default_metadata', {}) or {}
+    default_metadata = config.get('models.default_metadata') or {}
 
     if default_metadata:
         for model in models:
@@ -316,18 +415,36 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
     all_function_valves = await Functions.get_function_valves_by_ids(list(all_function_ids))
     functions_cache = get_functions_cache(request)
 
+    # Global actions and filters appear in every model, so priorities and item
+    # lists are memoized across the loop instead of rebuilt per model.
+    action_priorities = {}
+
     def get_action_priority(action_id):
+        if action_id in action_priorities:
+            return action_priorities[action_id]
+        priority = 0
         try:
             function_module = functions_cache.get(action_id)
             if function_module and hasattr(function_module, 'Valves'):
                 valves_db = all_function_valves.get(action_id)
                 valves = function_module.Valves(**(valves_db if valves_db else {}))
-                return getattr(valves, 'priority', 0)
+                priority = getattr(valves, 'priority', 0)
         except Exception:
-            pass
-        return 0
+            priority = 0
+        action_priorities[action_id] = priority
+        return priority
+
+    action_items_by_id = {}
+    filter_items_by_id = {}
+    default_threshold = (config.get('models.default_params') or {}).get('compact_token_threshold')
 
     for model in models:
+        if default_threshold is not None:
+            info = model.get('info') or {}
+            model['info'] = {
+                **info,
+                'params': {'compact_token_threshold': default_threshold, **(info.get('params') or {})},
+            }
         action_ids = [
             action_id
             for action_id in set(model.pop('action_ids', [])) | global_action_ids
@@ -340,37 +457,61 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
             for filter_id in set(model.pop('filter_ids', [])) | global_filter_ids
             if filter_id in enabled_filter_ids
         ]
+        # Set order varies per process, and an unstable order defeats the RedisDict content signature.
+        filter_ids.sort()
 
         model['actions'] = []
         for action_id in action_ids:
-            action_function = functions_by_id.get(action_id)
-            if action_function is None:
-                log.info(f'Action not found: {action_id}')
-                continue
+            items = action_items_by_id.get(action_id)
+            if items is None:
+                action_function = functions_by_id.get(action_id)
+                if action_function is None:
+                    log.info('Action not found: %s', action_id)
+                    action_items_by_id[action_id] = []
+                    continue
 
-            function_module = functions_cache.get(action_id)
-            if function_module is None:
-                log.info(f'Failed to load action module: {action_id}')
-                continue
-            model['actions'].extend(get_action_items_from_module(action_function, function_module))
+                function_module = functions_cache.get(action_id)
+                if function_module is None:
+                    log.info('Failed to load action module: %s', action_id)
+                    action_items_by_id[action_id] = []
+                    continue
+                items = get_action_items_from_module(action_function, function_module)
+                action_items_by_id[action_id] = items
+            # Shallow copies keep per-model item dicts independent, as before
+            model['actions'].extend({**item} for item in items)
 
         model['filters'] = []
         for filter_id in filter_ids:
-            filter_function = functions_by_id.get(filter_id)
-            if filter_function is None:
-                log.info(f'Filter not found: {filter_id}')
-                continue
+            items = filter_items_by_id.get(filter_id)
+            if items is None:
+                filter_function = functions_by_id.get(filter_id)
+                if filter_function is None:
+                    log.info('Filter not found: %s', filter_id)
+                    filter_items_by_id[filter_id] = []
+                    continue
 
-            function_module = functions_cache.get(filter_id)
-            if function_module is None:
-                log.info(f'Failed to load filter module: {filter_id}')
-                continue
-            if getattr(function_module, 'toggle', None):
-                model['filters'].extend(get_filter_items_from_module(filter_function, function_module))
+                function_module = functions_cache.get(filter_id)
+                if function_module is None:
+                    log.info('Failed to load filter module: %s', filter_id)
+                    filter_items_by_id[filter_id] = []
+                    continue
+                if getattr(function_module, 'toggle', None):
+                    items = get_filter_items_from_module(filter_function, function_module)
+                else:
+                    items = []
+                filter_items_by_id[filter_id] = items
+            model['filters'].extend({**item} for item in items)
 
-    log.debug(f'get_all_models() returned {len(models)} models')
+    log.debug('get_all_models() returned %s models', len(models))
 
-    models_dict = {model['id']: model for model in models}
+    models_dict = {}
+    for model in models:
+        model = model.copy()
+        if model.get('ollama'):
+            # Keep the moving expiry in the API response, outside the registry signature.
+            model['ollama'] = model['ollama'].copy()
+            model['ollama'].pop('expires_at', None)
+        models_dict[model['id']] = model
     if isinstance(request.app.state.MODELS, RedisDict):
         try:
             request.app.state.MODELS.set(models_dict)
@@ -383,35 +524,78 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
     return models
 
 
-async def check_model_access(user, model, db=None):
+async def add_tether_model(request: Request, user, model_id, models=None):
+    """`models` (default: the shared models), plus the user's own model `model_id` when it is one."""
+    models = request.app.state.MODELS if models is None else models
+    tether_model = await openai.get_tether_model(request, user, model_id)
+    # dict(...items()) is one HGETALL on a Redis-backed pool.
+    return {**dict(models.items()), model_id: tether_model} if tether_model else models
+
+
+async def check_model_access(user, model, model_info=None, db=None):
+    if model.get('owner_id') is not None and model.get('owner_id') == getattr(user, 'id', None):
+        # The caller's own connection, resolved from their settings.
+        return
     if model.get('arena'):
         meta = model.get('info', {}).get('meta', {})
         access_grants = meta.get('access_grants', [])
-        if not await has_access(
-            user.id,
-            permission='read',
-            access_grants=access_grants,
-            db=db,
+        if not (
+            (not access_grants and user.role == 'admin')
+            or await has_access(
+                user.id,
+                permission='read',
+                access_grants=access_grants,
+                db=db,
+            )
         ):
+            log.warning(
+                'Model access denied: user_id=%r model_id=%r reason=arena_read_denied',
+                user.id,
+                model.get('id'),
+            )
             raise Exception('Model not found')
     else:
-        model_info = await Models.get_model_by_id(model.get('id'), db=db)
+        # Callers that already fetched the row (chat completion entry) pass it in
+        if model_info is None or model_info.id != model.get('id'):
+            model_info = await Models.get_model_by_id(model.get('id'), db=db)
         if not model_info:
+            log.warning(
+                'Model access denied: user_id=%r model_id=%r reason=model_unregistered',
+                user.id,
+                model.get('id'),
+            )
             raise Exception('Model not found')
-        elif not (
+
+        # One group-membership fetch shared by the direct check and every
+        # base-model hop; skipped when no check below needs it.
+        user_group_ids = None
+        if user.id != model_info.user_id or model_info.base_model_id:
+            user_group_ids = {
+                group.id for group in await Groups.get_groups_by_member_id(user.id, db=db, include_inherited=True)
+            }
+
+        if not (
             user.id == model_info.user_id
             or await AccessGrants.has_access(
                 user_id=user.id,
                 resource_type='model',
                 resource_id=model_info.id,
                 permission='read',
+                user_group_ids=user_group_ids,
                 db=db,
             )
         ):
+            log.warning(
+                'Model access denied: user_id=%r model_id=%r reason=model_read_denied',
+                user.id,
+                model_info.id,
+            )
             raise Exception('Model not found')
 
         # Enforce access on chained base models
-        if not await has_base_model_access(user.id, model_info, db=db):
+        if not await has_base_model_access(
+            user.id, model_info, user_role=user.role, user_group_ids=user_group_ids, db=db
+        ):
             raise Exception('Model not found')
 
 
@@ -428,7 +612,9 @@ async def get_filtered_models(models, user, db=None):
             if info:
                 model_infos[model['id']] = info
 
-        user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, db=db)}
+        user_group_ids = {
+            group.id for group in await Groups.get_groups_by_member_id(user.id, db=db, include_inherited=True)
+        }
 
         # Batch-fetch accessible resource IDs in a single query instead of N has_access calls
         accessible_model_ids = await AccessGrants.get_accessible_resource_ids(
@@ -445,7 +631,7 @@ async def get_filtered_models(models, user, db=None):
             if model.get('arena'):
                 meta = model.get('info', {}).get('meta', {})
                 access_grants = meta.get('access_grants', [])
-                if await has_access(
+                if (not access_grants and user.role == 'admin') or await has_access(
                     user.id,
                     permission='read',
                     access_grants=access_grants,

@@ -1,22 +1,23 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { onMount, tick, getContext } from 'svelte';
-	import { openDB, deleteDB } from 'idb';
-	import fileSaver from 'file-saver';
-	const { saveAs } = fileSaver;
+	import { onMount, tick, getContext, setContext } from 'svelte';
+	import type { AppLayoutContext } from '$lib/types';
 
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { fade } from 'svelte/transition';
 
-	import { getModels, getToolServersData, getVersionUpdates } from '$lib/apis';
+	import { getBackendConfig, getModels, getVersionUpdates } from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
+	import { getSkills } from '$lib/apis/skills';
+	import { getFolders } from '$lib/apis/folders';
+	import { getSessionUser } from '$lib/apis/auths';
 	import { getBanners } from '$lib/apis/configs';
 	import { getTerminalServers } from '$lib/apis/terminal';
 	import { getUserSettings } from '$lib/apis/users';
-	import { setTextScale } from '$lib/utils/text-scale';
+	import { setAppFontFamily, setTextScale } from '$lib/utils/text-scale';
 
-	import { WEBUI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
+	import { WEBUI_VERSION, WEBUI_API_BASE_URL, WEBUI_BUILD_CHANNEL } from '$lib/constants';
 	import { compareVersion } from '$lib/utils';
 
 	import {
@@ -26,37 +27,47 @@
 		models,
 		knowledge,
 		tools,
+		skills,
+		socket,
 		functions,
 		tags,
 		banners,
 		showSettings,
-		showShortcuts,
 		showChangelog,
-		temporaryChatEnabled,
-		toolServers,
+		temporaryChat,
 		terminalServers,
 		selectedTerminalId,
 		showSearch,
 		showSidebar,
-		showControls,
-		mobile
+		showTabs,
+		mobile,
+		chatId,
+		chats,
+		folders
 	} from '$lib/stores';
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
+	import Chat from '$lib/components/chat/Chat.svelte';
+	import { pageTabKey } from '$lib/components/chat/Tabs/tabs';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import ChangelogModal from '$lib/components/ChangelogModal.svelte';
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
 	import UpdateInfoToast from '$lib/components/layout/UpdateInfoToast.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
-	import { Shortcut, shortcuts } from '$lib/shortcuts';
+	import { loadKeybindings, matchKeybinding, Shortcut } from '$lib/shortcuts';
+	import { canUseTemporaryChats } from '$lib/utils/settings-access';
 
 	const i18n = getContext('i18n');
+	const appLayout = setContext<AppLayoutContext>('appLayout', {});
 
 	let loaded = false;
-	let DB = null;
-	let localDBChats = [];
+	$: routeHasTabs = ['/(app)', '/(app)/c/[id]', '/(app)/folders/[folderId]'].includes(
+		$page.route.id ?? ''
+	);
+	$: usePageTabs = !routeHasTabs && !!pageTabKey($page.url);
 
 	let version;
+	let handledSettingsUrl = '';
 
 	const clearChatInputStorage = () => {
 		const chatInputKeys = Object.keys(localStorage).filter((key) => key.startsWith('chat-input'));
@@ -67,46 +78,16 @@
 		}
 	};
 
-	const checkLocalDBChats = async () => {
-		try {
-			// Check if IndexedDB exists
-			DB = await openDB('Chats', 1);
-
-			if (!DB) {
-				return;
-			}
-
-			const chats = await DB.getAllFromIndex('chats', 'timestamp');
-			localDBChats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
-
-			if (localDBChats.length === 0) {
-				await deleteDB('Chats');
-			}
-		} catch (error) {
-			// IndexedDB Not Found
-		}
-	};
-
 	const setUserSettings = async (cb?: () => Promise<void>) => {
-		let userSettings = await getUserSettings(localStorage.token).catch((error) => {
-			console.error(error);
-			return null;
-		});
-
-		if (!userSettings) {
-			try {
-				userSettings = JSON.parse(localStorage.getItem('settings') ?? '{}');
-			} catch (e: unknown) {
-				console.error('Failed to parse settings from localStorage', e);
-				userSettings = {};
-			}
-		}
+		const userSettings = await getUserSettings(localStorage.token);
 
 		if (userSettings?.ui) {
 			settings.set(userSettings.ui);
 		}
+		loadKeybindings(userSettings?.keybindings);
 
 		setTextScale($settings?.textScale ?? 1);
+		setAppFontFamily($settings?.fontFamily ?? null);
 
 		if (cb) {
 			await cb();
@@ -114,75 +95,25 @@
 	};
 
 	const setModels = async () => {
-		models.set(
-			await getModels(
-				localStorage.token,
-				$config?.features?.enable_direct_connections ? ($settings?.directConnections ?? null) : null
-			)
-		);
+		models.set(await getModels(localStorage.token));
 	};
 
-	const setToolServers = async () => {
-		let toolServersData = await getToolServersData($settings?.toolServers ?? []);
-		toolServersData = toolServersData.filter((data) => {
-			if (!data || data.error) {
-				toast.error(
-					$i18n.t(`Failed to connect to {{URL}} OpenAPI tool server`, {
-						URL: data?.url
-					})
-				);
-				return false;
-			}
-			return true;
-		});
-		toolServers.set(toolServersData);
-
-		// Inject enabled terminal servers as always-on tool servers
-		const enabledTerminals = ($settings?.terminalServers ?? []).filter((s) => s.enabled);
-		if (enabledTerminals.length > 0) {
-			let terminalServersData = await getToolServersData(
-				enabledTerminals.map((t) => ({
-					url: t.url,
-					auth_type: t.auth_type ?? 'bearer',
-					key: t.key ?? '',
-					path: t.path ?? '/openapi.json',
-					config: { enable: true }
-				}))
-			);
-			terminalServersData = terminalServersData
-				.filter((data) => {
-					if (!data || data.error) {
-						toast.error(
-							$i18n.t(`Failed to connect to {{URL}} terminal server`, {
-								URL: data?.url
-							})
-						);
-						return false;
-					}
-					return true;
-				})
-				.map((data, i) => ({
-					...data,
-					key: enabledTerminals[i]?.key ?? ''
-				}));
-
-			terminalServers.set(terminalServersData);
-		} else {
+	const refreshTerminalServers = async () => {
+		if (!$config?.features?.enable_tool_servers) {
 			terminalServers.set([]);
+			return;
 		}
-
-		// Fetch terminal servers the user has access to (for FileNav + terminal_id)
+		const userId = $user?.id;
+		if (!userId || !localStorage.token) return;
 		const systemTerminals = await getTerminalServers(localStorage.token);
-		if (systemTerminals.length > 0) {
-			// Store with proxy URL and session key for FileNav file browsing
-			const terminalEntries = systemTerminals.map((t) => ({
-				id: t.id,
-				url: `${WEBUI_API_BASE_URL}/terminals/${t.id}`,
-				name: t.name,
+		if ($user?.id !== userId || !$config?.features?.enable_tool_servers) return;
+		terminalServers.set(
+			systemTerminals.map((terminal) => ({
+				...terminal,
+				url: `${WEBUI_API_BASE_URL}/terminals/${terminal.id}`,
 				key: localStorage.token
-			}));
-			terminalServers.update((existing) => [...existing, ...terminalEntries]);
-		}
+			}))
+		);
 	};
 
 	const setBanners = async () => {
@@ -195,9 +126,126 @@
 		tools.set(toolsData);
 	};
 
+	const refreshAccess = async () => {
+		if (!localStorage.token) return;
+		try {
+			user.set(await getSessionUser(localStorage.token));
+			if (
+				$user?.role !== 'admin' &&
+				$user?.permissions?.chat?.temporary &&
+				$user?.permissions?.chat?.temporary_enforced &&
+				!$chatId
+			) {
+				temporaryChat.set(true);
+			}
+			const results = await Promise.allSettled([
+				getBackendConfig().then((value) => config.set(value)),
+				setModels(),
+				setTools(),
+				refreshTerminalServers(),
+				getSkills(localStorage.token).then((value) => skills.set(value)),
+				getFolders(localStorage.token)
+					.catch(() => [])
+					.then((value) => folders.set(value))
+			]);
+			for (const result of results) {
+				if (result.status === 'rejected') console.error('Unable to refresh access', result.reason);
+			}
+		} catch (error) {
+			console.error('Unable to refresh permissions', error);
+		}
+	};
+
+	onMount(() => {
+		const socketInstance = $socket;
+		const changed = () => {
+			void refreshTerminalServers().catch((error) =>
+				console.error('Unable to refresh terminals', error)
+			);
+		};
+		const eventHandler = (event: { data?: { type?: string } }) => {
+			if (event?.data?.type === 'terminals:changed') {
+				changed();
+				// Tether devices also bring the user's own models and tool servers.
+				void setModels().catch((error) => console.error('Unable to refresh models', error));
+				void setTools().catch((error) => console.error('Unable to refresh tools', error));
+			} else if (event?.data?.type === 'access:updated') void refreshAccess();
+		};
+		socketInstance?.on('events', eventHandler);
+		socketInstance?.on('connect', changed);
+		return () => {
+			socketInstance?.off('events', eventHandler);
+			socketInstance?.off('connect', changed);
+		};
+	});
+
+	const openSettingsFromUrl = async () => {
+		const requestedSettings = $page.url.searchParams.get('settings');
+		if (!requestedSettings) {
+			// Param handled and stripped; allow the same deep link to be
+			// handled again later in this session.
+			handledSettingsUrl = '';
+			return;
+		}
+
+		const urlKey = `${$page.url.pathname}${$page.url.search}${$page.url.hash}`;
+		if (handledSettingsUrl === urlKey) {
+			return;
+		}
+		handledSettingsUrl = urlKey;
+
+		showSettings.set(
+			requestedSettings.startsWith('admin:') && $user?.role !== 'admin'
+				? 'general'
+				: requestedSettings
+		);
+
+		const params = new URLSearchParams($page.url.searchParams);
+		params.delete('settings');
+		const query = params.toString();
+		await goto(`${$page.url.pathname}${query ? `?${query}` : ''}${$page.url.hash}`, {
+			replaceState: true,
+			noScroll: true,
+			keepFocus: true
+		});
+	};
+
+	const gotoAuth = async () => {
+		const currentUrl = `${$page.url.pathname}${$page.url.search}`;
+		await goto(`/auth?redirect=${encodeURIComponent(currentUrl)}`);
+	};
+
+	// Chat shortcuts act on the chat that has focus, otherwise the main chat. Chat tabs sit
+	// inside the main chat, so an element belongs to the nearest [data-chat] around it.
+	const chatElements = <T extends HTMLElement = HTMLElement>(selector: string): T[] => {
+		const chat =
+			document.activeElement?.closest('[data-chat]') ??
+			document.querySelector('[data-chat="main"]');
+		if (chat?.querySelector('[data-main-chat-pane]')?.classList.contains('hidden')) return [];
+		return [...document.querySelectorAll<T>(selector)].filter(
+			(el) => !chat || el.closest('[data-chat]') === chat
+		);
+	};
+
+	const chatInput = () => {
+		const id = chatElements('[data-composer-id]')[0]?.dataset.composerId;
+		return id ? document.getElementById(id) : null;
+	};
+
+	const navigateChat = async (direction: -1 | 1) => {
+		if (!$chats?.length) return;
+
+		const currentIndex = $chats.findIndex((chat) => chat.id === $chatId);
+		const nextChat = currentIndex === -1 ? $chats[0] : $chats[currentIndex + direction];
+
+		if (nextChat) {
+			await goto(`/c/${nextChat.id}`);
+		}
+	};
+
 	onMount(async () => {
 		if ($user === undefined || $user === null) {
-			await goto('/auth');
+			await gotoAuth();
 			return;
 		}
 		if (!['user', 'admin'].includes($user?.role)) {
@@ -205,115 +253,131 @@
 		}
 
 		clearChatInputStorage();
-		await Promise.all([
-			checkLocalDBChats(),
-			setBanners().catch((e) => console.error('Failed to load banners:', e)),
-			setTools().catch((e) => console.error('Failed to load tools:', e)),
-			setUserSettings(async () => {
-				await setModels().catch((e) => console.error('Failed to load models:', e));
-			}).catch((e) => console.error('Failed to load user settings:', e))
-		]);
+		try {
+			await Promise.all([
+				setBanners().catch((e) => console.error('Failed to load banners:', e)),
+				setTools().catch((e) => console.error('Failed to load tools:', e)),
+				setUserSettings(async () => {
+					await setModels().catch((e) => console.error('Failed to load models:', e));
+				})
+			]);
+		} catch (e) {
+			console.error('Failed to load user settings:', e);
+			toast.error($i18n.t('Failed to load Interface settings'));
+			return;
+		}
 
-		// Tool servers can be slow or unreachable; they are not needed to initialize chat.
-		setToolServers().catch((e) => console.error('Failed to load tool servers:', e));
-
-		// Helper function to check if the pressed keys match the shortcut definition
-		const isShortcutMatch = (event: KeyboardEvent, shortcut): boolean => {
-			const keys = shortcut?.keys || [];
-
-			const normalized = keys.map((k) => k.toLowerCase());
-			const needCtrl = normalized.includes('ctrl') || normalized.includes('mod');
-			const needShift = normalized.includes('shift');
-			const needAlt = normalized.includes('alt');
-
-			const mainKeys = normalized.filter((k) => !['ctrl', 'shift', 'alt', 'mod'].includes(k));
-
-			// Get the main key pressed
-			const keyPressed = event.key.toLowerCase();
-
-			// Check modifiers
-			if (needShift && !event.shiftKey) return false;
-
-			if (needCtrl && !(event.ctrlKey || event.metaKey)) return false;
-			if (!needCtrl && (event.ctrlKey || event.metaKey)) return false;
-			if (needAlt && !event.altKey) return false;
-			if (!needAlt && event.altKey) return false;
-
-			if (mainKeys.length && !mainKeys.includes(keyPressed)) return false;
-
-			return true;
-		};
+		await refreshTerminalServers().catch((e) => {
+			console.error('Failed to load terminals:', e);
+		});
+		selectedTerminalId.set(
+			$config?.features?.enable_tool_servers &&
+				$terminalServers?.some((terminal) => terminal.id === localStorage.selectedTerminalId)
+				? localStorage.selectedTerminalId
+				: null
+		);
 
 		const setupKeyboardShortcuts = () => {
 			document.addEventListener('keydown', async (event) => {
-				if (isShortcutMatch(event, shortcuts[Shortcut.SEARCH])) {
+				if ($settings?.keyboardShortcuts === false) {
+					return;
+				}
+
+				const shortcut = matchKeybinding(event);
+				if (shortcut === Shortcut.SEARCH) {
 					console.log('Shortcut triggered: SEARCH');
 					event.preventDefault();
 					showSearch.set(!$showSearch);
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.NEW_CHAT])) {
+				} else if (shortcut === Shortcut.NEW_CHAT) {
 					console.log('Shortcut triggered: NEW_CHAT');
 					event.preventDefault();
 					document.getElementById('sidebar-new-chat-button')?.click();
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.FOCUS_INPUT])) {
+				} else if (shortcut === Shortcut.FOCUS_INPUT) {
 					console.log('Shortcut triggered: FOCUS_INPUT');
 					event.preventDefault();
-					document.getElementById('chat-input')?.focus();
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.COPY_LAST_CODE_BLOCK])) {
+					(
+						chatElements('[data-composer-id]')
+							.map((el) => document.getElementById(el.dataset.composerId ?? ''))
+							.find((el) => el?.offsetParent) ?? chatInput()
+					)?.focus();
+				} else if (shortcut === Shortcut.COPY_LAST_CODE_BLOCK) {
 					console.log('Shortcut triggered: COPY_LAST_CODE_BLOCK');
 					event.preventDefault();
-					[...document.getElementsByClassName('copy-code-button')]?.at(-1)?.click();
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.COPY_LAST_RESPONSE])) {
+					chatElements('.copy-code-button').at(-1)?.click();
+				} else if (shortcut === Shortcut.COPY_LAST_RESPONSE) {
 					console.log('Shortcut triggered: COPY_LAST_RESPONSE');
 					event.preventDefault();
-					[...document.getElementsByClassName('copy-response-button')]?.at(-1)?.click();
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.TOGGLE_SIDEBAR])) {
+					chatElements('.copy-response-button').at(-1)?.click();
+				} else if (shortcut === Shortcut.TOGGLE_SIDEBAR) {
 					console.log('Shortcut triggered: TOGGLE_SIDEBAR');
 					event.preventDefault();
 					showSidebar.set(!$showSidebar);
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.DELETE_CHAT])) {
+				} else if (shortcut === Shortcut.NAVIGATE_CHAT_UP) {
+					console.log('Shortcut triggered: NAVIGATE_CHAT_UP');
+					event.preventDefault();
+					await navigateChat(-1);
+				} else if (shortcut === Shortcut.NAVIGATE_CHAT_DOWN) {
+					console.log('Shortcut triggered: NAVIGATE_CHAT_DOWN');
+					event.preventDefault();
+					await navigateChat(1);
+				} else if (shortcut === Shortcut.TOGGLE_CONTROLS) {
+					console.log('Shortcut triggered: TOGGLE_CONTROLS');
+					event.preventDefault();
+					showTabs.set(!$showTabs);
+				} else if (shortcut === Shortcut.DELETE_CHAT) {
 					console.log('Shortcut triggered: DELETE_CHAT');
 					event.preventDefault();
-					document.getElementById('delete-chat-button')?.click();
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.OPEN_SETTINGS])) {
+					chatElements('#delete-chat-button')[0]?.click();
+				} else if (shortcut === Shortcut.OPEN_SETTINGS) {
 					console.log('Shortcut triggered: OPEN_SETTINGS');
 					event.preventDefault();
 					showSettings.set(!$showSettings);
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.SHOW_SHORTCUTS])) {
+				} else if (shortcut === Shortcut.SHOW_SHORTCUTS) {
 					console.log('Shortcut triggered: SHOW_SHORTCUTS');
 					event.preventDefault();
-					showShortcuts.set(!$showShortcuts);
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.CLOSE_MODAL])) {
-					console.log('Shortcut triggered: CLOSE_MODAL');
-					event.preventDefault();
-					showSettings.set(false);
-					showShortcuts.set(false);
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.OPEN_MODEL_SELECTOR])) {
+					showSettings.set('shortcuts');
+				} else if (shortcut === Shortcut.OPEN_MODEL_SELECTOR) {
 					console.log('Shortcut triggered: OPEN_MODEL_SELECTOR');
 					event.preventDefault();
-					document.getElementById('model-selector-0-button')?.click();
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.NEW_TEMPORARY_CHAT])) {
+					chatElements('#model-selector-model-button')[0]?.click();
+				} else if (shortcut === Shortcut.NEW_TEMPORARY_CHAT) {
 					console.log('Shortcut triggered: NEW_TEMPORARY_CHAT');
 					event.preventDefault();
-					if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
-						temporaryChatEnabled.set(true);
-					} else {
-						temporaryChatEnabled.set(!$temporaryChatEnabled);
+					if (!canUseTemporaryChats({ user: $user, config: null })) {
+						return;
 					}
+					const temporary = !$temporaryChat;
 					await goto('/');
-					setTimeout(() => {
-						document.getElementById('new-chat-button')?.click();
-					}, 0);
-				} else if (isShortcutMatch(event, shortcuts[Shortcut.GENERATE_MESSAGE_PAIR])) {
+					setTimeout(() => appLayout.initNewChat?.({ temporary }), 0);
+				} else if (shortcut === Shortcut.GENERATE_MESSAGE_PAIR) {
 					console.log('Shortcut triggered: GENERATE_MESSAGE_PAIR');
 					event.preventDefault();
-					document.getElementById('generate-message-pair-button')?.click();
+					chatElements('.generate-message-pair-button')[0]?.click();
+				} else if (shortcut === Shortcut.ALLOW_TOOL_CALL) {
+					const button = chatElements<HTMLButtonElement>('.tool-call-allow-button')
+						.reverse()
+						.find((el) => !el.disabled);
+					if (button) {
+						console.log('Shortcut triggered: ALLOW_TOOL_CALL');
+						event.preventDefault();
+						button.click();
+					}
+				} else if (shortcut === Shortcut.DENY_TOOL_CALL) {
+					const button = chatElements<HTMLButtonElement>('.tool-call-deny-button')
+						.reverse()
+						.find((el) => !el.disabled);
+					if (button) {
+						console.log('Shortcut triggered: DENY_TOOL_CALL');
+						event.preventDefault();
+						button.click();
+					}
 				} else if (
-					isShortcutMatch(event, shortcuts[Shortcut.REGENERATE_RESPONSE]) &&
-					document.activeElement?.id === 'chat-input'
+					shortcut === Shortcut.REGENERATE_RESPONSE &&
+					document.activeElement === chatInput()
 				) {
 					console.log('Shortcut triggered: REGENERATE_RESPONSE');
 					event.preventDefault();
-					[...document.getElementsByClassName('regenerate-response-button')]?.at(-1)?.click();
+					chatElements('.regenerate-response-button').at(-1)?.click();
 				}
 			});
 		};
@@ -323,18 +387,12 @@
 			showChangelog.set($settings?.version !== $config.version);
 		}
 
-		if ($user?.role === 'admin' || ($user?.permissions?.chat?.temporary ?? true)) {
-			if ($page.url.searchParams.get('temporary-chat') === 'true') {
-				temporaryChatEnabled.set(true);
-			}
-
-			if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
-				temporaryChatEnabled.set(true);
-			}
-		}
-
 		// Check for version updates
-		if ($user?.role === 'admin' && $config?.features?.enable_version_update_check) {
+		if (
+			WEBUI_BUILD_CHANNEL === 'main' &&
+			$user?.role === 'admin' &&
+			$config?.features?.enable_version_update_check
+		) {
 			// Check if the user has dismissed the update toast in the last 24 hours
 			if (localStorage.dismissedUpdateToast) {
 				const dismissedUpdateToast = new Date(Number(localStorage.dismissedUpdateToast));
@@ -347,16 +405,16 @@
 				checkForVersionUpdates();
 			}
 		}
-		// Persist showControls: track open/close state separately from saved size
+		// Persist showTabs: track open/close state separately from saved size
 		// chatControlsSize always retains the last width for openPane()
-		await showControls.set(!$mobile ? localStorage.showControls === 'true' : false);
-		showControls.subscribe((value) => {
-			localStorage.showControls = value ? 'true' : 'false';
+		await showTabs.set(!$mobile ? localStorage.showTabs === 'true' : false);
+		showTabs.subscribe((value) => {
+			localStorage.showTabs = value ? 'true' : 'false';
 		});
 
 		// Persist selectedTerminalId across page loads
-		selectedTerminalId.set(localStorage.selectedTerminalId ?? null);
 		selectedTerminalId.subscribe((value) => {
+			if (!$config?.features?.enable_tool_servers) return;
 			if (value === null) {
 				delete localStorage.selectedTerminalId;
 			} else {
@@ -369,11 +427,31 @@
 		loaded = true;
 	});
 
+	$: if (
+		loaded &&
+		$selectedTerminalId &&
+		$terminalServers !== null &&
+		!$terminalServers.some((terminal) => terminal.id === $selectedTerminalId)
+	) {
+		selectedTerminalId.set(null);
+	}
+
+	// `$page.url` must be referenced here: `$:` only tracks variables used in
+	// the statement itself, and reads inside openSettingsFromUrl don't count —
+	// without it, client-side navigations to `?settings=...` are never handled.
+	$: if (loaded && $page.url) {
+		void openSettingsFromUrl();
+	}
+
+	$: if (loaded && ($user === undefined || $user === null)) {
+		void gotoAuth();
+	}
+
 	const checkForVersionUpdates = async () => {
 		version = await getVersionUpdates(localStorage.token).catch((error) => {
 			return {
 				current: WEBUI_VERSION,
-				latest: WEBUI_VERSION
+				latest: null
 			};
 		});
 	};
@@ -382,7 +460,7 @@
 <SettingsModal bind:show={$showSettings} />
 <ChangelogModal bind:show={$showChangelog} />
 
-{#if version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
+{#if WEBUI_BUILD_CHANNEL === 'main' && version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
 	<div class=" absolute bottom-8 right-8 z-50" in:fade={{ duration: 100 }}>
 		<UpdateInfoToast
 			{version}
@@ -402,65 +480,20 @@
 			{#if !['user', 'admin'].includes($user?.role)}
 				<AccountPending />
 			{:else}
-				{#if localDBChats.length > 0}
-					<div class="fixed w-full h-full flex z-50">
-						<div
-							class="absolute w-full h-full backdrop-blur-md bg-white/20 dark:bg-gray-900/50 flex justify-center"
-						>
-							<div class="m-auto pb-44 flex flex-col justify-center">
-								<div class="max-w-md">
-									<div class="text-center dark:text-white text-2xl font-medium z-50">
-										{$i18n.t('Important Update')}<br />
-										{$i18n.t('Action Required for Chat Log Storage')}
-									</div>
-
-									<div class=" mt-4 text-center text-sm dark:text-gray-200 w-full">
-										{$i18n.t(
-											"Saving chat logs directly to your browser's storage is no longer supported. Please take a moment to download and delete your chat logs by clicking the button below. Don't worry, you can easily re-import your chat logs to the backend through"
-										)}
-										<span class="font-medium dark:text-white"
-											>{$i18n.t('Settings')} > {$i18n.t('Chats')} > {$i18n.t('Import Chats')}</span
-										>. {$i18n.t(
-											'This ensures that your valuable conversations are securely saved to your backend database. Thank you!'
-										)}
-									</div>
-
-									<div class=" mt-6 mx-auto relative group w-fit">
-										<button
-											class="relative z-20 flex px-5 py-2 rounded-full bg-white border border-gray-100 dark:border-none hover:bg-gray-100 transition font-medium text-sm"
-											on:click={async () => {
-												let blob = new Blob([JSON.stringify(localDBChats)], {
-													type: 'application/json'
-												});
-												saveAs(blob, `chat-export-${Date.now()}.json`);
-
-												const tx = DB.transaction('chats', 'readwrite');
-												await Promise.all([tx.store.clear(), tx.done]);
-												await deleteDB('Chats');
-
-												localDBChats = [];
-											}}
-										>
-											{$i18n.t('Download & Delete')}
-										</button>
-
-										<button
-											class="text-xs text-center w-full mt-2 text-gray-400 underline"
-											on:click={async () => {
-												localDBChats = [];
-											}}>{$i18n.t('Close')}</button
-										>
-									</div>
-								</div>
-							</div>
-						</div>
-					</div>
-				{/if}
-
 				<Sidebar />
 
 				{#if loaded}
-					<slot />
+					<main class="contents">
+						<div id="main-content" tabindex="-1" class="sr-only left-0 top-0"></div>
+						{#if routeHasTabs || usePageTabs}
+							<Chat
+								initialPage={usePageTabs
+									? $page.url.pathname + $page.url.search + $page.url.hash
+									: ''}
+							/>
+						{/if}
+						{#if !usePageTabs}<slot />{/if}
+					</main>
 				{:else}
 					<div
 						class="w-full flex-1 h-full flex items-center justify-center {$showSidebar
@@ -494,22 +527,22 @@
 		overflow: auto;
 
 		/* make space  */
-		margin: 5px 0;
+		margin: 0.3125rem 0;
 		padding: 1.75rem 0 1.75rem 1rem;
-		border-radius: 10px;
+		border-radius: 0.625rem;
 	}
 
 	pre[class*='language-'] button {
 		position: absolute;
-		top: 5px;
-		right: 5px;
+		top: 0.3125rem;
+		right: 0.3125rem;
 
 		font-size: 0.9rem;
 		padding: 0.15rem;
 		background-color: #828282;
 
 		border: ridge 1px #7b7b7c;
-		border-radius: 5px;
+		border-radius: 0.3125rem;
 		text-shadow: #c4c4c4 0 0 2px;
 	}
 

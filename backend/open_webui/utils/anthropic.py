@@ -1,4 +1,3 @@
-import json
 import logging
 
 import aiohttp
@@ -9,8 +8,28 @@ from open_webui.env import (
 )
 from open_webui.models.users import UserModel
 from open_webui.utils.headers import include_user_info_headers
+from open_webui.utils.json_codec import JSONCodec
 
 log = logging.getLogger(__name__)
+
+ANTHROPIC_VERSION = '2023-06-01'
+
+ANTHROPIC_CONVERTED_REQUEST_PARAMS = {
+    'model',
+    'messages',
+    'system',
+    'max_tokens',
+    'temperature',
+    'top_p',
+    'top_k',
+    'stop_sequences',
+    'stream',
+    'metadata',
+    'service_tier',
+    'tools',
+    'tool_choice',
+    'reasoning_effort',
+}
 
 
 def is_anthropic_url(url: str) -> bool:
@@ -31,7 +50,7 @@ async def get_anthropic_models(url: str, key: str, user: UserModel = None) -> di
         async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
             headers = {
                 'x-api-key': key,
-                'anthropic-version': '2023-06-01',
+                'anthropic-version': ANTHROPIC_VERSION,
             }
 
             if ENABLE_FORWARD_USER_INFO_HEADERS and user:
@@ -82,11 +101,7 @@ async def get_anthropic_models(url: str, key: str, user: UserModel = None) -> di
     return {'object': 'list', 'data': all_models}
 
 
-##############################
-#
 # Anthropic Messages API Conversion Utilities
-#
-##############################
 
 
 def _copy_cache_control(source: dict, target: dict) -> dict:
@@ -99,7 +114,7 @@ def _has_cache_control(blocks: list) -> bool:
     return any(isinstance(block, dict) and 'cache_control' in block for block in blocks)
 
 
-def _finalize_openai_content(blocks: list) -> str | list:
+def _finalize_chat_completions_content(blocks: list) -> str | list:
     if not blocks:
         return ''
 
@@ -109,7 +124,16 @@ def _finalize_openai_content(blocks: list) -> str | list:
     return blocks
 
 
-def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
+def is_anthropic_messages_passthrough(url: str, api_config: dict | None = None) -> bool:
+    api_config = api_config or {}
+    provider = str(api_config.get('provider', '')).lower()
+
+    return is_anthropic_url(url or '') or provider == 'litellm'
+
+
+def convert_anthropic_payload_to_chat_completions(
+    anthropic_payload: dict, passthrough_params: list[str] | str | None = None
+) -> dict:
     """
     Convert an Anthropic Messages API request to OpenAI Chat Completions format.
 
@@ -146,7 +170,7 @@ def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
                     )
                 elif isinstance(block, str):
                     openai_content.append({'type': 'text', 'text': block})
-            messages.append({'role': 'system', 'content': _finalize_openai_content(openai_content)})
+            messages.append({'role': 'system', 'content': _finalize_chat_completions_content(openai_content)})
 
     # Convert messages
     for msg in anthropic_payload.get('messages', []):
@@ -173,6 +197,10 @@ def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
                             },
                         )
                     )
+                elif block_type in ('thinking', 'redacted_thinking'):
+                    # Unsigned thinking cannot be replayed upstream
+                    if block_type == 'redacted_thinking' or block.get('signature'):
+                        openai_content.append(_copy_cache_control(block, dict(block)))
                 elif block_type == 'image':
                     source = block.get('source', {})
                     if source.get('type') == 'base64':
@@ -207,7 +235,7 @@ def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
                             'function': {
                                 'name': block.get('name', ''),
                                 'arguments': (
-                                    json.dumps(block.get('input', {}))
+                                    JSONCodec.dumps(block.get('input', {}))
                                     if isinstance(block.get('input'), dict)
                                     else str(block.get('input', '{}'))
                                 ),
@@ -334,13 +362,13 @@ def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
                 # Assistant message with tool calls
                 msg_dict = {'role': role}
                 if openai_content:
-                    msg_dict['content'] = _finalize_openai_content(openai_content)
+                    msg_dict['content'] = _finalize_chat_completions_content(openai_content)
                 else:
-                    msg_dict['content'] = ''
+                    msg_dict['content'] = None
                 msg_dict['tool_calls'] = tool_calls
                 messages.append(msg_dict)
-            elif openai_content:
-                messages.append({'role': role, 'content': _finalize_openai_content(openai_content)})
+            elif openai_content or role == 'assistant':
+                messages.append({'role': role, 'content': _finalize_chat_completions_content(openai_content)})
         else:
             messages.append({'role': role, 'content': str(content) if content else ''})
 
@@ -350,6 +378,48 @@ def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
     if 'max_tokens' in anthropic_payload:
         openai_payload['max_tokens'] = anthropic_payload['max_tokens']
 
+    captured_passthrough_params = {
+        param: value for param, value in anthropic_payload.items() if param not in ANTHROPIC_CONVERTED_REQUEST_PARAMS
+    }
+    if isinstance(passthrough_params, str):
+        passthrough_params = passthrough_params.split(',')
+    elif not isinstance(passthrough_params, (list, tuple, set)):
+        passthrough_params = []
+    passthrough_param_names = {str(item).strip() for item in passthrough_params if str(item).strip()}
+    if '*' in passthrough_param_names:
+        openai_payload.update(captured_passthrough_params)
+    else:
+        for param in passthrough_param_names:
+            if param in captured_passthrough_params:
+                openai_payload[param] = captured_passthrough_params[param]
+
+    output_config = anthropic_payload.get('output_config')
+    if isinstance(output_config, dict):
+        if 'effort' in output_config and 'reasoning_effort' not in anthropic_payload:
+            openai_payload['reasoning_effort'] = output_config['effort']
+
+        format_config = output_config.get('format')
+        if isinstance(format_config, dict):
+            format_type = format_config.get('type')
+            if format_type == 'json_schema':
+                json_schema = {
+                    'name': format_config.get('name', 'response_schema'),
+                    'schema': format_config.get('schema', {}),
+                }
+                if 'description' in format_config:
+                    json_schema['description'] = format_config['description']
+                if 'strict' in format_config:
+                    json_schema['strict'] = format_config['strict']
+                openai_payload['response_format'] = {
+                    'type': 'json_schema',
+                    'json_schema': json_schema,
+                }
+            elif format_type == 'json_object':
+                openai_payload['response_format'] = {'type': format_type}
+
+    if 'reasoning_effort' in anthropic_payload:
+        openai_payload['reasoning_effort'] = anthropic_payload['reasoning_effort']
+
     # Common parameters
     for param in ('temperature', 'top_p', 'top_k', 'stop_sequences', 'stream', 'metadata', 'service_tier'):
         if param in anthropic_payload:
@@ -358,8 +428,8 @@ def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
             else:
                 openai_payload[param] = anthropic_payload[param]
 
-    # Tools conversion: Anthropic → OpenAI
-    if 'tools' in anthropic_payload:
+    # Tools conversion: Anthropic → OpenAI (backends reject an empty tools array)
+    if anthropic_payload.get('tools'):
         openai_tools = []
         for tool in anthropic_payload['tools']:
             openai_tools.append(
@@ -378,7 +448,7 @@ def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
         openai_payload['tools'] = openai_tools
 
     # tool_choice
-    if 'tool_choice' in anthropic_payload:
+    if 'tool_choice' in anthropic_payload and 'tools' in openai_payload:
         tool_choice = anthropic_payload['tool_choice']
         if isinstance(tool_choice, dict):
             tool_choice_type = tool_choice.get('type', 'auto')
@@ -395,7 +465,9 @@ def convert_anthropic_to_openai_payload(anthropic_payload: dict) -> dict:
     return openai_payload
 
 
-def convert_openai_to_anthropic_response(openai_response: dict, model: str = '') -> dict:
+def convert_chat_completions_response_to_anthropic(
+    openai_response: dict, model: str = '', input_tokens: int | None = None
+) -> dict:
     """
     Convert a non-streaming OpenAI Chat Completions response to Anthropic Messages format.
     """
@@ -419,6 +491,37 @@ def convert_openai_to_anthropic_response(openai_response: dict, model: str = '')
 
     # Build content blocks
     content = []
+    message_thinking = message.get('thinking')
+    thinking_blocks = message.get('thinking_blocks') or []
+    if not thinking_blocks and isinstance(message_thinking, dict):
+        thinking_blocks = message_thinking.get('blocks') or []
+
+    has_thinking = False
+    for block in thinking_blocks:
+        if not isinstance(block, dict):
+            continue
+
+        if block.get('type') == 'redacted_thinking':
+            content.append({k: v for k, v in block.items() if k in {'type', 'data'}})
+            has_thinking = True
+            continue
+
+        thinking = block.get('thinking') or block.get('content') or block.get('text')
+        if not thinking:
+            continue
+
+        thinking_block = {'type': 'thinking', 'thinking': thinking}
+        if block.get('signature'):
+            thinking_block['signature'] = block['signature']
+        content.append(thinking_block)
+        has_thinking = True
+
+    reasoning_content = message.get('reasoning_content') or message.get('reasoning')
+    if not reasoning_content and isinstance(message_thinking, str):
+        reasoning_content = message_thinking
+    if reasoning_content and not has_thinking:
+        content.append({'type': 'thinking', 'thinking': reasoning_content})
+
     message_content = message.get('content')
     if message_content:
         content.append({'type': 'text', 'text': message_content})
@@ -428,8 +531,8 @@ def convert_openai_to_anthropic_response(openai_response: dict, model: str = '')
     for tool_call in tool_calls:
         function = tool_call.get('function', {})
         try:
-            tool_input = json.loads(function.get('arguments', '{}'))
-        except (json.JSONDecodeError, TypeError):
+            tool_input = JSONCodec.loads(function.get('arguments', '{}'))
+        except (JSONCodec.JSONDecodeError, TypeError):
             tool_input = {}
         content.append(
             {
@@ -441,15 +544,37 @@ def convert_openai_to_anthropic_response(openai_response: dict, model: str = '')
         )
 
     # Usage
-    openai_usage = openai_response.get('usage', {})
+    openai_usage = openai_response.get('usage') or {}
+    cache_creation = openai_usage.get('cache_creation_input_tokens')
+    cache_read = openai_usage.get('cache_read_input_tokens')
+    prompt_details = openai_usage.get('prompt_tokens_details')
+    if cache_read is None and isinstance(prompt_details, dict):
+        cache_read = prompt_details.get('cached_tokens')
+
+    usage_input = openai_usage.get('input_tokens')
+    if usage_input is None:
+        prompt_tokens = openai_usage.get('prompt_tokens')
+        if prompt_tokens is not None:
+            usage_input = max(prompt_tokens - (cache_creation or 0) - (cache_read or 0), 0)
+
+    usage_output = openai_usage.get('output_tokens')
+    if usage_output is None:
+        usage_output = openai_usage.get('completion_tokens')
+
     usage = {
-        'input_tokens': openai_usage.get('prompt_tokens', 0),
-        'output_tokens': openai_usage.get('completion_tokens', 0),
+        'input_tokens': usage_input if usage_input is not None else (input_tokens if input_tokens is not None else 0),
+        'output_tokens': usage_output if usage_output is not None else 0,
     }
-    if 'cache_creation_input_tokens' in openai_usage:
-        usage['cache_creation_input_tokens'] = openai_usage['cache_creation_input_tokens']
-    if 'cache_read_input_tokens' in openai_usage:
-        usage['cache_read_input_tokens'] = openai_usage['cache_read_input_tokens']
+    if cache_creation is not None:
+        usage['cache_creation_input_tokens'] = cache_creation
+    if cache_read is not None:
+        usage['cache_read_input_tokens'] = cache_read
+    if isinstance(openai_usage.get('output_tokens_details'), dict):
+        usage['output_tokens_details'] = openai_usage['output_tokens_details']
+    if isinstance(openai_usage.get('server_tool_use'), dict):
+        usage['server_tool_use'] = openai_usage['server_tool_use']
+    if openai_usage.get('service_tier') is not None:
+        usage['service_tier'] = openai_usage['service_tier']
 
     return {
         'id': openai_response.get('id', f'msg_{_uuid.uuid4().hex[:24]}'),
@@ -463,7 +588,9 @@ def convert_openai_to_anthropic_response(openai_response: dict, model: str = '')
     }
 
 
-async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str = ''):
+async def convert_chat_completions_stream_to_anthropic(
+    openai_stream_generator, model: str = '', input_tokens: int | None = None
+):
     """
     Convert an OpenAI SSE streaming response to Anthropic Messages SSE format.
 
@@ -480,13 +607,19 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
     import uuid as _uuid
 
     message_id = f'msg_{_uuid.uuid4().hex[:24]}'
-    input_tokens = 0
     output_tokens = 0
+    cache_creation_input_tokens = None
+    cache_read_input_tokens = None
+    output_tokens_details = None
+    server_tool_use = None
+    service_tier = None
     stop_reason = 'end_turn'
+    error_message = None
 
     # Track content blocks with a running index.
     # Each text block or tool_use block gets its own index.
     current_block_index = 0
+    thinking_block_open = False
     text_block_open = False
 
     # Accumulated state for each tool call, keyed by tool call id.
@@ -510,10 +643,10 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
             'model': model,
             'stop_reason': None,
             'stop_sequence': None,
-            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'usage': {'input_tokens': input_tokens or 0, 'output_tokens': 0},
         },
     }
-    yield f'event: message_start\ndata: {json.dumps(message_start)}\n\n'.encode()
+    yield f'event: message_start\ndata: {JSONCodec.dumps(message_start)}\n\n'.encode()
 
     try:
         async for chunk in openai_stream_generator:
@@ -533,39 +666,111 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
                     continue
 
                 try:
-                    data = json.loads(data_string)
-                except (json.JSONDecodeError, TypeError):
+                    data = JSONCodec.loads(data_string)
+                except (JSONCodec.JSONDecodeError, TypeError):
                     continue
+
+                error = data.get('error')
+                if error:
+                    error_message = (
+                        error.get('message') if isinstance(error, dict) else error
+                    ) or 'Chat completion stream failed'
+                    break
+
+                usage_data = data.get('usage')
+                if isinstance(usage_data, dict):
+                    cache_creation = usage_data.get('cache_creation_input_tokens')
+                    cache_read = usage_data.get('cache_read_input_tokens')
+                    prompt_details = usage_data.get('prompt_tokens_details')
+                    if cache_read is None and isinstance(prompt_details, dict):
+                        cache_read = prompt_details.get('cached_tokens')
+
+                    usage_input = usage_data.get('input_tokens')
+                    if usage_input is None:
+                        prompt_tokens = usage_data.get('prompt_tokens')
+                        if prompt_tokens is not None:
+                            usage_input = max(prompt_tokens - (cache_creation or 0) - (cache_read or 0), 0)
+
+                    usage_output = usage_data.get('output_tokens')
+                    if usage_output is None:
+                        usage_output = usage_data.get('completion_tokens')
+
+                    if usage_input is not None:
+                        input_tokens = usage_input
+                    if usage_output is not None:
+                        output_tokens = usage_output
+                    if cache_creation is not None:
+                        cache_creation_input_tokens = cache_creation
+                    if cache_read is not None:
+                        cache_read_input_tokens = cache_read
+                    if isinstance(usage_data.get('output_tokens_details'), dict):
+                        output_tokens_details = usage_data['output_tokens_details']
+                    if isinstance(usage_data.get('server_tool_use'), dict):
+                        server_tool_use = usage_data['server_tool_use']
+                    if usage_data.get('service_tier') is not None:
+                        service_tier = usage_data['service_tier']
 
                 choices = data.get('choices', [])
                 if not choices:
-                    # Check for usage in the final chunk
-                    if data.get('usage'):
-                        input_tokens = data['usage'].get('prompt_tokens', input_tokens)
-                        output_tokens = data['usage'].get('completion_tokens', output_tokens)
                     continue
 
                 delta = choices[0].get('delta', {})
                 finish_reason = choices[0].get('finish_reason')
                 message = choices[0].get('message') or {}
 
-                # Update usage if present
-                if data.get('usage'):
-                    input_tokens = data['usage'].get('prompt_tokens', input_tokens)
-                    output_tokens = data['usage'].get('completion_tokens', output_tokens)
+                reasoning_content = (
+                    delta.get('reasoning_content')
+                    or delta.get('reasoning')
+                    or delta.get('thinking')
+                    or message.get('reasoning_content')
+                    or message.get('reasoning')
+                )
+                if not reasoning_content:
+                    thinking_blocks = delta.get('thinking_blocks') or message.get('thinking_blocks') or []
+                    for block in thinking_blocks:
+                        if isinstance(block, dict):
+                            reasoning_content = block.get('thinking') or block.get('content') or block.get('text')
+                            if reasoning_content:
+                                break
 
-                # --- Handle text content ---
+                if reasoning_content and not text_block_open and not has_tool_calls:
+                    if not thinking_block_open:
+                        block_start = {
+                            'type': 'content_block_start',
+                            'index': current_block_index,
+                            'content_block': {'type': 'thinking', 'thinking': ''},
+                        }
+                        yield f'event: content_block_start\ndata: {JSONCodec.dumps(block_start)}\n\n'.encode()
+                        thinking_block_open = True
+
+                    block_delta = {
+                        'type': 'content_block_delta',
+                        'index': current_block_index,
+                        'delta': {'type': 'thinking_delta', 'thinking': reasoning_content},
+                    }
+                    yield f'event: content_block_delta\ndata: {JSONCodec.dumps(block_delta)}\n\n'.encode()
+
+                # Handle text content
                 # Anthropic expects text blocks before tool blocks, so skip
                 # text deltas once any tool call has started.
                 content = delta.get('content')
                 if content and not has_tool_calls:
+                    if thinking_block_open:
+                        block_stop = {
+                            'type': 'content_block_stop',
+                            'index': current_block_index,
+                        }
+                        yield f'event: content_block_stop\ndata: {JSONCodec.dumps(block_stop)}\n\n'.encode()
+                        thinking_block_open = False
+                        current_block_index += 1
+
                     if not text_block_open:
                         block_start = {
                             'type': 'content_block_start',
                             'index': current_block_index,
                             'content_block': {'type': 'text', 'text': ''},
                         }
-                        yield f'event: content_block_start\ndata: {json.dumps(block_start)}\n\n'.encode()
+                        yield f'event: content_block_start\ndata: {JSONCodec.dumps(block_start)}\n\n'.encode()
                         text_block_open = True
 
                     block_delta = {
@@ -573,9 +778,9 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
                         'index': current_block_index,
                         'delta': {'type': 'text_delta', 'text': content},
                     }
-                    yield f'event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n'.encode()
+                    yield f'event: content_block_delta\ndata: {JSONCodec.dumps(block_delta)}\n\n'.encode()
 
-                # --- Handle tool calls ---
+                # Handle tool calls
                 # Some providers put tool_calls on the final message object
                 # instead of the delta; fall back to that when needed.
                 tool_calls = delta.get('tool_calls') or []
@@ -584,12 +789,21 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
 
                 if tool_calls:
                     # Close text block if one is open (text comes before tools)
+                    if thinking_block_open:
+                        block_stop = {
+                            'type': 'content_block_stop',
+                            'index': current_block_index,
+                        }
+                        yield f'event: content_block_stop\ndata: {JSONCodec.dumps(block_stop)}\n\n'.encode()
+                        thinking_block_open = False
+                        current_block_index += 1
+
                     if text_block_open:
                         block_stop = {
                             'type': 'content_block_stop',
                             'index': current_block_index,
                         }
-                        yield f'event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n'.encode()
+                        yield f'event: content_block_stop\ndata: {JSONCodec.dumps(block_stop)}\n\n'.encode()
                         text_block_open = False
                         current_block_index += 1
 
@@ -652,7 +866,7 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
                                     'input': {},
                                 },
                             }
-                            yield f'event: content_block_start\ndata: {json.dumps(block_start)}\n\n'.encode()
+                            yield f'event: content_block_start\ndata: {JSONCodec.dumps(block_start)}\n\n'.encode()
                             current_block_index += 1
 
                         # Buffer arguments and emit as input_json_delta
@@ -668,22 +882,26 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
                                         'partial_json': arguments_chunk,
                                     },
                                 }
-                                yield f'event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n'.encode()
+                                yield f'event: content_block_delta\ndata: {JSONCodec.dumps(block_delta)}\n\n'.encode()
 
                             # Close the block once arguments form complete JSON
-                            if tool['started'] and not tool['stopped']:
+                            if (
+                                tool['started']
+                                and not tool['stopped']
+                                and (tool['arguments'].rstrip()[-1:] == '}' or tool['arguments'].lstrip()[:1] != '{')
+                            ):
                                 try:
-                                    json.loads(tool['arguments'])
+                                    JSONCodec.loads(tool['arguments'])
                                     tool['stopped'] = True
                                     block_stop = {
                                         'type': 'content_block_stop',
                                         'index': tool['block_index'],
                                     }
-                                    yield f'event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n'.encode()
-                                except (json.JSONDecodeError, ValueError):
+                                    yield f'event: content_block_stop\ndata: {JSONCodec.dumps(block_stop)}\n\n'.encode()
+                                except (JSONCodec.JSONDecodeError, ValueError):
                                     pass
 
-                # --- Handle finish reason ---
+                # Handle finish reason
                 if finish_reason is not None:
                     stop_reason_map = {
                         'stop': 'end_turn',
@@ -692,8 +910,24 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
                     }
                     stop_reason = stop_reason_map.get(finish_reason, 'end_turn')
 
+            if error_message:
+                break
+
     except Exception as e:
         log.error(f'Error in Anthropic stream conversion: {e}')
+        error_message = 'Chat completion stream failed'
+
+    # Skip message_stop so a failed stream is not reported as complete.
+    if error_message:
+        error_event = {'type': 'error', 'error': {'type': 'api_error', 'message': error_message}}
+        yield f'event: error\ndata: {JSONCodec.dumps(error_event)}\n\n'.encode()
+        return
+
+    # Close any open thinking block
+    if thinking_block_open:
+        block_stop = {'type': 'content_block_stop', 'index': current_block_index}
+        yield f'event: content_block_stop\ndata: {JSONCodec.dumps(block_stop)}\n\n'.encode()
+        current_block_index += 1
 
     # Flush any tools that buffered arguments but never emitted a block
     for tool in tracked_tool_calls.values():
@@ -711,7 +945,7 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
                     'input': {},
                 },
             }
-            yield f'event: content_block_start\ndata: {json.dumps(block_start)}\n\n'.encode()
+            yield f'event: content_block_start\ndata: {JSONCodec.dumps(block_start)}\n\n'.encode()
             current_block_index += 1
 
             if tool['arguments']:
@@ -723,29 +957,43 @@ async def openai_stream_to_anthropic_stream(openai_stream_generator, model: str 
                         'partial_json': tool['arguments'],
                     },
                 }
-                yield f'event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n'.encode()
+                yield f'event: content_block_delta\ndata: {JSONCodec.dumps(block_delta)}\n\n'.encode()
 
     # Close any open text block
     if text_block_open:
         block_stop = {'type': 'content_block_stop', 'index': current_block_index}
-        yield f'event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n'.encode()
+        yield f'event: content_block_stop\ndata: {JSONCodec.dumps(block_stop)}\n\n'.encode()
 
     # Close any tool call blocks that are still open
     for tool in tracked_tool_calls.values():
         if tool['started'] and not tool['stopped']:
             block_stop = {'type': 'content_block_stop', 'index': tool['block_index']}
-            yield f'event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n'.encode()
+            yield f'event: content_block_stop\ndata: {JSONCodec.dumps(block_stop)}\n\n'.encode()
 
     # Emit message_delta with stop reason
+    usage = {'output_tokens': output_tokens}
+    if input_tokens is not None:
+        usage['input_tokens'] = input_tokens
+    if cache_creation_input_tokens is not None:
+        usage['cache_creation_input_tokens'] = cache_creation_input_tokens
+    if cache_read_input_tokens is not None:
+        usage['cache_read_input_tokens'] = cache_read_input_tokens
+    if output_tokens_details is not None:
+        usage['output_tokens_details'] = output_tokens_details
+    if server_tool_use is not None:
+        usage['server_tool_use'] = server_tool_use
+    if service_tier is not None:
+        usage['service_tier'] = service_tier
+
     message_delta = {
         'type': 'message_delta',
         'delta': {
             'stop_reason': stop_reason,
             'stop_sequence': None,
         },
-        'usage': {'output_tokens': output_tokens},
+        'usage': usage,
     }
-    yield f'event: message_delta\ndata: {json.dumps(message_delta)}\n\n'.encode()
+    yield f'event: message_delta\ndata: {JSONCodec.dumps(message_delta)}\n\n'.encode()
 
     # Emit message_stop
-    yield f'event: message_stop\ndata: {json.dumps({"type": "message_stop"})}\n\n'.encode()
+    yield f'event: message_stop\ndata: {JSONCodec.dumps({"type": "message_stop"})}\n\n'.encode()

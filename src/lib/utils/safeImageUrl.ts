@@ -1,5 +1,8 @@
 import { WEBUI_BASE_URL } from '$lib/constants';
 
+// LICENSE covers this Open WebUI fallback logo.
+// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+// https://docs.openwebui.com/license.
 const PLACEHOLDER_IMAGE = '/favicon.png';
 
 /**
@@ -9,20 +12,24 @@ const PLACEHOLDER_IMAGE = '/favicon.png';
  * Allowed patterns:
  *   - Relative paths (starting with '/')
  *   - data:image/* URIs
+ *   - Blob URLs created on this origin
  *   - Same-origin URLs (starting with WEBUI_BASE_URL)
  *   - Gravatar URLs (https://www.gravatar.com/avatar/)
+ *   - External HTTP(S) URLs when allowExternal is true
  *
- * All other URLs (including arbitrary http(s):// origins) are rejected to
- * prevent client-side IP/UA/Referer leaks to attacker-controlled servers.
+ * All other URLs (including arbitrary http(s):// origins by default) are
+ * rejected to prevent client-side IP/UA/Referer leaks to attacker-controlled servers.
  */
-export function safeImageUrl(url: string): string {
+export function safeImageUrl(url: string, allowExternal = false): string {
 	if (!url || url === '') {
 		return `${WEBUI_BASE_URL}${PLACEHOLDER_IMAGE}`;
 	}
 
 	if (
-		url.startsWith(WEBUI_BASE_URL) ||
+		(WEBUI_BASE_URL && url.startsWith(WEBUI_BASE_URL)) ||
 		url.startsWith('https://www.gravatar.com/avatar/') ||
+		(typeof location !== 'undefined' && url.startsWith(`blob:${location.origin}/`)) ||
+		(allowExternal && /^https?:\/\//i.test(url)) ||
 		url.startsWith('data:') ||
 		url.startsWith('/')
 	) {

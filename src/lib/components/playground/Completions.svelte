@@ -1,14 +1,16 @@
 <script lang="ts">
+	import { getPageContext } from '$lib/utils/page';
+	const { goto } = getPageContext();
+
 	import { toast } from 'svelte-sonner';
 
-	import { goto } from '$app/navigation';
 	import { onMount, tick, getContext } from 'svelte';
 
 	import { WEBUI_BASE_URL } from '$lib/constants';
-	import { WEBUI_NAME, config, user, models, settings, showSidebar } from '$lib/stores';
+	import { baseModels, WEBUI_NAME, config, user, models, settings, showSidebar } from '$lib/stores';
 	import { chatCompletion } from '$lib/apis/openai';
 
-	import { splitStream } from '$lib/utils';
+	import { splitStream, resolveDefaultModelIds } from '$lib/utils';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 
 	const i18n = getContext('i18n');
@@ -37,7 +39,7 @@
 	};
 
 	const textCompletionHandler = async () => {
-		const model = $models.find((model) => model.id === selectedModelId);
+		const model = $baseModels.find((model) => model.id === selectedModelId);
 
 		const [res, controller] = await chatCompletion(
 			localStorage.token,
@@ -108,20 +110,19 @@
 			await goto('/');
 		}
 
-		if ($settings?.models) {
-			selectedModelId = $settings?.models[0];
-		} else if ($config?.default_models) {
-			selectedModelId = $config?.default_models.split(',')[0];
-		} else {
-			selectedModelId = '';
-		}
+		selectedModelId =
+			resolveDefaultModelIds(
+				$baseModels,
+				$settings?.models,
+				$config?.default_models?.split(',')
+			)[0] ?? '';
 		loaded = true;
 	});
 </script>
 
 <div class=" flex flex-col justify-between w-full overflow-y-auto h-full">
 	<div class="mx-auto w-full md:px-0 h-full">
-		<div class=" flex flex-col h-full px-4">
+		<div class=" flex flex-col h-full px-2.5">
 			<div
 				class=" pt-0.5 pb-2.5 flex flex-col justify-between w-full flex-auto overflow-auto h-0"
 				id="messages-container"
@@ -134,6 +135,7 @@
 							class="w-full h-full p-3 bg-transparent border border-gray-100/30 dark:border-gray-850/30 outline-hidden resize-none rounded-lg text-sm"
 							bind:value={text}
 							placeholder={$i18n.t("You're a helpful assistant.")}
+							aria-label={$i18n.t('Completions')}
 						/>
 					</div>
 				</div>
@@ -143,9 +145,10 @@
 				<div class="flex-1">
 					<select
 						class="bg-transparent border border-gray-100/30 dark:border-gray-850/30 rounded-lg py-1 px-2 -mx-0.5 text-sm outline-hidden w-full"
+						aria-label={$i18n.t('Model')}
 						bind:value={selectedModelId}
 					>
-						{#each $models as model}
+						{#each $baseModels as model}
 							<option value={model.id} class="bg-gray-50 dark:bg-gray-700">{model.name}</option>
 						{/each}
 					</select>
@@ -154,7 +157,7 @@
 				<div class="flex gap-2 shrink-0 ml-2">
 					{#if !loading}
 						<button
-							class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-lg"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
 							on:click={() => {
 								submitHandler();
 							}}
@@ -163,7 +166,7 @@
 						</button>
 					{:else}
 						<button
-							class="px-3.5 py-1.5 text-sm font-medium bg-gray-300 text-black transition rounded-lg flex items-center gap-2"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 							on:click={() => {
 								stopResponse();
 							}}

@@ -1,19 +1,20 @@
 <script lang="ts">
 	import type { WorkBook } from 'xlsx';
-	import DOMPurify from 'dompurify';
+	import ExcelPreview from './ExcelPreview.svelte';
 
 	import { getContext, onMount, tick } from 'svelte';
 
-	import { formatFileSize, getLineCount } from '$lib/utils';
+	import { formatFileSize, getLineCount, safeLinkUrl } from '$lib/utils';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
-	import { settings } from '$lib/stores';
+	import { config, settings } from '$lib/stores';
+	import { getBackendConfig } from '$lib/apis';
 	import { getKnowledgeById } from '$lib/apis/knowledge';
 	import { getFileById, getFileContentById } from '$lib/apis/files';
 
 	import CodeBlock from '$lib/components/chat/Messages/CodeBlock.svelte';
-	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
+	import MarkdownDocument from '$lib/components/chat/FileNav/MarkdownDocument.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	const CONTENT_PREVIEW_LIMIT = 10000;
 	let expandedContent = false;
@@ -26,6 +27,8 @@
 	import Spinner from './Spinner.svelte';
 	import PDFViewer from './PDFViewer.svelte';
 	import PanzoomContainer from './PanzoomContainer.svelte';
+	import DocxPreview from './DocxPreview.svelte';
+	import PptxPreview from './PptxPreview.svelte';
 	import Reset from '../icons/Reset.svelte';
 
 	export let item;
@@ -34,6 +37,9 @@
 
 	let enableFullContent = false;
 	let loading = false;
+	let externalKnowledge = false;
+
+	const getCharacterCount = (text: string) => Array.from(text).length;
 
 	let isPDF = false;
 	let isAudio = false;
@@ -44,20 +50,18 @@
 
 	let selectedTab = '';
 	let excelWorkbook: WorkBook | null = null;
-	let excelSheetNames: string[] = [];
 	let selectedSheet = '';
-	let excelHtml = '';
-	let excelError = '';
+	let excelError = false;
 	let rowCount = 0;
 
 	// DOCX state
-	let docxHtml = '';
-	let docxError = '';
+	let docxData: ArrayBuffer | null = null;
+	let docxError = false;
 
 	// PPTX state
 	let pptxSlides: string[] = [];
 	let pptxCurrentSlide = 0;
-	let pptxError = '';
+	let pptxError = false;
 
 	let panzoomRef: PanzoomContainer;
 	const resetImageView = () => {
@@ -70,7 +74,7 @@
 
 	$: isMarkdown =
 		item?.meta?.content_type === 'text/markdown' ||
-		(item?.name && item?.name.toLowerCase().endsWith('.md'));
+		(item?.name && /\.(md|markdown|mdx)$/i.test(item.name));
 
 	$: isCode =
 		item?.name &&
@@ -138,55 +142,33 @@
 
 	const loadExcelContent = async () => {
 		try {
-			excelError = '';
-			const [arrayBuffer, { read }] = await Promise.all([
+			excelError = false;
+			const [arrayBuffer, { readExcelWorkbook }] = await Promise.all([
 				getFileContentById(item.id),
-				import('xlsx')
+				import('$lib/utils/excelToTable')
 			]);
-			excelWorkbook = read(arrayBuffer, { type: 'array' });
-			excelSheetNames = excelWorkbook.SheetNames;
-
-			if (excelSheetNames.length > 0) {
-				selectedSheet = excelSheetNames[0];
-				await renderExcelSheet();
-			}
+			const workbook = await readExcelWorkbook(arrayBuffer);
+			selectedSheet = workbook.SheetNames[0] ?? '';
+			excelWorkbook = workbook;
 		} catch (error) {
 			console.error('Error loading Excel/CSV file:', error);
-			excelError = $i18n.t('Failed to load Excel/CSV file. Please try downloading it instead.');
+			excelError = true;
 		}
 	};
 
-	const renderExcelSheet = async () => {
-		if (!excelWorkbook || !selectedSheet) return;
-		const { excelToTable } = await import('$lib/utils/excelToTable');
-		const worksheet = excelWorkbook.Sheets[selectedSheet];
-		const result = await excelToTable(worksheet);
-		excelHtml = DOMPurify.sanitize(result.html);
-		rowCount = result.rowCount;
-	};
-
-	$: if (selectedSheet && excelWorkbook) {
-		renderExcelSheet();
-	}
-
 	const loadDocxContent = async () => {
 		try {
-			docxError = '';
-			const [arrayBuffer, mammoth] = await Promise.all([
-				getFileContentById(item.id),
-				import('mammoth')
-			]);
-			const result = await mammoth.convertToHtml({ arrayBuffer });
-			docxHtml = DOMPurify.sanitize(result.value);
+			docxError = false;
+			docxData = await getFileContentById(item.id);
 		} catch (error) {
 			console.error('Error loading DOCX file:', error);
-			docxError = $i18n.t('Failed to load DOCX file. Please try downloading it instead.');
+			docxError = true;
 		}
 	};
 
 	const loadPptxContent = async () => {
 		try {
-			pptxError = '';
+			pptxError = false;
 			const [arrayBuffer, { pptxToImages }] = await Promise.all([
 				getFileContentById(item.id),
 				import('$lib/utils/pptxToHtml')
@@ -196,13 +178,20 @@
 			pptxCurrentSlide = 0;
 		} catch (error) {
 			console.error('Error loading PPTX file:', error);
-			pptxError = $i18n.t('Failed to load PPTX file. Please try downloading it instead.');
+			pptxError = true;
 		}
 	};
 
 	const loadContent = async () => {
 		selectedTab = '';
 		expandedContent = false;
+		docxData = null;
+		externalKnowledge = false;
+		if ($config?.file?.full_text_char_threshold === undefined) {
+			await getBackendConfig()
+				.then((value) => config.set(value))
+				.catch((error) => console.error('Error fetching file context settings:', error));
+		}
 		if (item?.type === 'collection') {
 			loading = true;
 
@@ -213,6 +202,7 @@
 
 			if (knowledge) {
 				item.files = knowledge.files || [];
+				externalKnowledge = knowledge.meta?.source === 'external';
 			}
 			loading = false;
 		} else if (item?.type === 'file') {
@@ -248,36 +238,39 @@
 		loadContent();
 	}
 
+	$: fullTextCharThreshold = $config?.file?.full_text_char_threshold ?? 0;
+	$: contentLength = getCharacterCount(item?.file?.data?.content ?? '');
+	$: automaticFullContent =
+		!externalKnowledge &&
+		(Boolean($config?.file?.full_context) ||
+			((item?.type === 'file' || item?.type === 'text') &&
+				fullTextCharThreshold > 0 &&
+				contentLength > 0 &&
+				contentLength <= fullTextCharThreshold));
+	$: enableFullContent = automaticFullContent || item?.context === 'full';
+
 	onMount(() => {
 		console.log(item);
-		if (item?.context === 'full') {
-			enableFullContent = true;
-		}
 	});
 </script>
 
-<Modal bind:show size="lg">
-	<div class="font-primary px-4.5 py-3.5 w-full flex flex-col justify-center dark:text-gray-400">
+<Modal ariaLabel={item?.name ?? $i18n.t('File')} bind:show size="lg">
+	<div class=" px-4.5 py-3.5 w-full flex flex-col justify-center dark:text-gray-400">
 		<div class=" pb-2">
 			<div class="flex items-start justify-between">
 				<div>
-					<div class=" font-medium text-lg dark:text-gray-100">
+					<div class=" font-normal text-lg dark:text-gray-100">
 						<a
-							href="#"
+							href={item?.type === 'file'
+								? item?.url?.startsWith('http')
+									? item.url
+									: `${WEBUI_API_BASE_URL}/files/${item?.id ?? item?.tempId}/content`
+								: item?.type === 'collection' && item?.id
+									? `/workspace/knowledge/${item.id}`
+									: safeLinkUrl(item?.url)}
+							target="_blank"
+							rel="noreferrer"
 							class="hover:underline line-clamp-1"
-							on:click|preventDefault={() => {
-								if (item.type === 'file' || item.url) {
-									let fileId = item?.id ?? item?.tempId;
-									window.open(
-										item.type === 'file'
-											? item?.url?.startsWith('http')
-												? item.url
-												: `${WEBUI_API_BASE_URL}/files/${fileId}/content`
-											: item.url,
-										'_blank'
-									);
-								}
-							}}
 						>
 							{item?.name ?? 'File'}
 						</a>
@@ -286,6 +279,7 @@
 
 				<div>
 					<button
+						aria-label={$i18n.t('Close')}
 						on:click={() => {
 							show = false;
 						}}
@@ -300,7 +294,7 @@
 					<div class=" flex flex-wrap text-xs gap-1 text-gray-500">
 						{#if item?.type === 'collection'}
 							{#if item?.type}
-								<div class="capitalize shrink-0">{item.type}</div>
+								<div class="capitalize shrink-0">{$i18n.t('Knowledge Base')}</div>
 								•
 							{/if}
 
@@ -311,7 +305,9 @@
 
 							{#if item?.created_at}
 								<div class="capitalize shrink-0">
-									{dayjs(item.created_at * 1000).format('LL')}
+									{dayjs(item.created_at * 1000)
+										.locale($i18n.language)
+										.format('LL')}
 								</div>
 							{/if}
 						{/if}
@@ -346,16 +342,22 @@
 						{/if}
 					</div>
 
-					{#if edit}
+					{#if edit && !loading && $config?.file?.full_text_char_threshold !== undefined}
 						<div class=" self-end">
 							<Tooltip
-								content={enableFullContent
-									? $i18n.t(
-											'Inject the entire content as context for comprehensive processing, this is recommended for complex queries.'
-										)
-									: $i18n.t(
-											'Default to segmented retrieval for focused and relevant content extraction, this is recommended for most cases.'
-										)}
+								content={automaticFullContent
+									? $config?.file?.full_context
+										? $i18n.t('Full text is always enabled by your administrator.')
+										: $i18n.t(
+												'This attachment fits within the full text threshold, so its entire text is included automatically.'
+											)
+									: enableFullContent
+										? $i18n.t(
+												'Inject the entire content as context for comprehensive processing, this is recommended for complex queries.'
+											)
+										: $i18n.t(
+												'Default to segmented retrieval for focused and relevant content extraction, this is recommended for most cases.'
+											)}
 							>
 								<div class="flex items-center gap-1.5 text-xs">
 									{#if enableFullContent}
@@ -363,12 +365,15 @@
 									{:else}
 										{$i18n.t('Using Focused Retrieval')}
 									{/if}
-									<Switch
-										bind:state={enableFullContent}
-										on:change={(e) => {
-											item.context = e.detail ? 'full' : undefined;
-										}}
-									/>
+									{#if !automaticFullContent}
+										<Switch
+											bind:state={enableFullContent}
+											ariaLabel={$i18n.t('Using Entire Document')}
+											on:change={(e) => {
+												item.context = e.detail ? 'full' : undefined;
+											}}
+										/>
+									{/if}
 								</div>
 							</Tooltip>
 						</div>
@@ -393,7 +398,7 @@
 
 				{#if isAudio || isPDF || isExcel || isCode || isMarkdown || isDocx || isPptx}
 					<div
-						class="flex mb-2.5 scrollbar-none overflow-x-auto w-full border-b border-gray-50 dark:border-gray-850/30 text-center text-sm font-medium bg-transparent dark:text-gray-200"
+						class="flex mb-2.5 scrollbar-none overflow-x-auto w-full border-b border-gray-50 dark:border-gray-850/30 text-center text-sm font-normal bg-transparent dark:text-gray-200"
 					>
 						<button
 							class="min-w-fit py-1.5 px-4 border-b {selectedTab === ''
@@ -422,6 +427,7 @@
 						<div class="absolute top-2 right-2 z-10">
 							<Tooltip content={$i18n.t('Reset view')}>
 								<button
+									aria-label={$i18n.t('Reset view')}
 									class="p-1.5 rounded-lg bg-white/80 dark:bg-gray-850/80 backdrop-blur-sm shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-500 dark:text-gray-400"
 									on:click={resetImageView}
 								>
@@ -447,10 +453,8 @@
 							rawContent.length > CONTENT_PREVIEW_LIMIT &&
 							!expandedContent}
 						{#if $settings?.renderMarkdownInPreviews ?? true}
-							<div
-								class="max-h-96 overflow-scroll scrollbar-hidden text-sm prose dark:prose-invert max-w-full"
-							>
-								<Markdown
+							<div class="max-h-96 overflow-scroll scrollbar-hidden">
+								<MarkdownDocument
 									content={isTruncated ? rawContent.slice(0, CONTENT_PREVIEW_LIMIT) : rawContent}
 									id="file-preview"
 								/>
@@ -479,10 +483,8 @@
 							rawContent.length > CONTENT_PREVIEW_LIMIT &&
 							!expandedContent}
 						{#if $settings?.renderMarkdownInPreviews ?? true}
-							<div
-								class="max-h-96 overflow-scroll scrollbar-hidden text-sm prose dark:prose-invert max-w-full"
-							>
-								<Markdown
+							<div class="max-h-96 overflow-scroll scrollbar-hidden">
+								<MarkdownDocument
 									content={isTruncated ? rawContent.slice(0, CONTENT_PREVIEW_LIMIT) : rawContent}
 									id="file-preview-content"
 								/>
@@ -521,34 +523,14 @@
 					{:else if isExcel}
 						{#if excelError}
 							<div class="text-red-500 text-sm p-4">
-								{excelError}
+								{$i18n.t('Failed to load Excel/CSV file. Please try downloading it instead.')}
 							</div>
 						{:else}
-							{#if excelSheetNames.length > 1}
-								<div
-									class="flex mb-2.5 scrollbar-none overflow-x-auto w-full border-b border-gray-50 dark:border-gray-850/30 text-center text-sm font-medium bg-transparent dark:text-gray-200"
-								>
-									{#each excelSheetNames as sheetName}
-										<button
-											class="min-w-fit py-1.5 px-4 border-b {selectedSheet === sheetName
-												? ' '
-												: ' border-transparent text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
-											type="button"
-											on:click={() => {
-												selectedSheet = sheetName;
-											}}>{sheetName}</button
-										>
-									{/each}
-								</div>
-							{/if}
-
-							{#if excelHtml}
-								<div class="office-preview overflow-auto max-h-[60vh]">
-									{@html excelHtml}
-								</div>
-							{:else}
-								<div class="text-gray-500 text-sm p-4">No content available</div>
-							{/if}
+							<div class="h-[60vh]">
+								{#if excelWorkbook}
+									<ExcelPreview workbook={excelWorkbook} bind:selectedSheet bind:rowCount />
+								{/if}
+							</div>
 						{/if}
 					{:else if isCode}
 						<div class="max-h-[60vh] overflow-scroll scrollbar-hidden text-sm relative">
@@ -562,81 +544,32 @@
 							/>
 						</div>
 					{:else if isMarkdown}
-						<div
-							class="max-h-[60vh] overflow-scroll scrollbar-hidden text-sm prose dark:prose-invert max-w-full"
-						>
-							<Markdown content={item.file.data.content} id="markdown-viewer" />
+						<div class="max-h-[60vh] overflow-scroll scrollbar-hidden">
+							<MarkdownDocument content={item.file.data.content} id="markdown-viewer" />
 						</div>
 					{:else if isDocx}
 						{#if docxError}
-							<div class="text-red-500 text-sm p-4">{docxError}</div>
-						{:else if docxHtml}
-							<div
-								class="office-preview max-h-[60vh] overflow-auto p-4 prose dark:prose-invert max-w-full text-sm"
-							>
-								{@html docxHtml}
+							<div class="text-red-500 text-sm p-4">
+								{$i18n.t('Failed to load DOCX file. Please try downloading it instead.')}
 							</div>
+						{:else if docxData}
+							<DocxPreview data={docxData} className="h-[60vh]" />
 						{:else}
-							<div class="text-gray-500 text-sm p-4">No content available</div>
+							<div class="text-gray-500 text-sm p-4">{$i18n.t('No content available')}</div>
 						{/if}
 					{:else if isPptx}
 						{#if pptxError}
-							<div class="text-red-500 text-sm p-4">{pptxError}</div>
-						{:else if pptxSlides.length > 0}
-							<div class="max-h-[60vh] overflow-auto">
-								<div class="flex justify-center p-4">
-									<img
-										src={pptxSlides[pptxCurrentSlide]}
-										alt="Slide {pptxCurrentSlide + 1}"
-										class="max-w-full max-h-[50vh] object-contain rounded-md shadow-lg"
-										draggable="false"
-									/>
-								</div>
-								{#if pptxSlides.length > 1}
-									<div class="flex items-center justify-center gap-3 pb-3 text-sm text-gray-500">
-										<button
-											class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30"
-											disabled={pptxCurrentSlide === 0}
-											on:click={() => (pptxCurrentSlide = Math.max(0, pptxCurrentSlide - 1))}
-										>
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 20 20"
-												fill="currentColor"
-												class="size-5"
-											>
-												<path
-													fill-rule="evenodd"
-													d="M11.78 5.22a.75.75 0 0 1 0 1.06L8.06 10l3.72 3.72a.75.75 0 1 1-1.06 1.06l-4.25-4.25a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z"
-													clip-rule="evenodd"
-												/>
-											</svg>
-										</button>
-										<span>{pptxCurrentSlide + 1} / {pptxSlides.length}</span>
-										<button
-											class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30"
-											disabled={pptxCurrentSlide === pptxSlides.length - 1}
-											on:click={() =>
-												(pptxCurrentSlide = Math.min(pptxSlides.length - 1, pptxCurrentSlide + 1))}
-										>
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 20 20"
-												fill="currentColor"
-												class="size-5"
-											>
-												<path
-													fill-rule="evenodd"
-													d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
-													clip-rule="evenodd"
-												/>
-											</svg>
-										</button>
-									</div>
-								{/if}
+							<div class="text-red-500 text-sm p-4">
+								{$i18n.t('Failed to load PPTX file. Please try downloading it instead.')}
 							</div>
+						{:else if pptxSlides.length > 0}
+							<PptxPreview
+								slides={pptxSlides}
+								bind:currentSlide={pptxCurrentSlide}
+								className="h-[60vh]"
+							/>
 						{:else}
-							<div class="text-gray-500 text-sm p-4">No content available</div>
+							<div class="text-gray-500 text-sm p-4">{$i18n.t('No content available')}</div>
 						{/if}
 					{:else}
 						<div class="max-h-96 overflow-scroll scrollbar-hidden text-xs whitespace-pre-wrap">
@@ -652,52 +585,3 @@
 		</div>
 	</div>
 </Modal>
-
-<style>
-	:global(.excel-table-container table) {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-		line-height: 1.25rem;
-	}
-
-	:global(.excel-table-container table td),
-	:global(.excel-table-container table th) {
-		border-width: 1px;
-		border-style: solid;
-		border-color: var(--color-gray-300, #cdcdcd);
-		padding: 0.5rem 0.75rem;
-		text-align: left;
-	}
-
-	:global(.dark .excel-table-container table td),
-	:global(.dark .excel-table-container table th) {
-		border-color: var(--color-gray-600, #676767);
-	}
-
-	:global(.excel-table-container table th) {
-		background-color: var(--color-gray-100, #ececec);
-		font-weight: 600;
-	}
-
-	:global(.dark .excel-table-container table th) {
-		background-color: var(--color-gray-800, #333);
-		color: var(--color-gray-100, #ececec);
-	}
-
-	:global(.excel-table-container table tr:nth-child(even)) {
-		background-color: var(--color-gray-50, #f9f9f9);
-	}
-
-	:global(.dark .excel-table-container table tr:nth-child(even)) {
-		background-color: rgba(38, 38, 38, 0.5);
-	}
-
-	:global(.excel-table-container table tr:hover) {
-		background-color: var(--color-gray-100, #ececec);
-	}
-
-	:global(.dark .excel-table-container table tr:hover) {
-		background-color: rgba(51, 51, 51, 0.5);
-	}
-</style>

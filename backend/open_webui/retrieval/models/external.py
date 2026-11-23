@@ -35,8 +35,7 @@ class ExternalReranker(BaseReranker):
         }
 
         try:
-            log.info(f'ExternalReranker:predict:model {self.model}')
-            log.info(f'ExternalReranker:predict:query {query}')
+            log.info('ExternalReranker:predict:model %s', self.model)
 
             headers = {
                 'Content-Type': 'application/json',
@@ -65,5 +64,5 @@ class ExternalReranker(BaseReranker):
                 return None
 
         except Exception as e:
-            log.exception(f'Error in external reranking: {e}')
+            log.error('Error in external reranking: %s', type(e).__name__)
             return None

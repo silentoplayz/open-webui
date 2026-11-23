@@ -23,9 +23,11 @@ from open_webui.models.calendar import (
 from open_webui.models.config import Config
 from open_webui.models.groups import Groups
 from open_webui.models.users import UserModel
-from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
+from open_webui.utils.access_control import filter_allowed_access_grants, has_permission, validate_access_grants
 from open_webui.utils.auth import get_verified_user
 from open_webui.utils.calendar import expand_recurring_event
+from open_webui.utils.recurrence import schedule_start_ns
+from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +68,7 @@ async def _check_calendar_access(calendar_id: str, user: UserModel, permission: 
         raise HTTPException(status_code=404, detail='Calendar not found')
     if cal.user_id == user.id or user.role == 'admin':
         return cal
-    user_groups = await Groups.get_groups_by_member_id(user.id)
+    user_groups = await Groups.get_groups_by_member_id(user.id, include_inherited=True)
     user_group_ids = [g.id for g in user_groups]
     if await AccessGrants.has_access(
         user_id=user.id,
@@ -79,9 +81,7 @@ async def _check_calendar_access(calendar_id: str, user: UserModel, permission: 
     raise HTTPException(status_code=403, detail='Access denied')
 
 
-####################
 # Calendar CRUD (static paths first)
-####################
 
 
 @router.get('/', response_model=list[CalendarModel])
@@ -122,7 +122,7 @@ async def create_calendar(request: Request, form_data: CalendarForm, user: UserM
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_calendars',
+        resource_type='calendar',
     )
     calendar = await Calendars.insert_new_calendar(user.id, form_data)
     await publish_event(
@@ -135,9 +135,7 @@ async def create_calendar(request: Request, form_data: CalendarForm, user: UserM
     return calendar
 
 
-####################
 # Event CRUD (before /{calendar_id} to avoid route conflicts)
-####################
 
 
 @router.get('/events')
@@ -206,13 +204,22 @@ async def get_events(
                 if not rrule_str:
                     continue
 
+                start_at = auto.next_run_at or 0
+                upper_rrule = rrule_str.upper()
+                if 'COUNT=' in upper_rrule and 'DTSTART' in upper_rrule:
+                    # COUNT runs from DTSTART, anchoring on the next run would restart it
+                    try:
+                        start_at = schedule_start_ns(rrule_str, user.timezone)
+                    except ValueError:
+                        pass
+
                 virtual = {
                     'id': f'auto_{auto.id}',
                     'calendar_id': SCHEDULED_TASKS_CALENDAR_ID,
                     'user_id': user.id,
                     'title': auto.name,
                     'description': auto.data.get('prompt', '') if auto.data else '',
-                    'start_at': auto.next_run_at or 0,
+                    'start_at': start_at,
                     'end_at': None,
                     'all_day': False,
                     'rrule': rrule_str,
@@ -273,7 +280,10 @@ async def get_events(
 async def create_event(request: Request, form_data: CalendarEventForm, user: UserModel = Depends(get_verified_user)):
     await check_calendar_permission(request, user)
     await _check_calendar_access(form_data.calendar_id, user, 'write')
-    event = await CalendarEvents.insert_new_event(user.id, form_data)
+    try:
+        event = await CalendarEvents.insert_new_event(user.id, form_data)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     await publish_event(
         request,
         EVENTS.CALENDAR_EVENT_CREATED,
@@ -325,7 +335,10 @@ async def update_event(
     if form_data.calendar_id is not None and form_data.calendar_id != event.calendar_id:
         await _check_calendar_access(form_data.calendar_id, user, 'write')
 
-    updated = await CalendarEvents.update_event_by_id(event_id, form_data)
+    try:
+        updated = await CalendarEvents.update_event_by_id(event_id, form_data)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     if not updated:
         raise HTTPException(status_code=500, detail='Failed to update')
     await publish_event(
@@ -382,9 +395,7 @@ async def rsvp_event(
     return {'status': True, 'rsvp': result.status}
 
 
-####################
 # Calendar by ID (dynamic path — MUST come after /events* routes)
-####################
 
 
 @router.get('/{calendar_id}', response_model=CalendarModel)
@@ -399,25 +410,7 @@ async def update_calendar(
     request: Request, calendar_id: str, form_data: CalendarUpdateForm, user: UserModel = Depends(get_verified_user)
 ):
     await check_calendar_permission(request, user)
-    cal = await _check_calendar_access(calendar_id, user, 'write')
-
-    # Only owner/admin can change access grants
-    if form_data.access_grants is not None and cal.user_id != user.id and user.role != 'admin':
-        raise HTTPException(status_code=403, detail='Only owner can manage sharing')
-
-    # Strip public/user grants the requesting user is not permitted to assign
-    # (matches the channel/notes/models pattern). The owner-only check above
-    # only restricts WHO can set grants; this filter restricts WHICH grants
-    # they may set, so a non-admin owner cannot make their calendar
-    # publicly readable/writable without the corresponding sharing permission.
-    if form_data.access_grants is not None:
-        form_data.access_grants = await filter_allowed_access_grants(
-            await Config.get('user.permissions'),
-            user.id,
-            user.role,
-            form_data.access_grants,
-            'sharing.public_calendars',
-        )
+    await _check_calendar_access(calendar_id, user, 'write')
 
     updated = await Calendars.update_calendar_by_id(calendar_id, form_data)
     if not updated:
@@ -430,6 +423,30 @@ async def update_calendar(
         data={'name': updated.name},
     )
     return updated
+
+
+class CalendarAccessGrantsForm(BaseModel):
+    access_grants: list[dict]
+
+
+@router.post('/{calendar_id}/access/update', response_model=CalendarModel)
+async def update_calendar_access_by_id(
+    request: Request,
+    calendar_id: str,
+    form_data: CalendarAccessGrantsForm,
+    user: UserModel = Depends(get_verified_user),
+):
+    await check_calendar_permission(request, user)
+    cal = await _check_calendar_access(calendar_id, user, 'write')
+    if cal.user_id != user.id and user.role != 'admin':
+        raise HTTPException(status_code=403, detail='Only owner can manage sharing')
+
+    grants = await validate_access_grants(
+        await Config.get('user.permissions'), user.id, user.role, form_data.access_grants, resource_type='calendar'
+    )
+    cal.access_grants = await AccessGrants.set_access_grants('calendar', calendar_id, grants)
+    await publish_event(request, EVENTS.CALENDAR_UPDATED, actor=user, subject_id=cal.id, data={'name': cal.name})
+    return cal
 
 
 @router.delete('/{calendar_id}/delete')

@@ -63,10 +63,7 @@ def redis_request_hook(span: Span, instance: Union[Redis | RedisCluster], args, 
     Redis Request Hook
     """
 
-    # In cluster mode, the instance can be of two types:
-    # - redis.asyncio.cluster.RedisCluster
-    # - redis.cluster.RedisCluster
-    # Instead of checking the type, we check if the instance has a nodes_manager attribute.
+    # Detect both sync and async RedisCluster clients by their nodes_manager attribute.
     try:
         db = ''
         if hasattr(instance, 'nodes_manager'):
@@ -178,7 +175,7 @@ class Instrumentor(BaseInstrumentor):
         SQLAlchemyInstrumentor().instrument(engine=self.db_engine)
         RedisInstrumentor().instrument(request_hook=redis_request_hook)
         RequestsInstrumentor().instrument(request_hook=requests_hook, response_hook=response_hook)
-        LoggingInstrumentor().instrument()
+        LoggingInstrumentor().instrument(enable_log_auto_instrumentation=False)
         HTTPXClientInstrumentor().instrument(
             request_hook=httpx_request_hook,
             response_hook=httpx_response_hook,

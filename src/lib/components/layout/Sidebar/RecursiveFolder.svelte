@@ -1,3 +1,7 @@
+<script context="module">
+	let closeActiveHoverPreview = null;
+</script>
+
 <script>
 	import { getContext, createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
 
@@ -5,6 +9,7 @@
 	const dispatch = createEventDispatcher();
 
 	import DOMPurify from 'dompurify';
+	import { LinkPreview } from 'bits-ui';
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
@@ -12,39 +17,50 @@
 	import { toast } from 'svelte-sonner';
 
 	import { chatId, mobile, selectedFolder, showSidebar, user } from '$lib/stores';
+	import {
+		folderStates,
+		folderChatPageKey,
+		loadFolderChatPage,
+		loadFolderDetails,
+		setFolderSidebarPage,
+		updateFolderChatLists,
+		markFolderRead,
+		updateFolderDetails,
+		removeFolderState,
+		isCancelledFolderRequest
+	} from '$lib/stores/folderStates';
+	import { refreshFolderChatLists } from '$lib/stores/chatList';
 
 	import {
 		deleteFolderById,
 		updateFolderIsExpandedById,
 		updateFolderById,
 		updateFolderParentIdById,
-		getFolderById,
 		createNewFolder,
-		getSharedFolderChats
+		markFolderChatsReadById
 	} from '$lib/apis/folders';
 	import {
 		getChatById,
 		getChatsByFolderId,
-		getChatListByFolderId,
 		updateChatFolderIdById,
 		importChats
 	} from '$lib/apis/chats';
 
-	import ChevronDown from '../../icons/ChevronDown.svelte';
-	import ChevronRight from '../../icons/ChevronRight.svelte';
+	import ChevronDown from './icons/ChevronDown.svelte';
+	import ChevronRight from './icons/ChevronRight.svelte';
 	import Collapsible from '../../common/Collapsible.svelte';
 	import DragGhost from '$lib/components/common/DragGhost.svelte';
 
-	import FolderOpen from '$lib/components/icons/FolderOpen.svelte';
-	import EllipsisHorizontal from '$lib/components/icons/EllipsisHorizontal.svelte';
+	import FolderIcon from './icons/Folder.svelte';
+	import MoreHorizontal from './icons/MoreHorizontal.svelte';
 
 	import ChatItem from './ChatItem.svelte';
+	import FolderHoverPreview from './FolderHoverPreview.svelte';
 	import FolderMenu from './Folders/FolderMenu.svelte';
-	import FolderShareModal from './Folders/FolderShareModal.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import FolderModal from './Folders/FolderModal.svelte';
+	import FolderShareModal from './Folders/FolderShareModal.svelte';
 	import Emoji from '$lib/components/common/Emoji.svelte';
-	import Spinner from '$lib/components/common/Spinner.svelte';
 
 	export let folderRegistry = {};
 	export let open = false;
@@ -59,11 +75,13 @@
 
 	export let parentDragged = false;
 
-	export let onDelete = (e) => {};
-	export let onItemMove = (e) => {};
+	export let onDelete = () => {};
+	export let onItemMove = () => {};
+	export let onFolderUnreadCounts = () => {};
 
 	let folderElement;
 
+	let openPreview = false;
 	let showFolderModal = false;
 	let showShareModal = false;
 	let edit = false;
@@ -76,21 +94,111 @@
 
 	let clickTimer = null;
 
+	$: if ($mobile || edit || dragged || parentDragged || draggedOver || showFolderModal) {
+		openPreview = false;
+	}
+
+	const closeHoverPreview = () => {
+		if (openPreview) {
+			openPreview = false;
+		}
+	};
+
+	$: if (openPreview && closeActiveHoverPreview !== closeHoverPreview) {
+		closeActiveHoverPreview?.();
+		closeActiveHoverPreview = closeHoverPreview;
+	}
+
 	let name = '';
 
+	const formatUnreadCount = (count) =>
+		new Intl.NumberFormat(undefined, {
+			notation: 'compact',
+			compactDisplay: 'short'
+		}).format(count);
+
+	const isUnreadChat = (chat) =>
+		!(chat.active ?? false) &&
+		(chat.last_read_at == null ||
+			(typeof chat.updated_at === 'number' &&
+				typeof chat.last_read_at === 'number' &&
+				chat.updated_at > chat.last_read_at));
+
+	const sortFolderChats = (items) =>
+		[...items].sort(
+			(a, b) =>
+				Number(isUnreadChat(b)) - Number(isUnreadChat(a)) ||
+				Number(b.updated_at ?? 0) - Number(a.updated_at ?? 0)
+		);
+
+	const mergeFolderChats = (items, nextItems) => {
+		const merged = [...items];
+		const indexById = new Map(merged.map((chat, index) => [chat.id, index]));
+
+		for (const chat of nextItems) {
+			if (!chat?.id) {
+				continue;
+			}
+
+			const index = indexById.get(chat.id);
+			if (index === undefined) {
+				indexById.set(chat.id, merged.length);
+				merged.push(chat);
+			} else {
+				merged[index] = { ...merged[index], ...chat };
+			}
+		}
+
+		return sortFolderChats(merged);
+	};
+
+	const applyReadState = (data) => {
+		if (data?.folder_unread_counts) {
+			onFolderUnreadCounts(data.folder_unread_counts);
+		}
+
+		if (typeof data?.last_read_at === 'number') {
+			updateFolderChatLists({ id: data.chat_id, last_read_at: data.last_read_at });
+			void refreshFolderChatLists();
+		}
+	};
+
+	const markAllReadHandler = async () => {
+		const res = await markFolderChatsReadById(localStorage.token, folderId).catch((error) => {
+			toast.error(`${error}`);
+			return null;
+		});
+		if (!res) return;
+
+		if (res.folder_unread_counts) {
+			onFolderUnreadCounts(res.folder_unread_counts);
+		}
+
+		for (const readFolderId of res.folder_ids ?? []) {
+			if (readFolderId !== folderId) {
+				folderRegistry[readFolderId]?.setFolderItems?.();
+			}
+		}
+
+		for (const id of res.folder_ids ?? [folderId]) markFolderRead(id, $user?.id);
+		void refreshFolderChatLists();
+	};
+
+	$: isWritable = !folders[folderId]?.shared || folders[folderId]?.permission === 'write';
+
 	const onDragOver = (e) => {
-		e.preventDefault();
 		e.stopPropagation();
-		if (dragged || parentDragged || folders[folderId]?.shared) {
+		if (dragged || parentDragged || !isWritable) {
 			return;
 		}
+		e.preventDefault();
 		draggedOver = true;
 	};
 
 	const onDrop = async (e) => {
 		e.preventDefault();
 		e.stopPropagation();
-		if (dragged || parentDragged) {
+		if (dragged || parentDragged || !isWritable) {
 			return;
 		}
 
@@ -152,6 +260,7 @@
 								);
 
 								if (res) {
+									updateFolderDetails(id, res);
 									dispatch('update');
 								}
 							} else if (type === 'chat') {
@@ -181,7 +290,7 @@
 									});
 								}
 
-								if (chat) {
+								if (chat && chat.folder_id !== folderId) {
 									// Move the chat
 									const res = await updateChatFolderIdById(
 										localStorage.token,
@@ -192,6 +301,7 @@
 										return null;
 									});
 
+									if (res) updateFolderChatLists(res, folderId);
 									onItemMove({
 										originFolderId: chat.folder_id,
 										targetFolderId: folderId,
@@ -200,6 +310,7 @@
 
 									if (res) {
 										dispatch('update');
+										void refreshFolderChatLists();
 									}
 								}
 							}
@@ -221,7 +332,7 @@
 
 	const onDragLeave = (e) => {
 		e.preventDefault();
-		if (dragged || parentDragged) {
+		if (dragged || parentDragged || !isWritable) {
 			return;
 		}
 
@@ -270,9 +381,16 @@
 	onMount(async () => {
 		open = folders[folderId].is_expanded;
 		folderRegistry[folderId] = {
-			setFolderItems: () => {
-				setFolderItems();
-			}
+			setFolderItems,
+			setChatActive: /** @param {string} id */ (id) => {
+				const found = chats?.some((chat) => chat.id === id) ?? false;
+				return found;
+			},
+			setChatReadAt: /** @param {string} id */ (id) => {
+				const found = chats?.some((chat) => chat.id === id) ?? false;
+				return found;
+			},
+			setAllChatsRead: () => markFolderRead(folderId, $user?.id)
 		};
 		if (folderElement) {
 			folderElement.addEventListener('dragover', onDragOver);
@@ -295,8 +413,14 @@
 	});
 
 	onDestroy(() => {
+		delete folderRegistry[folderId];
+
+		if (closeActiveHoverPreview === closeHoverPreview) {
+			closeActiveHoverPreview = null;
+		}
+
 		if (folderElement) {
-			folderElement.addEventListener('dragover', onDragOver);
+			folderElement.removeEventListener('dragover', onDragOver);
 			folderElement.removeEventListener('drop', onDrop);
 			folderElement.removeEventListener('dragleave', onDragLeave);
 
@@ -317,20 +441,21 @@
 		);
 
 		if (res) {
+			removeFolderState(folderId);
 			toast.success($i18n.t('Folder deleted successfully'));
 			onDelete(folderId);
 		}
 	};
 
 	const updateHandler = async ({ name, meta, data }) => {
-		if (name === '') {
+		name = name?.trim();
+		if (!name) {
 			toast.error($i18n.t('Folder name cannot be empty.'));
 			return;
 		}
 
 		const currentName = folders[folderId].name;
 
-		name = name.trim();
 		folders[folderId].name = name;
 
 		const res = await updateFolderById(localStorage.token, folderId, {
@@ -345,6 +470,7 @@
 		});
 
 		if (res) {
+			updateFolderDetails(folderId, res);
 			folders[folderId].name = name;
 			if (data) {
 				folders[folderId].data = data;
@@ -354,10 +480,12 @@
 			toast.success($i18n.t('Folder updated successfully'));
 
 			if ($selectedFolder?.id === folderId) {
-				const folder = await getFolderById(localStorage.token, folderId).catch((error) => {
-					toast.error(`${error}`);
-					return null;
-				});
+				const folder = await loadFolderDetails(localStorage.token, folderId, true).catch(
+					(error) => {
+						toast.error(`${error}`);
+						return null;
+					}
+				);
 
 				if (folder) {
 					await selectedFolder.set(folder);
@@ -385,30 +513,70 @@
 		}, 500);
 	};
 
+	/** @type {import('$lib/stores/folderStates').FolderChat[] | null} */
 	let chats = null;
-	export const setFolderItems = async () => {
-		await tick();
-		if (open) {
-			// Always use getSharedFolderChats so owners also see chats
-			// created by users who have write access to this folder.
-			try {
-				const res = await getSharedFolderChats(localStorage.token, folderId);
-				chats = res?.chats ?? [];
-			} catch (error) {
-				// Fallback to regular API
-				chats = await getChatListByFolderId(localStorage.token, folderId).catch((error) => {
-					toast.error(`${error}`);
-					return [];
-				});
+	let chatsPage = 1;
+	let hasMoreChats = false;
+	let chatsLoading = false;
+	let queuedReload = false;
+	let wasOpen = false;
+
+	$: {
+		const retained = $folderStates[folderId];
+		chatsPage = retained?.sidebarPage ?? 1;
+		const pages = Array.from(
+			{ length: chatsPage },
+			(_, index) => retained?.chatPages[folderChatPageKey({ page: index + 1 })]
+		);
+		chats = pages.some(Boolean)
+			? mergeFolderChats(
+					[],
+					pages.flatMap((page) => page?.chats ?? [])
+				)
+			: null;
+		hasMoreChats = pages.at(-1)?.has_more ?? false;
+	}
+
+	export const setFolderItems = async (append = false, refresh = true) => {
+		if (!open) return;
+		if (chatsLoading) {
+			if (refresh) queuedReload = true;
+			return;
+		}
+		chatsLoading = true;
+		try {
+			const nextPage = append ? chatsPage + 1 : chatsPage;
+			await Promise.all(
+				Array.from({ length: append ? 1 : nextPage }, (_, index) =>
+					loadFolderChatPage(
+						localStorage.token,
+						folderId,
+						{ page: append ? nextPage : index + 1 },
+						!append && refresh
+					)
+				)
+			);
+			if (append) setFolderSidebarPage(folderId, nextPage);
+		} catch (error) {
+			if (!isCancelledFolderRequest(error)) toast.error(`${error}`);
+		} finally {
+			chatsLoading = false;
+			if (queuedReload) {
+				queuedReload = false;
+				void setFolderItems();
 			}
-		} else {
-			chats = null;
 		}
 	};
 
-	$: if (open) {
-		setFolderItems();
+	$: if (open !== wasOpen) {
+		wasOpen = open;
+		if (open) void setFolderItems(false, false);
 	}
+
+	const openFolderHandler = async () => {
+		await goto(`/folders/${folderId}`);
+		if ($mobile) showSidebar.set(false);
+	};
 
 	const renameHandler = async () => {
 		console.log('Edit');
@@ -443,12 +611,11 @@
 	};
 
 	const createSubFolderHandler = async ({ name, meta, data, parent_id }) => {
-		if (name === '') {
+		name = name?.trim();
+		if (!name) {
 			toast.error($i18n.t('Folder name cannot be empty.'));
 			return;
 		}
-
-		name = name.trim();
 
 		const res = await createNewFolder(localStorage.token, {
 			name,
@@ -485,13 +652,19 @@
 	</div>
 
 	<div class="flex items-center gap-1.5">
-		<input type="checkbox" bind:checked={deleteFolderContents} />
+		<input
+			aria-label={$i18n.t('Delete all contents inside this folder')}
+			type="checkbox"
+			bind:checked={deleteFolderContents}
+		/>
 
 		<div class="text-xs text-gray-500">
 			{$i18n.t('Delete all contents inside this folder')}
 		</div>
 	</div>
 </DeleteConfirmDialog>
+
+<FolderShareModal bind:show={showShareModal} folder={folders[folderId]} />
 
 <FolderModal bind:show={showFolderModal} edit={true} {folderId} onSubmit={updateHandler} />
 
@@ -501,14 +674,14 @@
 	onSubmit={createSubFolderHandler}
 />
 
-<FolderShareModal bind:show={showShareModal} folder={folders[folderId]} />
-
 {#if dragged && x && y}
 	<DragGhost {x} {y}>
-		<div class=" bg-black/80 backdrop-blur-2xl px-2 py-1 rounded-lg w-fit max-w-40">
-			<div class="flex items-center gap-1">
-				<FolderOpen className="size-3.5" strokeWidth="2" />
-				<div class=" text-xs text-white line-clamp-1">
+		<div
+			class="w-fit max-w-40 rounded-lg bg-white/95 px-2.5 py-1.5 text-xs text-gray-600 shadow-sm ring-1 ring-black/5 dark:bg-gray-850/95 dark:text-gray-300 dark:ring-white/10"
+		>
+			<div class="flex items-center gap-1.5">
+				<FolderIcon className="size-3.5 shrink-0" strokeWidth="1.5" />
+				<div class="min-w-0 truncate">
 					{folders[folderId].name}
 				</div>
 			</div>
@@ -516,10 +689,15 @@
 	</DragGhost>
 {/if}
 
-<div bind:this={folderElement} class="relative {className}" draggable={!folders[folderId]?.shared}>
+<div
+	bind:this={folderElement}
+	class="relative {className}"
+	role="listitem"
+	draggable={!folders[folderId]?.shared}
+>
 	{#if draggedOver}
 		<div
-			class="absolute top-0 left-0 w-full h-full rounded-xs bg-gray-100/50 dark:bg-gray-700/20 bg-opacity-50 dark:bg-opacity-10 z-50 pointer-events-none touch-none"
+			class="pointer-events-none absolute inset-0 z-50 touch-none bg-black/[0.02] ring-1 ring-inset ring-black/10 dark:bg-white/[0.02] dark:ring-white/10"
 		></div>
 	{/if}
 
@@ -533,51 +711,22 @@
 	>
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<div class="w-full group">
+			<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 			<div
 				id="folder-{folderId}-button"
 				class="relative w-full py-1 px-1.5 rounded-xl flex items-center gap-1.5 hover:bg-gray-100 dark:hover:bg-gray-900 transition {$selectedFolder?.id ===
 				folderId
-					? 'bg-gray-100 dark:bg-gray-900 selected'
+					? 'bg-gray-100/80 dark:bg-gray-850/50 selected'
 					: ''}"
-				on:dblclick={(e) => {
-					if (folders[folderId]?.shared) return;
-					if (clickTimer) {
-						clearTimeout(clickTimer); // cancel the single-click action
-						clickTimer = null;
-					}
-					renameHandler();
-				}}
-				on:click={async (e) => {
-					(e) => e.stopPropagation();
-					if (clickTimer) {
-						clearTimeout(clickTimer);
-						clickTimer = null;
-					}
-
-					clickTimer = setTimeout(async () => {
-						const folder = await getFolderById(localStorage.token, folderId).catch((error) => {
-							toast.error(`${error}`);
-							return null;
-						});
-
-						if (folder) {
-							await selectedFolder.set({ ...folders[folderId], ...folder });
-						}
-
-						await goto('/');
-
-						if ($mobile) {
-							showSidebar.set(!$showSidebar);
-						}
-						clickTimer = null;
-					}, 100); // 100ms delay (typical double-click threshold)
-				}}
-				on:pointerup={(e) => {
-					e.stopPropagation();
-				}}
+				on:click|stopPropagation
 			>
 				<button
-					class="text-gray-500 dark:text-gray-500 transition-all p-1 hover:bg-gray-200 dark:hover:bg-gray-850 rounded-lg"
+					class="text-gray-600 dark:text-gray-400 transition-all p-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg"
+					aria-label={open
+						? $i18n.t('Collapse {{name}}', { name: folders[folderId]?.name })
+						: $i18n.t('Expand {{name}}', { name: folders[folderId]?.name })}
+					id="folder-{folderId}-expand-button"
+					aria-expanded={open}
 					on:click={(e) => {
 						e.stopPropagation();
 						e.stopImmediatePropagation();
@@ -590,27 +739,34 @@
 							<Emoji className="size-3.5" shortCode={folders[folderId].meta.icon} />
 						</div>
 
-						<div class="hidden group-hover:flex transition-all p-[1px]">
+						<div class="hidden group-hover:flex transition-all p-[0.0625rem]">
 							{#if open}
-								<ChevronDown className=" size-3" strokeWidth="2.5" />
+								<ChevronDown className=" size-3" strokeWidth="1.5" />
 							{:else}
-								<ChevronRight className=" size-3" strokeWidth="2.5" />
+								<ChevronRight className=" size-3" strokeWidth="1.5" />
 							{/if}
 						</div>
 					{:else}
-						<div class="p-[1px]">
+						<div class="flex group-hover:hidden transition-all">
+							<FolderIcon className="size-3.5" strokeWidth="1.5" />
+						</div>
+
+						<div class="hidden group-hover:flex transition-all p-[0.0625rem]">
 							{#if open}
-								<ChevronDown className=" size-3" strokeWidth="2.5" />
+								<ChevronDown className=" size-3" strokeWidth="1.5" />
 							{:else}
-								<ChevronRight className=" size-3" strokeWidth="2.5" />
+								<ChevronRight className=" size-3" strokeWidth="1.5" />
 							{/if}
 						</div>
 					{/if}
 				</button>
 
-				<div class="translate-y-[0.5px] flex-1 justify-start text-start line-clamp-1">
+				<div
+					class="translate-y-[0.5px] flex min-w-0 flex-1 self-stretch items-center gap-1.5 text-start"
+				>
 					{#if edit}
 						<input
+							aria-label={$i18n.t('Rename')}
 							id="folder-{folderId}-input"
 							type="text"
 							bind:value={name}
@@ -629,27 +785,90 @@
 							}}
 							on:keydown={(e) => {
 								if (e.key === 'Enter') {
-									updateHandler({ name });
-									edit = false;
+									e.currentTarget.blur();
 								}
 							}}
-							class="w-full h-full bg-transparent outline-hidden"
+							class="w-full h-full pr-6 bg-transparent outline-hidden"
 						/>
 					{:else}
-						{folders[folderId].name}
+						<LinkPreview.Root
+							openDelay={300}
+							closeDelay={0}
+							disabled={$mobile || dragged || parentDragged || draggedOver}
+							bind:open={openPreview}
+						>
+							<LinkPreview.Trigger
+								href={`/folders/${folderId}`}
+								draggable="false"
+								class="flex min-w-0 flex-1 self-stretch -my-1 items-center gap-1.5 pr-6"
+								ondblclick={(e) => {
+									if (!isWritable || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+									if (clickTimer) {
+										clearTimeout(clickTimer); // cancel the single-click action
+										clickTimer = null;
+									}
+									renameHandler();
+								}}
+								onclick={(e) => {
+									openPreview = false;
+									e.stopPropagation();
+									if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+									e.preventDefault();
+									if (clickTimer) {
+										clearTimeout(clickTimer);
+										clickTimer = null;
+									}
+
+									clickTimer = setTimeout(async () => {
+										await openFolderHandler();
+										clickTimer = null;
+									}, 100); // 100ms delay (typical double-click threshold)
+								}}
+								onkeydown={(e) => {
+									if (e.currentTarget !== e.target) return;
+									if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+										e.preventDefault();
+										openFolderHandler();
+									}
+								}}
+							>
+								<div class="min-w-0 truncate">
+									{folders[folderId].name}
+								</div>
+
+								{#if !folders[folderId]?.shared && (folders[folderId]?.unread_count ?? 0) > 0}
+									<div
+										class="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-md bg-sky-500/10 px-1 text-[0.625rem] font-semibold leading-4 text-sky-600 dark:bg-sky-400/10 dark:text-sky-300"
+										title={$i18n.t('Unread or waiting for approval')}
+									>
+										{formatUnreadCount(folders[folderId].unread_count)}
+									</div>
+								{/if}
+							</LinkPreview.Trigger>
+							{#if openPreview}
+								<FolderHoverPreview
+									folder={folders[folderId]}
+									{isWritable}
+									onEdit={() => {
+										openPreview = false;
+										showFolderModal = true;
+									}}
+								/>
+							{/if}
+						</LinkPreview.Root>
 					{/if}
 				</div>
 
-				{#if !folders[folderId]?.shared}
-					<button
-						class="absolute z-10 right-2 invisible group-hover:visible self-center flex items-center dark:text-gray-300"
+				{#if isWritable}
+					<div
+						class="absolute z-10 right-2 hover-reveal self-center flex items-center dark:text-gray-300"
+						role="presentation"
+						on:pointerdown={() => (openPreview = false)}
 					>
 						<FolderMenu
+							onNewChat={openFolderHandler}
 							onEdit={() => {
 								showFolderModal = true;
-							}}
-							onShare={() => {
-								showShareModal = true;
 							}}
 							onDelete={() => {
 								showDeleteConfirm = true;
@@ -661,20 +880,27 @@
 								createSubFolderParentId = folderId;
 								showCreateSubFolderModal = true;
 							}}
+							onMarkAllRead={markAllReadHandler}
+							onShare={$user?.role === 'admin' ||
+							(folders[folderId]?.user_id === $user?.id && $user?.permissions?.sharing?.folders)
+								? () => (showShareModal = true)
+								: null}
 						>
-							<div class="p-1 dark:hover:bg-gray-850 rounded-lg touch-auto">
-								<EllipsisHorizontal className="size-4" strokeWidth="2.5" />
+							<div
+								class="flex size-5 items-center justify-center self-center dark:hover:text-white transition m-0 touch-auto"
+							>
+								<MoreHorizontal className="size-3.5" strokeWidth="2" />
 							</div>
 						</FolderMenu>
-					</button>
+					</div>
 				{/if}
 			</div>
 		</div>
 
 		<div slot="content" class="w-full">
-			{#if (folders[folderId]?.childrenIds ?? []).length > 0 || (chats ?? []).length > 0}
+			{#if (folders[folderId]?.childrenIds ?? []).length > 0 || chats !== null || hasMoreChats || chatsLoading}
 				<div
-					class="ml-3 pl-1 mt-[1px] flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-100 dark:border-gray-900"
+					class="ml-3 pl-1 mt-[0.0625rem] flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-100 dark:border-gray-900"
 				>
 					{#if folders[folderId]?.childrenIds}
 						{@const children = folders[folderId]?.childrenIds
@@ -686,50 +912,106 @@
 								})
 							)}
 
-						{#each children as childFolder (`${folderId}-${childFolder.id}`)}
-							<svelte:self
-								bind:folderRegistry
-								{folders}
-								folderId={childFolder.id}
-								{shiftKey}
-								parentDragged={dragged}
-								{onItemMove}
-								{onDelete}
-								on:import={(e) => {
-									dispatch('import', e.detail);
-								}}
-								on:update={(e) => {
-									dispatch('update', e.detail);
-								}}
-								on:change={(e) => {
-									dispatch('change', e.detail);
-								}}
-							/>
-						{/each}
+						{#if children.length > 0}
+							<div role="list">
+								{#each children as childFolder (`${folderId}-${childFolder.id}`)}
+									<svelte:self
+										bind:folderRegistry
+										{folders}
+										folderId={childFolder.id}
+										{shiftKey}
+										parentDragged={dragged}
+										{onItemMove}
+										{onDelete}
+										{onFolderUnreadCounts}
+										on:import={(e) => {
+											dispatch('import', e.detail);
+										}}
+										on:update={(e) => {
+											dispatch('update', e.detail);
+										}}
+										on:change={(e) => {
+											dispatch('change', e.detail);
+										}}
+									/>
+								{/each}
+							</div>
+						{/if}
 					{/if}
 
-					{#each chats ?? [] as chat (chat.id)}
-						<ChatItem
-							id={chat.id}
-							title={chat.title}
-							createdAt={chat.created_at}
-							updatedAt={chat.updated_at}
-							lastReadAt={chat.last_read_at}
-							ownerName={folders[folderId]?.shared ? (chat.owner_name ?? null) : null}
-							ownerUserId={folders[folderId]?.shared && chat.owner_name ? chat.user_id : null}
-							readonly={chat.user_id !== $user?.id}
-							{shiftKey}
-							on:change={(e) => {
-								dispatch('change', e.detail);
-							}}
-						/>
-					{/each}
-				</div>
-			{/if}
+					{#if chats === null && chatsLoading}
+						<div class="flex gap-1 px-2 py-1.5" aria-label={$i18n.t('Loading')}>
+							<span class="size-1 rounded-full bg-gray-400 animate-pulse dark:bg-gray-600"></span>
+							<span
+								class="size-1 rounded-full bg-gray-400 animate-pulse [animation-delay:150ms] dark:bg-gray-600"
+							></span>
+							<span
+								class="size-1 rounded-full bg-gray-400 animate-pulse [animation-delay:300ms] dark:bg-gray-600"
+							></span>
+						</div>
+					{/if}
 
-			{#if chats === null}
-				<div class="flex justify-center items-center p-2">
-					<Spinner className="size-4 text-gray-500" />
+					{#if chats !== null && chats.length === 0 && !chatsLoading}
+						<div class="px-2 py-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+							{$i18n.t('No chats')}
+						</div>
+					{/if}
+
+					{#if (chats ?? []).length > 0}
+						<div role="list">
+							{#each chats ?? [] as chat (chat.id)}
+								<div role="listitem">
+									<ChatItem
+										id={chat.id}
+										title={chat.title}
+										createdAt={chat.created_at}
+										updatedAt={chat.updated_at}
+										lastReadAt={chat.last_read_at}
+										active={chat.active ?? false}
+										pendingApproval={chat.pending_approval ?? false}
+										ownerName={chat.owner_name ?? null}
+										participants={chat.participants ?? []}
+										ownerUserId={folders[folderId]?.showOwnerInfo ||
+										folders[folderId]?.shared ||
+										chat.user_id !== $user?.id
+											? chat.user_id
+											: null}
+										readonly={chat.user_id !== $user?.id}
+										canMove={folders[folderId]?.user_id === $user?.id}
+										canRename={folders[folderId]?.user_id === $user?.id}
+										{shiftKey}
+										onReadStateChange={applyReadState}
+										on:change={(e) => {
+											dispatch('change', e.detail);
+										}}
+									/>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					{#if hasMoreChats}
+						<button
+							class="w-full px-2 py-0.5 text-left text-[0.6875rem] text-gray-400 transition hover:text-gray-700 disabled:cursor-not-allowed dark:text-gray-600 dark:hover:text-gray-300"
+							disabled={chatsLoading}
+							on:click={() => setFolderItems(true)}
+						>
+							{#if chatsLoading}
+								<div class="flex gap-1 px-2 py-1.5" aria-label={$i18n.t('Loading')}>
+									<span class="size-1 rounded-full bg-gray-400 animate-pulse dark:bg-gray-600"
+									></span>
+									<span
+										class="size-1 rounded-full bg-gray-400 animate-pulse [animation-delay:150ms] dark:bg-gray-600"
+									></span>
+									<span
+										class="size-1 rounded-full bg-gray-400 animate-pulse [animation-delay:300ms] dark:bg-gray-600"
+									></span>
+								</div>
+							{:else}
+								{$i18n.t('Show more')}
+							{/if}
+						</button>
+					{/if}
 				</div>
 			{/if}
 		</div>

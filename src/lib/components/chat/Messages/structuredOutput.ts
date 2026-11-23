@@ -1,3 +1,7 @@
+import { encode } from 'html-entities';
+import { getDispatchedVisualizationPreviews } from '$lib/utils/visualizations/dispatch';
+import { agentView, terminalView, type AgentView } from './agentViews';
+
 export type OutputContentPart = {
 	type?: string;
 	text?: unknown;
@@ -9,10 +13,16 @@ export type OutputItem = {
 	id?: string;
 	call_id?: string;
 	name?: string;
+	display_label?: string;
+	display_labels?: { running?: string; completed?: string };
 	status?: string;
+	hidden?: boolean;
+	tool_id?: string;
+	tool_type?: string;
+	tool_targets?: Record<string, { tool_id: string; tool_type: string }>;
 	arguments?: unknown;
 	content?: OutputContentPart[];
-	summary?: OutputContentPart[];
+	summary?: OutputContentPart[] | string;
 	output?: OutputContentPart[];
 	files?: unknown;
 	embeds?: unknown;
@@ -28,24 +38,34 @@ export type OutputItem = {
 export type OutputDetailToken = {
 	summary: string;
 	text: string;
+	view?: AgentView | null;
 	attributes: {
 		type: string;
 		id?: string;
 		name?: string;
+		display_label?: string;
+		running_label?: string;
 		done?: string;
 		duration?: string;
 		arguments?: string;
 		files?: string;
 		embeds?: string;
 		output?: string;
+		status?: string;
 	};
 };
 
 export type OutputDisplayItem =
+	| { type: 'visualization'; id: string; call: OutputItem; result?: OutputItem }
 	| {
 			type: 'message';
 			id: string;
 			text: string;
+	  }
+	| {
+			type: 'image';
+			id: string;
+			src: string;
 	  }
 	| {
 			type: 'detail_single';
@@ -56,7 +76,36 @@ export type OutputDisplayItem =
 			type: 'detail_group';
 			id: string;
 			tokens: OutputDetailToken[];
+	  }
+	| {
+			type: 'file';
+			id: string;
+			item: Record<string, unknown>;
+	  }
+	| {
+			type: 'context_compaction';
+			id: string;
+			summary: string;
+			status?: 'in_progress' | 'failed';
 	  };
+
+type ResponseStreamEvent = {
+	type?: string;
+	item_id?: string;
+	output_index?: number;
+	content_index?: number;
+	summary_index?: number;
+	item?: OutputItem;
+	part?: OutputContentPart;
+	delta?: unknown;
+	text?: unknown;
+	arguments?: unknown;
+	response?: {
+		output?: OutputItem[];
+		[key: string]: unknown;
+	};
+	[key: string]: unknown;
+};
 
 const GROUPABLE_OUTPUT_TYPES = new Set([
 	'reasoning',
@@ -111,7 +160,7 @@ function getReasoningText(item: OutputItem): string {
 	return getTextFromParts(summary ?? item.content ?? []);
 }
 
-function getToolResultText(item?: OutputItem): string {
+export function getToolResultText(item?: OutputItem): string {
 	return (item?.output ?? [])
 		.filter((part) => part?.type !== 'input_image')
 		.map((part) => {
@@ -123,22 +172,105 @@ function getToolResultText(item?: OutputItem): string {
 		.join('');
 }
 
-function buildToolCallToken(item: OutputItem, toolOutputByCallId: Record<string, OutputItem>) {
-	const callId = item.call_id ?? '';
-	const resultItem = toolOutputByCallId[callId];
-	const isDone = isDoneStatus(item.status) || !!resultItem;
+function parseJSONStringValue(value: unknown): unknown {
+	if (typeof value !== 'string') {
+		return value;
+	}
 
+	let parsed: unknown = value.trim();
+	while (typeof parsed === 'string') {
+		try {
+			parsed = JSON.parse(parsed);
+		} catch {
+			break;
+		}
+	}
+	return parsed;
+}
+
+function getInlineFileFromToolOutput(callItem?: OutputItem, resultItem?: OutputItem) {
+	if (!callItem || !resultItem || callItem.name !== 'display_file') {
+		return null;
+	}
+
+	const args = parseJSONStringValue(callItem.arguments) as Record<string, unknown>;
+	if (!args || typeof args !== 'object') {
+		return null;
+	}
+
+	const result = parseJSONStringValue(getToolResultText(resultItem)) as Record<string, unknown>;
+	const isTerminalFile = result?.source === 'open_terminal' && !!result.terminal_selector;
+	const isOpenWebUIFile = result?.source === 'open_webui';
+	if (
+		!result ||
+		typeof result !== 'object' ||
+		result.type !== 'file' ||
+		!result.path ||
+		result.exists === false ||
+		!(isTerminalFile || isOpenWebUIFile)
+	) {
+		return null;
+	}
+
+	return result.page === undefined && args.page !== undefined
+		? { ...result, page: args.page }
+		: result;
+}
+
+export function buildToolCallToken(
+	item: OutputItem,
+	toolOutputByCallId: Record<string, OutputItem>
+) {
+	const callId = item.call_id ?? item.id ?? '';
+	const resultItem = toolOutputByCallId[callId];
+	const status = String(item.status ?? '');
+	const isPending = status === 'pending';
+	const isDone = !!resultItem || status === 'failed' || status === 'incomplete';
+	const isExecuting = !isDone && status === 'completed';
+	let name = item.name ?? '';
+	if (name === 'delegate_task') {
+		try {
+			const args =
+				typeof item.arguments === 'string'
+					? JSON.parse(item.arguments || '{}')
+					: (item.arguments ?? {});
+			const task = typeof args.task === 'string' && args.task ? args.task : '?';
+			const label = args.background ? 'Background sub-agent' : 'Sub-agent';
+			name = `${label}: "${task.length > 60 ? `${task.slice(0, 60)}...` : task}"`;
+		} catch {
+			name = 'Sub-agent';
+		}
+	}
+
+	const text = getToolResultText(resultItem);
 	return {
-		summary: isDone ? 'Tool Executed' : 'Executing...',
-		text: getToolResultText(resultItem),
+		summary: isPending
+			? 'Tool Approval Needed'
+			: isDone
+				? 'Tool Executed'
+				: isExecuting
+					? 'Executing...'
+					: 'Preparing...',
+		text,
+		view: agentView(item, text) ?? terminalView(item, text),
 		attributes: {
 			type: 'tool_calls',
 			id: callId,
-			name: item.name ?? '',
+			name,
+			running_label:
+				typeof item.display_labels?.running === 'string' ? item.display_labels.running : '',
+			display_label:
+				typeof item.display_labels?.completed === 'string'
+					? item.display_labels.completed
+					: typeof item.display_label === 'string'
+						? item.display_label
+						: '',
 			done: isDone ? 'true' : 'false',
-			arguments: stringifyAttribute(item.arguments ?? ''),
-			files: stringifyAttribute(resultItem?.files),
-			embeds: stringifyAttribute(resultItem?.embeds)
+			status,
+			// ToolCallDisplay HTML-decodes these, like legacy <details> attributes.
+			arguments: encode(stringifyAttribute(item.arguments ?? '')),
+			files: encode(stringifyAttribute(resultItem?.files)),
+			embeds: encode(stringifyAttribute(resultItem?.embeds))
 		}
 	};
 }
@@ -249,14 +381,25 @@ function buildDetailToken(
 	return null;
 }
 
+export function isHiddenToolCall(item: OutputItem): boolean {
+	return (
+		item.type === 'function_call' &&
+		item.hidden === true &&
+		!['pending', 'queued', 'requires_approval'].includes(item.status ?? '')
+	);
+}
+
 export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDisplayItem[] {
 	const displayItems: OutputDisplayItem[] = [];
 	const currentDetailTokens: OutputDetailToken[] = [];
 	const toolOutputByCallId: Record<string, OutputItem> = {};
+	const toolCallByCallId: Record<string, OutputItem> = {};
 
 	for (const item of output) {
 		if (item?.type === 'function_call_output' && item.call_id) {
 			toolOutputByCallId[item.call_id] = item;
+		} else if (item?.type === 'function_call' && (item.call_id || item.id)) {
+			toolCallByCallId[item.call_id ?? item.id ?? ''] = item;
 		}
 	}
 
@@ -278,11 +421,60 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 	};
 
 	output.forEach((item, index) => {
-		if (item?.type === 'function_call_output') {
+		if (!item) {
 			return;
 		}
 
-		if (item?.type && GROUPABLE_OUTPUT_TYPES.has(item.type)) {
+		for (const call of getDispatchedVisualizationPreviews(item)) {
+			flushDetails();
+			displayItems.push({ type: 'visualization', id: `visualization:${call.call_id}`, call });
+		}
+
+		if (isHiddenToolCall(item)) {
+			return;
+		}
+
+		if (item.type === 'function_call_output') {
+			const call = toolCallByCallId[item.call_id ?? ''];
+			if (call && isHiddenToolCall(call)) return;
+			const inlineFile = getInlineFileFromToolOutput(call, item);
+			if (inlineFile) {
+				flushDetails();
+				displayItems.push({
+					type: 'file',
+					id: item.id ?? `file-${index}`,
+					item: inlineFile
+				});
+			}
+			return;
+		}
+
+		if (
+			item.type === 'function_call' &&
+			item.name === 'ask_user' &&
+			(item.status === 'pending' || item.status === 'in_progress')
+		) {
+			return;
+		}
+
+		if (
+			item.type === 'function_call' &&
+			item.tool_type === 'builtin' &&
+			item.tool_id === 'builtin:render_visualization' &&
+			(item.call_id || item.id)
+		) {
+			flushDetails();
+			const callId = item.call_id ?? item.id!;
+			displayItems.push({
+				type: 'visualization',
+				id: `visualization:${callId}`,
+				call: item,
+				result: toolOutputByCallId[callId]
+			});
+			return;
+		}
+
+		if (item.type && GROUPABLE_OUTPUT_TYPES.has(item.type)) {
 			const token = buildDetailToken(item, index === output.length - 1, toolOutputByCallId);
 			if (token) {
 				currentDetailTokens.push(token);
@@ -290,7 +482,18 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 			return;
 		}
 
-		if (item?.type === 'message') {
+		if (item.type === 'open_webui:context_compaction') {
+			flushDetails();
+			displayItems.push({
+				type: 'context_compaction',
+				id: item.id ?? `context-compaction-${index}`,
+				summary: typeof item.summary === 'string' ? item.summary : '',
+				status: item.status === 'in_progress' || item.status === 'failed' ? item.status : undefined
+			});
+			return;
+		}
+
+		if (item.type === 'message') {
 			const text = getMessageText(item);
 			if (text.trim()) {
 				flushDetails();
@@ -298,6 +501,20 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 					type: 'message',
 					id: item.id ?? `message-${index}`,
 					text
+				});
+			}
+			return;
+		}
+
+		if (item.type === 'image_generation_call') {
+			if (typeof item.result === 'string' && item.result) {
+				flushDetails();
+				displayItems.push({
+					type: 'image',
+					id: item.id ?? `image-${index}`,
+					src: item.result.startsWith('data:')
+						? item.result
+						: `data:image/${item.output_format || 'png'};base64,${item.result}`
 				});
 			}
 			return;
@@ -315,6 +532,16 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 	});
 
 	flushDetails();
+
+	// Providers can reuse item ids across tool-call rounds.
+	const seenIds = new Set<string>();
+	displayItems.forEach((displayItem, index) => {
+		if (seenIds.has(displayItem.id)) {
+			displayItem.id = `${displayItem.id}-${index}`;
+		}
+		seenIds.add(displayItem.id);
+	});
+
 	return displayItems;
 }
 
@@ -324,6 +551,223 @@ export function getOutputText(output?: OutputItem[] | null): string {
 		.map(getMessageText)
 		.filter((text) => text.trim())
 		.join('\n');
+}
+
+function appendDelta(current: unknown, delta: unknown): unknown {
+	if (typeof current === 'string' || typeof delta === 'string') {
+		return `${current ?? ''}${delta ?? ''}`;
+	}
+	if (
+		current &&
+		delta &&
+		typeof current === 'object' &&
+		typeof delta === 'object' &&
+		!Array.isArray(current) &&
+		!Array.isArray(delta)
+	) {
+		return { ...(current as Record<string, unknown>), ...(delta as Record<string, unknown>) };
+	}
+	return delta ?? current ?? '';
+}
+
+function ensureOutputItem(
+	output: OutputItem[],
+	outputIndex: number,
+	fallback?: OutputItem
+): OutputItem {
+	while (output.length <= outputIndex) {
+		// Only the addressed slot gets the event's item; filler slots must not reuse its id.
+		const item =
+			output.length === outputIndex && fallback
+				? { ...fallback }
+				: { type: 'message', status: 'in_progress', role: 'assistant', content: [] };
+		output.push(item);
+	}
+	output[outputIndex] = { ...output[outputIndex] };
+	return output[outputIndex];
+}
+
+function ensurePart(parts: OutputContentPart[], index: number, fallback?: OutputContentPart) {
+	while (parts.length <= index) {
+		parts.push(fallback ?? { type: 'output_text', text: '' });
+	}
+	parts[index] = { ...parts[index] };
+	return parts[index];
+}
+
+function setPart(
+	parts: OutputContentPart[],
+	index: number,
+	part: OutputContentPart,
+	fallback?: OutputContentPart
+): void {
+	// Assigning past the end leaves a hole that later spreads turn into undefined parts.
+	ensurePart(parts, index, fallback);
+	parts[index] = part;
+}
+
+function findOutputItemIndex(output: OutputItem[], item: OutputItem): number {
+	return output.findIndex(
+		(existing) =>
+			(!!item.id && existing?.id === item.id) ||
+			(!!item.call_id && existing?.type === item.type && existing?.call_id === item.call_id)
+	);
+}
+
+function responseEventUpdatesOutputItem(eventType: string): boolean {
+	return (
+		eventType === 'response.content_part.added' ||
+		eventType === 'response.reasoning_summary_part.added' ||
+		eventType.endsWith('.delta') ||
+		eventType.endsWith('.done')
+	);
+}
+
+export function applyResponseStreamEvent(
+	output: OutputItem[] = [],
+	event: ResponseStreamEvent
+): OutputItem[] {
+	const eventType = event?.type ?? '';
+	if (!eventType.startsWith('response.')) {
+		return output;
+	}
+
+	if (eventType === 'response.completed') {
+		if (!event.response?.output?.length) return output;
+
+		// Completion covers one provider response, not the earlier tool-call rounds.
+		const nextOutput = [...output];
+		for (const item of event.response.output) {
+			const index = findOutputItemIndex(nextOutput, item);
+			if (index >= 0) {
+				nextOutput[index] = item;
+			} else {
+				nextOutput.push(item);
+			}
+		}
+		return nextOutput;
+	}
+
+	const nextOutput = [...output];
+	const eventItemIndex = event.item_id
+		? nextOutput.findIndex((item) => item?.id === event.item_id || item?.call_id === event.item_id)
+		: -1;
+	const outputIndex =
+		eventItemIndex >= 0 ? eventItemIndex : (event.output_index ?? Math.max(output.length - 1, 0));
+
+	if (eventType === 'response.output_item.added') {
+		if (!event.item) {
+			return output;
+		}
+		const item = { ...event.item };
+		const existingIndex = findOutputItemIndex(nextOutput, item);
+		if (existingIndex >= 0) {
+			nextOutput[existingIndex] = item;
+		} else if (outputIndex < nextOutput.length) {
+			nextOutput.splice(outputIndex, 0, item);
+		} else {
+			nextOutput.push(item);
+		}
+		return nextOutput;
+	}
+
+	if (eventType === 'response.output_item.done') {
+		if (!event.item) {
+			return output;
+		}
+		const item = { ...event.item };
+		const existingIndex = findOutputItemIndex(nextOutput, item);
+		if (existingIndex >= 0) {
+			nextOutput[existingIndex] = item;
+		} else if (outputIndex < nextOutput.length) {
+			nextOutput[outputIndex] = item;
+		} else {
+			nextOutput.push(item);
+		}
+		return nextOutput;
+	}
+
+	if (!responseEventUpdatesOutputItem(eventType)) {
+		return output;
+	}
+
+	const item = ensureOutputItem(nextOutput, outputIndex, {
+		id: event.item_id,
+		type: eventType.includes('reasoning')
+			? 'reasoning'
+			: eventType.includes('function_call')
+				? 'function_call'
+				: 'message',
+		status: 'in_progress',
+		role: 'assistant',
+		content: []
+	});
+
+	if (eventType === 'response.content_part.added') {
+		if (item.type === 'reasoning' || !event.part) {
+			return nextOutput;
+		}
+		item.content = [...(item.content ?? [])];
+		setPart(item.content, event.content_index ?? item.content.length, { ...event.part });
+		return nextOutput;
+	}
+
+	if (eventType === 'response.reasoning_summary_part.added') {
+		if (!event.part) {
+			return nextOutput;
+		}
+		item.summary = Array.isArray(item.summary) ? [...item.summary] : [];
+		const summaryIndex = event.summary_index ?? item.summary.length;
+		setPart(item.summary, summaryIndex, { ...event.part }, { type: 'summary_text', text: '' });
+		return nextOutput;
+	}
+
+	if (eventType.endsWith('.delta')) {
+		const deltaType = eventType.split('.')[1];
+		if (deltaType === 'function_call_arguments') {
+			item.arguments = appendDelta(item.arguments ?? '', event.delta);
+			return nextOutput;
+		}
+
+		if (deltaType === 'reasoning_summary_text') {
+			const summaryIndex = event.summary_index ?? 0;
+			item.summary = Array.isArray(item.summary) ? [...item.summary] : [];
+			const part = ensurePart(item.summary, summaryIndex, { type: 'summary_text', text: '' });
+			part.text = appendDelta(part.text ?? '', event.delta);
+			return nextOutput;
+		}
+
+		if (item.type === 'open_webui:code_interpreter') {
+			item.code = `${item.code ?? ''}${event.delta ?? ''}`;
+			return nextOutput;
+		}
+
+		const key = deltaType === 'output_text' || deltaType === 'reasoning_text' ? 'text' : deltaType;
+		item.content = [...(item.content ?? [])];
+		const part = ensurePart(item.content, event.content_index ?? 0);
+		part[key] = appendDelta(part[key], event.delta);
+		return nextOutput;
+	}
+
+	if (eventType.endsWith('.done')) {
+		const typeName = eventType.split('.')[1];
+		if (typeName === 'content_part' && event.part) {
+			item.content = [...(item.content ?? [])];
+			const contentIndex = event.content_index ?? Math.max(item.content.length - 1, 0);
+			setPart(item.content, contentIndex, { ...event.part });
+		} else if (typeName === 'function_call_arguments' && event.arguments !== undefined) {
+			item.arguments = event.arguments;
+		} else if (
+			(typeName === 'output_text' || typeName === 'text' || typeName === 'reasoning_text') &&
+			event.text !== undefined
+		) {
+			item.content = [...(item.content ?? [])];
+			const part = ensurePart(item.content, event.content_index ?? 0);
+			part.text = event.text;
+		}
+	}
+
+	return nextOutput;
 }
 
 export function replaceOutputMessageText(
@@ -342,7 +786,7 @@ export function replaceOutputMessageText(
 		}
 
 		const partIndex = item.content.findIndex(
-			(part) => typeof part.text === 'string' && part.text.includes(oldContent)
+			(part) => typeof part?.text === 'string' && part.text.includes(oldContent)
 		);
 		if (partIndex === -1) {
 			return item;
@@ -353,7 +797,7 @@ export function replaceOutputMessageText(
 		const part = nextContent[partIndex];
 		nextContent[partIndex] = {
 			...part,
-			text: (part.text as string).replace(oldContent, newContent)
+			text: (part.text as string).replace(oldContent, () => newContent)
 		};
 
 		return {
@@ -363,4 +807,63 @@ export function replaceOutputMessageText(
 	});
 
 	return replaced ? nextOutput : output;
+}
+
+export function setOutputText(output: OutputItem[], text: string): OutputItem[] {
+	if (text === getOutputText(output)) {
+		return output;
+	}
+
+	const lastMessage = output.filter((item) => item?.type === 'message').at(-1);
+	if (!lastMessage) {
+		return [
+			...output,
+			{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] }
+		];
+	}
+
+	return output.map((item) =>
+		item?.type === 'message'
+			? { ...item, content: item === lastMessage ? [{ type: 'output_text', text }] : [] }
+			: item
+	);
+}
+
+function parseToolArguments(args: unknown): Record<string, unknown> {
+	if (!args) {
+		return {};
+	}
+	let value = args;
+	while (typeof value === 'string') {
+		try {
+			value = JSON.parse(value);
+		} catch {
+			break;
+		}
+	}
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
+}
+
+export function getPendingAskUserFromMessage<T extends { role?: string; output?: unknown }>(
+	message: T
+) {
+	if (message?.role !== 'assistant' || !Array.isArray(message.output)) {
+		return null;
+	}
+
+	const call = message.output.find(
+		(item: OutputItem) =>
+			item?.type === 'function_call' &&
+			item?.name === 'ask_user' &&
+			item?.status === 'pending' &&
+			(item?.call_id || item?.id)
+	);
+
+	if (call) {
+		return { message, call, args: parseToolArguments(call.arguments) };
+	}
+
+	return null;
 }
